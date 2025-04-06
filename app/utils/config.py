@@ -1,0 +1,1 @@
+# Configuration settings (thresholds, API keys, file paths, etc.)

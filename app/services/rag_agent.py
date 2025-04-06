@@ -1,0 +1,1 @@
+# Retrieval-Augmented Generation component; integrates local LLM (via Hugging Face Transformers and Langchain) to generate personalized hints

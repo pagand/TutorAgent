@@ -1,0 +1,6 @@
+fastapi >= 0.115.11
+uvicorn >= 0.34.0
+grpcio == 1.48.0
+chromadb == 0.4.13
+pdfminer >= 20191125
+langchain >= 0.3.21

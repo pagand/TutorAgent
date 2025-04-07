@@ -1,6 +1,6 @@
 id,question,answer_1,answer_2,answer_3,answer_4,correct_answer,skill
-1, What is the capital of France?, Paris, London, Berlin, Madrid, 1, Geography
-2, What is the capital of Spain?, Paris, London, Berlin, Madrid, 4, Geography
-3, What is the capital of Germany?, Paris, London, Berlin, Madrid, 3, Geography
-4, when was the first world war?, 1914, 1918, 1939, 1945, 1, History
-5, when was the second world war?, 1914, 1918, 1939, 1945, 3, History
+1,"We want to distinguish between three different species of iris — setosa, versicolor, and virginica, based on their measurements of their sepals and petals. What are the required packages to be installed?","scipy, numpy, matplotlib, pandas, sklearn","numpy, matplotlib, pandas, seaborn","matplotlib, pandas, sklearn, numpy","scikit-learn, pandas, pandas, seaborn",3,"[Classification Algorithms]"
+2,"load the dataset\nurl = ""https://raw.githubusercontent.com/jbrownlee/Datasets/master/iris.csv""\nnames = ['sepal-length', 'sepal-width', 'petal-length', 'petal-width', 'class']","dataset = read_csv(url, names=names)","dataset = read_file(url, names=names)","dataset = read(url, names)","dataset = read_file(url, title=names)",1,"[Data Loading]"
+3,"Which one is not true about the data?","150 samples, with 4 attributes (same units, all numeric)","Balanced class distribution (50 samples for each class)","The first 10 data are Iris-setosa","The mean of sepal width is 5.843",4,"[Exploratory Data Analysis (EDA)]"
+4,"Which of the following methods are not suitable as classification here","Logistic Regression (LR), Linear Discriminant Analysis (LDA)","K-Nearest Neighbors (KNN), Classification and Regression Trees (CART)","Gaussian Naive Bayes (NB), Support Vector Machines (SVM)","Linear regression (LR), Decision tree (DT)",4,"[Supervised Learning]"
+5,"Which of the following is not required in IRIS dataset?","Set-up test harness","Handling missing data","Separate validation/test/train","Build prediction models and accuracy measures",2,"[Data Cleaning, Evaluation Metrics]"

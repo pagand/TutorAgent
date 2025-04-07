@@ -1,6 +1,44 @@
-fastapi >= 0.115.11
-uvicorn >= 0.34.0
-grpcio == 1.48.0
-chromadb == 0.4.13
-pdfminer >= 20191125
-langchain >= 0.3.21
+# --- Core Web Framework ---
+fastapi>=0.111.0,<0.112.0
+uvicorn[standard]>=0.29.0,<0.30.0 # [standard] includes watchfiles etc.
+python-multipart>=0.0.7,<0.1.0
+
+# --- Pydantic ---
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0
+
+# --- Core ML & Embeddings ---
+# Pin numpy tightly within the compatible range for others
+numpy>=1.26.4,<2.0
+# Use recent, aligned versions of torch, transformers, accelerate
+# Check PyTorch website for specific wheel if CPU/CUDA/OS causes issues: https://pytorch.org/
+torch>=2.2.0,<2.4.0
+transformers>=4.39.0,<4.42.0 # Versions known to work with torch 2.2/2.3
+accelerate>=0.29.0,<0.32.0  # Often needed implicitly by transformers, helps with model loading
+sentence-transformers>=2.7.0,<3.0.0 # Requires recent transformers
+
+# --- LangChain Ecosystem ---
+# Langchain v0.2.x introduces breaking changes but is the way forward
+langchain>=0.2.0,<0.3.0
+# Use the dedicated integration packages as suggested by warnings
+langchain-core>=0.2.0,<0.3.0 # Often a dependency
+langchain-community>=0.2.0,<0.3.0 # May still be needed for other components
+langchain-huggingface>=0.0.3,<0.1.0 # For HuggingFaceEmbeddings
+
+# --- Vector Store ---
+# chromadb 0.4.13 is quite old (Dec 2023). Let's try a newer patch version
+# that is known to work with numpy < 2.0 and recent Langchain.
+# 0.4.24 is from Mar 2024. If issues persist, you might need 0.5.x,
+# but that might have stricter dependencies.
+chromadb>=0.4.24,<0.5.0
+# Let pip resolve grpcio unless you face build issues, especially on M1/M2 Mac.
+# If pip install fails here, try uncommenting and pinning a recent version:
+# grpcio>=1.60.0,<1.65.0
+
+# --- PDF Loading ---
+# PyMuPDF (fitz) is generally preferred over pdfminer.six nowadays
+PyMuPDF>=1.24.0,<1.25.0
+
+# --- Other Utilities ---
+requests>=2.31.0,<3.0.0
+pandas>=2.1.0,<2.3.0 # Pandas 2.x works with numpy < 2.0

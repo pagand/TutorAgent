@@ -42,3 +42,9 @@ PyMuPDF>=1.24.0,<1.25.0
 # --- Other Utilities ---
 requests>=2.31.0,<3.0.0
 pandas>=2.1.0,<2.3.0 # Pandas 2.x works with numpy < 2.0
+
+langchain-openai
+langchain-google-genai
+langchain-aws 
+boto3 
+python-dotenv

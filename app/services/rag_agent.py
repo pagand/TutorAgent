@@ -1,27 +1,31 @@
 # Retrieval-Augmented Generation component; integrates local LLM (via Hugging Face Transformers and Langchain) to generate personalized hints
 # app/services/rag_agent.py
 from langchain_community.vectorstores import Chroma
-# Corrected import based on previous discussion and deprecation warnings
-from langchain_huggingface import HuggingFaceEmbeddings
-# Corrected import based on previous discussion and deprecation warnings
+from langchain_huggingface import HuggingFaceEmbeddings # LLM Imports
 from langchain_community.llms import Ollama
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain_aws import BedrockChat # Add if using Bedrock
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.vectorstores import VectorStoreRetriever
-from operator import itemgetter # Import itemgetter
 
 from app.utils.config import settings
 from app.utils.logger import logger
 import threading
+import os
 
-# --- Global variables ---
+from operator import itemgetter # Import itemgetter
+
+# --- Global variables for initialized components (initialized lazily) ---
 _embedding_function = None
 _vectorstore = None
 _retriever = None
-_ollama_llm = None
+_llm_client = None
 _rag_chain_with_source = None
 _init_lock = threading.Lock()
+
 
 # --- Updated Prompt Template ---
 # Explicitly structure the information for the LLM
@@ -60,7 +64,7 @@ def create_retrieval_query(input_dict: dict) -> str:
 # --- Initialization Function ---
 def _initialize_rag_components():
     """Initializes all RAG components if not already done. Returns True on success, False on failure."""
-    global _embedding_function, _vectorstore, _retriever, _ollama_llm, _rag_chain_with_source
+    global _embedding_function, _vectorstore, _retriever, _llm_client, _rag_chain_with_source
 
     with _init_lock:
         if _rag_chain_with_source is not None:
@@ -94,17 +98,48 @@ def _initialize_rag_components():
                      logger.warning("ChromaDB collection is empty. Ensure PDF ingestion ran successfully.")
 
             # 3. Initialize LLM (Using langchain_ollama)
-            if _ollama_llm is None:
-                logger.info(f"Initializing Ollama LLM client for model '{settings.ollama_model}' at {settings.ollama_base_url}")
-                 # Use the correct class from the dedicated package
-                _ollama_llm = Ollama(
-                    base_url=settings.ollama_base_url,
-                    model=settings.ollama_model
-                )
-                logger.info("Ollama LLM client initialized.")
+            if _llm_client is None:
+                logger.info(f"Initializing LLM client for provider: {settings.llm_provider}")
+                provider = settings.llm_provider
+                if provider == "ollama":
+                    _llm_client = Ollama(
+                        base_url=settings.ollama_base_url,
+                        model=settings.ollama_model
+                    )
+                    logger.info(f"Initialized Ollama with model: {settings.ollama_model}")
+                elif provider == "openai":
+                    _llm_client = ChatOpenAI(
+                        openai_api_key=settings.openai_api_key,
+                        model_name=settings.openai_model_name,
+                        temperature=0 # Adjust temperature as needed
+                    )
+                    logger.info(f"Initialized OpenAI with model: {settings.openai_model_name}")
+                elif provider == "google":
+                    _llm_client = ChatGoogleGenerativeAI(
+                        google_api_key=settings.google_api_key,
+                        model=settings.google_model_name,
+                        temperature=0, # Adjust temperature as needed
+                        convert_system_message_to_human=True # Often needed for Gemini
+                    )
+                    logger.info(f"Initialized Google Gemini with model: {settings.google_model_name}")
+                # elif provider == "bedrock": # Add Bedrock logic if needed
+                #     # Ensure boto3 is installed and AWS credentials are configured
+                #     # (via .env, standard AWS config files, or IAM role)
+                #     _llm_client = BedrockChat(
+                #         # credentials_profile_name="your-aws-profile", # Optional profile
+                #         region_name=settings.aws_region_name,
+                #         model_id=settings.bedrock_model_id,
+                #         model_kwargs={"temperature": 0.1} # Example model kwarg
+                #     )
+                #     logger.info(f"Initialized AWS Bedrock with model ID: {settings.bedrock_model_id}")
+                else:
+                    raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
+
+                # Optional: Add a check here to ensure the LLM client is working (e.g., dummy invoke)
+
 
             # 4. Define RAG Chain (Revised Logic)
-            if _retriever and _ollama_llm and rag_prompt:
+            if _retriever and _llm_client and rag_prompt:
                 logger.info("Defining revised RAG chain...")
 
                 # Chain Part 1: Prepare input and retrieve documents
@@ -128,7 +163,7 @@ def _initialize_rag_components():
                                   context=lambda x: format_docs(x["context"])
                               )
                               | rag_prompt   # Use the updated prompt template
-                              | _ollama_llm  # Call the LLM
+                              | _llm_client  # Call the LLM
                               | StrOutputParser() # Parse the LLM output string
                          ),
                          # Pass through the original retrieved documents (context)
@@ -178,7 +213,7 @@ async def get_rag_hint(question_text: str, user_answer: str | None) -> str:
          return "An unexpected error occurred while preparing the hint generator."
 
     try:
-        logger.info(f"Generating RAG hint for question: {question_text}")
+        logger.info(f"Generating RAG hint for question: {question_text} (Provider: {settings.llm_provider})")
         input_data = {"question": question_text, "user_answer": user_answer} # Ensure user_answer can be None
 
         # Invoke the revised chain

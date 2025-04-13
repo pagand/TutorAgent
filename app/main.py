@@ -2,20 +2,37 @@
 # app/main.py
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.endpoints import questions, hints, feedback
+# Import routers
+from app.endpoints import questions, hints, feedback, answer
+# Import services/utils needed at startup
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized # Import the check function
+from app.services.question_service import question_service
 from app.utils.logger import logger
-from app.utils.config import settings
-import os
 import sys # Import sys for exit
+
+# --- Global State (Simple approach for POC) ---
+# No explicit global needed here now as state_manager handles it internally
+# and services are imported directly where needed.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
     logger.info("AI Tutor API starting up...")
 
-    # 1. PDF Ingestion (run once if needed)
+    # 1. Load Questions (must happen before RAG/BKT initialization if they depend on skills)
+    logger.info("Loading questions...")
+    try:
+        # question_service is instantiated globally, load_questions was called in its __init__
+        if not question_service.get_all_questions():
+             logger.error("Question service loaded no questions. Check CSV path and content.")
+             # Decide if this is critical - likely yes for BKT/Answering
+             # sys.exit("Exiting: No questions loaded.")
+    except Exception as e:
+        logger.exception("CRITICAL FAILURE during question loading.")
+        sys.exit("Exiting due to failure loading questions.")
+
+    # 2. PDF Ingestion (run once if needed)
     logger.info("Checking for PDF ingestion...")
     try:
         ingest_pdf() # Run the ingestion function
@@ -24,7 +41,7 @@ async def lifespan(app: FastAPI):
         # Decide if this is critical enough to stop startup
         # sys.exit("Failed during PDF ingestion phase.")
 
-    # 2. Initialize Core RAG Components (Embeddings, DB connection, LLM check)
+    # 3. Initialize Core RAG Components (Embeddings, DB connection, LLM check)
     logger.info("Initializing RAG components...")
     try:
         ensure_rag_components_initialized() # Trigger initialization
@@ -40,15 +57,17 @@ async def lifespan(app: FastAPI):
 
 # --- Rest of main.py remains the same ---
 # Initialize FastAPI app with the lifespan manager
-app = FastAPI(title="AI Tutor POC - Stage 2", lifespan=lifespan)
+app = FastAPI(title="AI Tutor POC - Stage 3", lifespan=lifespan)
 
 app.include_router(questions.router, prefix="/questions", tags=["Questions"])
 app.include_router(hints.router, prefix="/hints", tags=["Hints"])
 app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
+app.include_router(answer.router, prefix="/answer", tags=["Answer Submission"]) # Added answer router
+
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the AI Tutor API (Stage 2)."}
+    return {"message": "Welcome to the AI Tutor API (Stage 3)."}
 
 
 # Remove the __main__ block if using lifespan manager correctly with uvicorn

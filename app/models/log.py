@@ -2,9 +2,16 @@
 # app/models/log.py
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Dict
 
-class UserLog(BaseModel):
-    user_id: str
+class LogEntry(BaseModel):
     timestamp: datetime
-    action: str
-    details: dict
+    user_id: str
+    question_id: int
+    skill: str
+    action: str # e.g., "answered", "requested_hint"
+    user_answer: str | None = None
+    is_correct: bool | None = None
+    time_taken_ms: int | None = None
+    details: Dict | None = None # For extra info like hint provided
+

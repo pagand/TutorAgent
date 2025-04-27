@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 # Load .env file before defining settings
-load_dotenv()
+load_dotenv(override=True)
 
 class Settings(BaseSettings):
     # PDF and ChromaDB Settings
@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     retrieval_k: int = 3
     hf_cache_dir: str = "./chroma_db/hf_cache" # Directory for Hugging Face cache
+
+    QUESTION_CSV_FILE_PATH: str = "data/questions.csv"
 
     # --- LLM Provider Configuration ---
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama").lower()

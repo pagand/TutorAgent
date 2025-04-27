@@ -3,11 +3,12 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 # Import routers
-from app.endpoints import questions, hints, feedback, answer
+from app.endpoints import questions, hints, feedback, answer, users
 # Import services/utils needed at startup
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized # Import the check function
 from app.services.question_service import question_service
+from app.utils.config import settings
 from app.utils.logger import logger
 import sys # Import sys for exit
 
@@ -23,11 +24,13 @@ async def lifespan(app: FastAPI):
     # 1. Load Questions (must happen before RAG/BKT initialization if they depend on skills)
     logger.info("Loading questions...")
     try:
-        # question_service is instantiated globally, load_questions was called in its __init__
+         # --- CALL LOAD_QUESTIONS EXPLICITLY ---
+        # It will use settings.QUESTION_CSV_FILE_PATH by default
+        question_service.load_questions()
         if not question_service.get_all_questions():
              logger.error("Question service loaded no questions. Check CSV path and content.")
              # Decide if this is critical - likely yes for BKT/Answering
-             # sys.exit("Exiting: No questions loaded.")
+             sys.exit("Exiting: No questions loaded.")
     except Exception as e:
         logger.exception("CRITICAL FAILURE during question loading.")
         sys.exit("Exiting due to failure loading questions.")
@@ -63,7 +66,7 @@ app.include_router(questions.router, prefix="/questions", tags=["Questions"])
 app.include_router(hints.router, prefix="/hints", tags=["Hints"])
 app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
 app.include_router(answer.router, prefix="/answer", tags=["Answer Submission"]) # Added answer router
-
+app.include_router(users.router)
 
 @app.get("/")
 async def root():

@@ -3,17 +3,19 @@ import csv
 from typing import List, Dict, Optional, Set
 from app.models.question import Question
 from app.utils.logger import logger
-
-CSV_FILE_PATH = "data/questions.csv"
+from app.utils.config import settings
 
 class QuestionService:
-    def __init__(self, csv_path: str = CSV_FILE_PATH):
+    def __init__(self):
         self.questions: List[Question] = []
         self.questions_by_id: Dict[int, Question] = {}
         self.skills: Set[str] = set()
-        self.load_questions(csv_path)
+        # self.load_questions(csv_path)
+        logger.info("QuestionService initialized (data loading deferred).")
 
-    def load_questions(self, csv_path: str):
+    def load_questions(self, csv_path: Optional[str]= None ):
+        """Loads questions from the specified CSV path."""
+        csv_path = csv_path if csv_path is not None else settings.QUESTION_CSV_FILE_PATH
         try:
             self.questions = []
             self.questions_by_id = {}

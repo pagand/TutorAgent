@@ -48,3 +48,4 @@ langchain-google-genai
 langchain-aws 
 boto3 
 python-dotenv
+pytest

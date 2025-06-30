@@ -58,4 +58,22 @@ class TestHintsAPI:
         response = client.get("/hints/")
         assert response.status_code == 405
 
-    # TODO @pytest.mark.stage4: Add tests for hints based on personalization preferences
+    # @pytest.mark.stage4
+    # def test_get_hint_with_personalization(self, client: TestClient, mock_llm_instance_session: AsyncMock):
+    #     """Test that the hint prompt includes the user's preferred style."""
+    #     # 1. Set user preference
+    #     client.put("/users/testuser_personalization/preferences", json={"preferred_hint_style": "Socratic", "feedback_preference": "on_demand"})
+
+    #     # 2. Request a hint
+    #     response = client.post("/hints/", json={
+    #         "user_id": "testuser_personalization",
+    #         "question_number": 1,
+    #         "user_answer": "Some answer"
+    #     })
+    #     assert response.status_code == 200
+
+    #     # 3. Assert that the mock LLM was called with the correct prompt
+    #     mock_llm_instance_session.ainvoke.assert_called_once()
+    #     call_args = mock_llm_instance_session.ainvoke.call_args
+    #     prompt = call_args[0][0]["hint_style"]
+    #     assert "Socratic" in prompt

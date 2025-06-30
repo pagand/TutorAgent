@@ -19,6 +19,7 @@ class HintResponse(BaseModel):
     question_number: int
     hint: str
     user_id: str
+    hint_style: str
 
 @router.post("/", response_model=HintResponse)
 async def generate_hint(request: HintRequest):
@@ -38,7 +39,10 @@ async def generate_hint(request: HintRequest):
     try:
         # Call the RAG agent service function
         # Pass the actual question text and the user's answer (if any)
-        generated_hint = await rag_agent.get_rag_hint(question_text, request.user_answer)
+        hint_data = await rag_agent.get_rag_hint(question_text, request.user_answer, request.user_id)
+        generated_hint = hint_data["hint"]
+        hint_style = hint_data["hint_style"]
+
 
         if not generated_hint or "Sorry," in generated_hint or "unable to retrieve" in generated_hint:
              # Handle cases where RAG agent returns empty or known error messages
@@ -49,7 +53,8 @@ async def generate_hint(request: HintRequest):
         return HintResponse(
             question_number=request.question_number,
             hint=generated_hint,
-            user_id=request.user_id
+            user_id=request.user_id,
+            hint_style=hint_style
         )
     except Exception as e:
         logger.exception(f"Unhandled error in hint endpoint for question {request.question_number}: {e}")

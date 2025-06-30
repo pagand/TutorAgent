@@ -21,3 +21,8 @@ chroma_db/
 *.db
 
 .pytest_cache*
+
+# LLM plannar
+DEVELOPMENT_PLAN.md
+ARCHITECTURE.md
+TESTING_STRATEGY.md

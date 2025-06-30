@@ -25,10 +25,10 @@ from app.services import rag_agent
 # --- Define Test Questions Path ---
 TEST_QUESTIONS_CSV = "data/test_questions.csv" # Verify this path
 
-mock_llm_instance_session = AsyncMock()
 # --- CORRECTED MOCK RETURN VALUE ---
 # StrOutputParser expects a string directly from the LLM component
-mock_llm_instance_session.ainvoke.return_value = "This is a mocked hint from the SESSION patch."
+mock_llm_instance_session = AsyncMock()
+mock_llm_instance_session.ainvoke.return_value = "mocked hint from the auto-mock fixture"
 
 # --- Fixture to Modify Settings ---
 @pytest.fixture(scope="session", autouse=True)
@@ -49,70 +49,31 @@ def modify_settings_for_test_questions():
         logger.info(f"Restored setting '{settings_attribute_name}' to '{original_path}'.")
 
 # --- ADD NEW FIXTURE for Session-Scoped LLM Mocking ---
-# Create one shared AsyncMock instance for all patched classes to return
-mock_llm_instance_session = AsyncMock()
-# Configure the desired return value for the mocked 'ainvoke'
-# Use a distinct message to confirm this mock is being used
-mock_llm_instance_session.ainvoke.return_value = {"answer": "This is a mocked hint from the SESSION patch."}
-
 @pytest.fixture(scope="session", autouse=True)
 def apply_llm_mock_patch_session(request):
     """
-    Applies session-wide patches to LLM classes within rag_agent module
+    Applies a session-wide patch to the _llm_client inside the rag_agent module,
     unless the test is marked with 'llm_integration'.
-    Uses unittest.mock.patch for session scope compatibility.
     """
-    # --- Skip logic remains the same ---
     if "llm_integration" in getattr(request, "keywords", {}):
-         logger.warning("Detected 'llm_integration' marker - skipping LLM class patching.")
-         yield
-         return
-    # --- End Skip logic ---
+        logger.warning("Detected 'llm_integration' marker - skipping LLM client patching.")
+        yield
+        return
 
-    logger.info("Applying session-wide LLM class patches using unittest.mock.patch.")
-    targets_to_patch = [
-        "app.services.rag_agent.Ollama",
-        "app.services.rag_agent.ChatOpenAI",
-        "app.services.rag_agent.ChatGoogleGenerativeAI",
-        # Add "app.services.rag_agent.BedrockChat" if used
-    ]
-    mock_class_factory = MagicMock(return_value=mock_llm_instance_session)
+    logger.info("Applying session-wide LLM client patch.")
+    
+    # This mock will replace the _llm_client in the rag_agent module
+    mock_llm_client = AsyncMock()
+    mock_llm_client.ainvoke.return_value = "mocked hint from the auto-mock fixture"
 
-    # --- Store patchers AND their targets ---
-    active_patches_info = [] # Store tuples of (target_string, patcher_object)
-    # --- End change ---
-
-    for target in targets_to_patch:
-        try:
-            patcher = patch(target, mock_class_factory)
-            patcher.start()
-            # --- Store tuple ---
-            active_patches_info.append((target, patcher))
-            # --- End change ---
-            logger.debug(f"Applied session patch to {target}")
-        except (AttributeError, ImportError):
-            logger.debug(f"Could not apply session patch to {target} - class likely not imported/used directly in rag_agent.")
-        except Exception as e:
-            logger.error(f"Error applying session patch to {target}: {e}")
-            # Stop any already started patches before failing
-            for _, p in active_patches_info: p.stop() # Use _ if target not needed here
-            pytest.fail(f"Failed to apply session patch to {target}: {e}")
-
-    try:
-        yield # Test session runs with patches active
-    finally:
-        # Stop all patchers in reverse order using the stored info
-        for target, patcher in reversed(active_patches_info): # Iterate through stored tuples
-            try:
-                patcher.stop()
-                # --- Use stored target string for logging ---
-                logger.debug(f"Stopped session patch for {target}")
-                # --- End change ---
-            except Exception as e:
-                # --- Use stored target string for logging ---
-                logger.error(f"Error stopping session patch for {target}: {e}")
-                # --- End change ---
-        logger.info("Session-wide LLM class patches removed.")
+    with patch("app.services.rag_agent._llm_client", mock_llm_client):
+        # After patching, the RAG chain needs to be re-initialized to use the mock
+        rag_agent._rag_chain_with_source = None
+        rag_agent._initialize_rag_components()
+        yield
+        # Cleanup after the session
+        rag_agent._rag_chain_with_source = None
+        logger.info("Session-wide LLM client patch removed.")
 
 # --- TestClient Fixture ---
 @pytest.fixture(scope="session")

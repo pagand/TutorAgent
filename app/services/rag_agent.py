@@ -17,6 +17,7 @@ import threading
 import os
 
 from operator import itemgetter # Import itemgetter
+from app.services.personalization_service import personalization_service
 
 # --- Global variables for initialized components (initialized lazily) ---
 _embedding_function = None
@@ -31,6 +32,8 @@ _init_lock = threading.Lock()
 # Explicitly structure the information for the LLM
 template = """
 **Instructions:** You are an AI Tutor. Your goal is to provide a helpful hint to a student based on their question and their answer attempt, using the provided context. Focus on clarifying the core concept without giving away the direct answer. If the context isn't relevant, acknowledge that and offer general advice related to the question's topic. Keep the hint concise, encouraging, and focused.
+
+**Hint Style:** {hint_style}
 
 **Retrieved Context:**
 ---------------------
@@ -196,42 +199,46 @@ def _initialize_rag_components():
 
 
 # --- Hint Generation Function (No changes needed here) ---
-async def get_rag_hint(question_text: str, user_answer: str | None) -> str:
+async def get_rag_hint(question_text: str, user_answer: str | None, user_id: str) -> dict:
     """
-    Retrieves context from ChromaDB and generates a hint using Ollama.
-    Ensures components are initialized before use.
+    Retrieves context, gets adaptive hint style, and generates a personalized hint.
+    Returns a dictionary containing the hint and the style used.
     """
     global _rag_chain_with_source
 
     if _rag_chain_with_source is None:
         if not _initialize_rag_components():
             logger.error("RAG components failed to initialize. Cannot generate hint.")
-            return "Sorry, the AI Tutor components could not be initialized. Please contact support or try again later."
-
-    if _rag_chain_with_source is None:
-         logger.error("RAG chain is still None even after initialization attempt.")
-         return "An unexpected error occurred while preparing the hint generator."
+            return {
+                "hint": "Sorry, the AI Tutor components could not be initialized. Please contact support.",
+                "hint_style": "error"
+            }
 
     try:
-        logger.info(f"Generating RAG hint for question: {question_text} (Provider: {settings.llm_provider})")
-        input_data = {"question": question_text, "user_answer": user_answer} # Ensure user_answer can be None
+        # Get the adaptively chosen hint style for the user
+        hint_style = personalization_service.get_adaptive_hint_style(user_id)
+        logger.info(f"Generating RAG hint for user {user_id} with style: '{hint_style}' (Provider: {settings.llm_provider})")
 
-        # Invoke the revised chain
-        # The chain now outputs a dict like:
-        # {"question": ..., "user_answer": ..., "context": [Docs...], "answer": "..."}
+        input_data = {
+            "question": question_text,
+            "user_answer": user_answer,
+            "hint_style": hint_style
+        }
+
+        # Invoke the RAG chain
         result = await _rag_chain_with_source.ainvoke(input_data)
 
         generated_hint = result.get("answer", "Sorry, I couldn't generate a hint based on the available information.")
-        retrieved_docs = result.get("context", []) # Get the retrieved documents
-        logger.debug(f"Retrieved {len(retrieved_docs)} documents for the hint.")
-
         logger.info(f"Generated hint: {generated_hint[:100]}...")
-        return generated_hint
+
+        return {"hint": generated_hint, "hint_style": hint_style}
 
     except Exception as e:
-        logger.exception(f"Error generating RAG hint: {e}")
-        # Consider checking for specific error types if needed
-        return "There was an error while trying to generate a hint for you. Please try again."
+        logger.exception(f"Error generating RAG hint for user {user_id}: {e}")
+        return {
+            "hint": "There was an error while trying to generate a hint for you. Please try again.",
+            "hint_style": "error"
+        }
 
 # --- Optional: Function to explicitly trigger initialization during startup (No changes needed) ---
 def ensure_rag_components_initialized():

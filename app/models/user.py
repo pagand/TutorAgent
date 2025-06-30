@@ -5,4 +5,5 @@ class User(BaseModel):
     username: str
     password: str  # Note: For POC, plain text is acceptable; do NOT use this approach in production.
     preferred_hint_style: str = "Worked Example"  # Default value; could be "Analogy" or "Leading Question"
+    feedback_preference: str = "immediate" # Default value; could be "on_demand"
     prior_knowledge: str = "Beginner"

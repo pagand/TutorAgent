@@ -60,18 +60,18 @@ async def lifespan(app: FastAPI):
 
 # --- Rest of main.py remains the same ---
 # Initialize FastAPI app with the lifespan manager
-app = FastAPI(title="AI Tutor POC - Stage 4", lifespan=lifespan)
+app = FastAPI(title="AI Tutor POC - Stage 4.5", lifespan=lifespan)
 
 app.include_router(questions.router, prefix="/questions", tags=["Questions"])
 app.include_router(hints.router, prefix="/hints", tags=["Hints"])
 app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
-app.include_router(answer.router, prefix="/answer", tags=["Answer Submission"]) # Added answer router
+app.include_router(answer.router, prefix="/answer", tags=["Answer Submission"])
 app.include_router(users.router)
 app.include_router(preferences.router, prefix="/users", tags=["Preferences"])
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the AI Tutor API (Stage 4)."}
+    return {"message": "Welcome to the AI Tutor API (Stage 4.5)."}
 
 
 # Remove the __main__ block if using lifespan manager correctly with uvicorn

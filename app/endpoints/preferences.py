@@ -1,12 +1,13 @@
 # app/endpoints/preferences.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
+from app.models.enums import HintStyle
 from app.services.personalization_service import personalization_service
 
 router = APIRouter()
 
 class Preferences(BaseModel):
-    preferred_hint_style: str
+    preferred_hint_style: HintStyle
     feedback_preference: str
 
 @router.get("/{user_id}/preferences", response_model=Preferences)

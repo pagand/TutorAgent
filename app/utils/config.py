@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     intervention_max_consecutive_errors: int = 2
     intervention_time_limit_ms: int = 60000 # 60 seconds
 
+    # Personalization Settings (Stage 4.5)
+    exploration_rate: float = 0.2  # 20% chance to explore a random hint style
+    feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
+
     class Config:
         # If you want Pydantic to explicitly load from .env (alternative to python-dotenv)
         # env_file = '.env'

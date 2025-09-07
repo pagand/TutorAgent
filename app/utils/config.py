@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     retrieval_k: int = 3
     hf_cache_dir: str = "./chroma_db/hf_cache" # Directory for Hugging Face cache
 
+    # general LLM config
+    max_output_tokens: int = 30 # for test
+
     QUESTION_CSV_FILE_PATH: str = "data/questions.csv"
 
     # --- LLM Provider Configuration ---
@@ -55,11 +58,14 @@ class Settings(BaseSettings):
     exploration_rate: float = 0.2  # 20% chance to explore a random hint style
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
-    class Config:
-        # If you want Pydantic to explicitly load from .env (alternative to python-dotenv)
-        # env_file = '.env'
-        # env_file_encoding = 'utf-8'
-        pass
+    # --- Database Settings (Stage 5) ---
+    database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/aitutor_db")
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore"
+    }
 
 settings = Settings()
 

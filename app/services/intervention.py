@@ -2,19 +2,22 @@
 # app/services/intervention.py
 from app.utils.config import settings
 from app.utils.logger import logger
-from app.state_manager import get_bkt_mastery, get_consecutive_errors
 
-def check_intervention(user_id: str, skill: str, time_taken_ms: int | None) -> bool:
-    """Checks if intervention is needed based on mastery, errors, and time."""
+def check_intervention(
+    user_id: str, 
+    skill: str, 
+    time_taken_ms: int | None,
+    current_mastery: float,
+    consecutive_errors: int
+) -> bool:
+    """Checks if intervention is needed based on pre-fetched mastery, errors, and time."""
 
     # 1. Check Mastery Threshold
-    current_mastery = get_bkt_mastery(user_id, skill, settings.bkt_p_l0)
     if current_mastery < settings.intervention_mastery_threshold:
         logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Mastery ({current_mastery:.3f}) < Threshold ({settings.intervention_mastery_threshold})")
         return True
 
-    # 2. Check Consecutive Errors
-    consecutive_errors = get_consecutive_errors(user_id, skill)
+    # 2. Check Consecutive Errors (now an efficient direct check)
     if consecutive_errors >= settings.intervention_max_consecutive_errors:
         logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Errors ({consecutive_errors}) >= Threshold ({settings.intervention_max_consecutive_errors})")
         return True

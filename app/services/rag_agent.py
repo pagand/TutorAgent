@@ -1,6 +1,6 @@
 # Retrieval-Augmented Generation component; integrates local LLM (via Hugging Face Transformers and Langchain) to generate personalized hints
 # app/services/rag_agent.py
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings # LLM Imports
 from langchain_community.llms import Ollama
 from langchain_openai import ChatOpenAI
@@ -28,12 +28,41 @@ _llm_client = None
 # --- RAG chain is no longer a single global variable, it's built dynamically ---
 _init_lock = threading.Lock()
 
+from app.models.user import InteractionLog
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 # --- Helper Functions ---
 def format_docs(docs):
     """Joins document page content into a single string."""
     if not docs:
         return "No relevant context found."
     return "\n\n".join(doc.page_content for doc in docs)
+
+async def get_user_history_summary(session: AsyncSession, user_id: str, limit: int = 5) -> str:
+    """Retrieves and formats the last N interactions for a user from the consolidated log."""
+    result = await session.execute(
+        select(InteractionLog)
+        .filter_by(user_id=user_id)
+        .order_by(InteractionLog.timestamp.desc())
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+
+    if not logs:
+        return "No recent interactions found."
+
+    summary = []
+    for log in reversed(logs):  # Oldest to newest
+        status = "Correct" if log.is_correct else "Incorrect"
+        summary_line = f"- Q{log.question_id}: Answered '{log.user_answer}' ({status})."
+        if log.hint_shown:
+            summary_line += f" (Hint Used: {log.hint_style_used})"
+        summary.append(summary_line)
+        
+    return "\n".join(summary)
+
+
 
 def create_retrieval_query(input_dict: dict) -> str:
     """Combines question and user answer for richer retrieval context."""
@@ -87,7 +116,7 @@ def _initialize_rag_components():
                 elif provider == "openai":
                     _llm_client = ChatOpenAI(openai_api_key=settings.openai_api_key, model_name=settings.openai_model_name, temperature=0)
                 elif provider == "google":
-                    _llm_client = ChatGoogleGenerativeAI(google_api_key=settings.google_api_key, model=settings.google_model_name, temperature=0, convert_system_message_to_human=True)
+                    _llm_client = ChatGoogleGenerativeAI(google_api_key=settings.google_api_key, model=settings.google_model_name, temperature=0, convert_system_message_to_human=True, max_output_tokens = settings.max_output_tokens)
                 else:
                     raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
                 logger.info(f"Initialized LLM with provider {provider}")
@@ -120,7 +149,7 @@ def get_rag_chain(hint_style: str):
     return rag_chain
 
 # --- Hint Generation Function ---
-async def get_rag_hint(question_text: str, user_answer: str | None, user_id: str) -> dict:
+async def get_rag_hint(session: AsyncSession, question_text: str, user_answer: str | None, user_id: str, user_history: str) -> dict:
     """
     Retrieves context, gets adaptive hint style, and generates a personalized hint.
     Returns a dictionary containing the hint and the style used.
@@ -134,8 +163,8 @@ async def get_rag_hint(question_text: str, user_answer: str | None, user_id: str
             }
 
     try:
-        # This service will eventually contain the adaptive logic
-        hint_style = personalization_service.get_adaptive_hint_style(user_id)
+        # This service now correctly receives the session
+        hint_style = await personalization_service.get_adaptive_hint_style(session, user_id)
         logger.info(f"Generating RAG hint for user {user_id} with style: '{hint_style}' (Provider: {settings.llm_provider})")
 
         # Dynamically get the chain for the chosen style
@@ -144,6 +173,7 @@ async def get_rag_hint(question_text: str, user_answer: str | None, user_id: str
         input_data = {
             "question": question_text,
             "user_answer": user_answer or "Not provided",
+            "user_history": user_history, # History is now passed in directly
         }
 
         # Invoke the RAG chain

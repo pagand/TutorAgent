@@ -11,6 +11,11 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
+**Student's Recent Interaction History:**
+---------------------
+{user_history}
+---------------------
+
 **Student's Question:** {question}
 
 **Student's Answer Attempt:** {user_answer}
@@ -25,6 +30,11 @@ PROMPT_LIBRARY = {
 **Retrieved Context:**
 ---------------------
 {context}
+---------------------
+
+**Student's Recent Interaction History:**
+---------------------
+{user_history}
 ---------------------
 
 **Student's Question:** {question}
@@ -43,6 +53,11 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
+**Student's Recent Interaction History:**
+---------------------
+{user_history}
+---------------------
+
 **Student's Question:** {question}
 
 **Student's Answer Attempt:** {user_answer}
@@ -57,6 +72,11 @@ PROMPT_LIBRARY = {
 **Retrieved Context:**
 ---------------------
 {context}
+---------------------
+
+**Student's Recent Interaction History:**
+---------------------
+{user_history}
 ---------------------
 
 **Student's Question:** {question}

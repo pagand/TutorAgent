@@ -1,14 +1,18 @@
 # app/endpoints/answer.py
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.models.user import InteractionLog, SkillMastery
 
 from app.services.question_service import question_service
 from app.services.bkt import bkt_service
 from app.services import intervention
 from app.services.personalization_service import personalization_service
-from app.state_manager import add_log_entry, get_user_state, get_bkt_mastery
+from app.state_manager import get_bkt_mastery
 from app.utils.logger import logger
 from app.utils.config import settings
+from app.utils.db import get_db
 
 router = APIRouter()
 
@@ -17,7 +21,12 @@ class AnswerRequest(BaseModel):
     question_number: int
     user_answer: str
     time_taken_ms: int | None = None
-    hint_shown: bool = False # New field to track if a hint was used
+    
+    # Hint-related fields, only present if a hint was shown
+    hint_shown: bool = False
+    hint_style_used: str | None = None
+    pre_hint_mastery: float | None = None
+    feedback_rating: int | None = Field(None, ge=1, le=5)
 
 class AnswerResponse(BaseModel):
     correct: bool
@@ -27,7 +36,7 @@ class AnswerResponse(BaseModel):
     current_mastery: float
 
 @router.post("/", response_model=AnswerResponse)
-async def submit_answer(request: AnswerRequest):
+async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_db)):
     user_id = request.user_id
     q_id = request.question_number
     user_ans = request.user_answer
@@ -40,47 +49,79 @@ async def submit_answer(request: AnswerRequest):
     skill = question.skill
     is_correct = question_service.check_answer(q_id, user_ans)
 
-    # --- Post-Hint Performance Tracking ---
-    user_state = get_user_state(user_id)
-    pre_hint_mastery = user_state.get("pre_hint_mastery", {}).pop(skill, None)
+    result = await db.execute(select(SkillMastery).filter_by(user_id=user_id, skill_id=skill))
+    skill_mastery = result.scalars().first()
 
-    if request.hint_shown and pre_hint_mastery is not None:
-        # Get mastery *before* the update for the current answer
-        current_mastery_before_update = get_bkt_mastery(user_id, skill, settings.bkt_p_l0)
-        bkt_change = current_mastery_before_update - pre_hint_mastery
-        
-        # Record feedback with BKT change (rating is 0 as it's implicit)
-        personalization_service.record_feedback(
-            user_id=user_id,
-            hint_style=user_state.get("last_hint_style", "Unknown"), # Get the style that was shown
-            rating=3, # Use a neutral rating for implicit feedback
-            bkt_change=bkt_change
+    if not skill_mastery:
+        skill_mastery = SkillMastery(
+            user_id=user_id, 
+            skill_id=skill, 
+            mastery_level=settings.bkt_p_l0, 
+            consecutive_errors=0
         )
-        logger.info(f"Recorded implicit feedback for user {user_id} on skill {skill}. BKT change: {bkt_change:.4f}")
+        db.add(skill_mastery)
+        await db.flush()
 
-    # Log interaction *before* BKT update to get mastery state prior to this answer
-    log_data = {
-        "action": "answered",
-        "question_id": q_id,
-        "skill": skill,
-        "user_answer": user_ans,
-        "is_correct": is_correct,
-        "time_taken_ms": time_taken,
-    }
-    add_log_entry(user_id, log_data)
+    # Store the mastery level *before* the BKT update
+    mastery_before_update = skill_mastery.mastery_level
 
     # Update BKT Mastery
-    bkt_service.update_mastery(user_id, skill, is_correct)
+    updated_mastery_level = await bkt_service.update_mastery(user_id, skill, is_correct, existing_skill_mastery=skill_mastery)
+    
+    # --- Consolidated Interaction Logging ---
+    bkt_change_value = None
+    if request.hint_shown:
+        if request.pre_hint_mastery is None or request.hint_style_used is None:
+            raise HTTPException(
+                status_code=422, 
+                detail="If hint_shown is true, pre_hint_mastery and hint_style_used must be provided."
+            )
+        
+        bkt_change_value = updated_mastery_level - request.pre_hint_mastery
+
+        await personalization_service.record_feedback(
+            session=db,
+            user_id=user_id,
+            hint_style=request.hint_style_used,
+            bkt_change=bkt_change_value,
+            rating=request.feedback_rating
+        )
+        logger.info(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value:.4f}, Rating: {request.feedback_rating}")
+
+    # Create the single, consolidated log entry for this answer attempt
+    log_entry = InteractionLog(
+        user_id=user_id,
+        question_id=q_id,
+        skill=skill,
+        user_answer=user_ans,
+        is_correct=is_correct,
+        time_taken_ms=time_taken,
+        hint_shown=request.hint_shown,
+        hint_style_used=request.hint_style_used,
+        user_feedback_rating=request.feedback_rating,
+        bkt_change=bkt_change_value
+    )
+    db.add(log_entry)
+
+    # Update consecutive errors
+    if is_correct:
+        skill_mastery.consecutive_errors = 0
+    else:
+        skill_mastery.consecutive_errors += 1
+    db.add(skill_mastery)
 
     # Check for Intervention Need
-    intervention_needed = intervention.check_intervention(user_id, skill, time_taken)
+    intervention_needed = intervention.check_intervention(user_id, skill, time_taken,
+                                                                current_mastery=updated_mastery_level,
+                                                                consecutive_errors=skill_mastery.consecutive_errors)
 
-    current_mastery = get_bkt_mastery(user_id, skill, settings.bkt_p_l0)
+    await db.commit()
 
     return AnswerResponse(
         correct=is_correct,
         correct_answer=str(question.correct_answer),
         skill=skill,
         intervention_needed=intervention_needed,
-        current_mastery=current_mastery
+        current_mastery=updated_mastery_level
     )
+

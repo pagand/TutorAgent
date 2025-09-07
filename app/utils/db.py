@@ -1,13 +1,25 @@
-# Database utilities to connect to ChromaDB (configured for vector operations)
 # app/utils/db.py
-from chromadb import Client
-from chromadb.config import Settings
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from app.utils.config import settings
 
-def get_db_connection():
-    # Configure ChromaDB client
-    client = Client(Settings(
-        chroma_db_impl="duckdb+parquet",
-        persist_directory="./chroma_db"  # Directory to store the database
-    ))
-    return client
+# Create an async engine
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,  # Set to True to see SQL queries
+)
 
+# Create a session factory
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+async def get_db() -> AsyncSession:
+    """
+    Dependency to get a database session.
+    Ensures the session is closed after the request.
+    """
+    async with AsyncSessionLocal() as session:
+        yield session

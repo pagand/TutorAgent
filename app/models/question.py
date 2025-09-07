@@ -1,12 +1,11 @@
-# Data model for questions (CSV structure: question number, question text, answer 1-4, correct answer, skill)
+# Data model for questions
 from pydantic import BaseModel
+from typing import List, Optional
 
 class Question(BaseModel):
     question_number: int
     question: str
-    answer1: str
-    answer2: str
-    answer3: str
-    answer4: str
+    question_type: str  # 'multiple_choice' or 'fill_in_the_blank'
+    options: Optional[List[str]] = None  # For multiple_choice
     correct_answer: str
     skill: str

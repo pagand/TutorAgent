@@ -1,8 +1,8 @@
-# Placeholder or wrapper for the Bayesian Knowledge Tracking (BKT) functionality; communicates with the BKT API or calls existing BKT code
 # app/services/bkt.py
 from app.utils.config import settings
 from app.utils.logger import logger
-from app.state_manager import get_bkt_mastery, update_bkt_mastery
+from app.state_manager import get_bkt_mastery
+from app.models.user import SkillMastery
 
 class BKTService:
     def __init__(self, p_l0=settings.bkt_p_l0, p_t=settings.bkt_p_t,
@@ -39,31 +39,41 @@ class BKTService:
         # Clamp probability between 0 and 1
         return max(0.0, min(1.0, posterior))
 
-
-    def update_mastery(self, user_id: str, skill: str, is_correct: bool):
-        """Updates the mastery probability for a user and skill."""
-        # 1. Get prior mastery P(L_{n-1})
-        prior_ln_minus_1 = get_bkt_mastery(user_id, skill, self.p_l0)
-
-        # 2. Calculate posterior based on evidence P(L_{n-1} | evidence)
+    def _calculate_mastery_update(self, prior_ln_minus_1: float, is_correct: bool) -> float:
+        """
+        Calculates the new mastery probability without committing it.
+        This allows us to preview the change for feedback calculation.
+        """
+        # 1. Calculate posterior based on evidence P(L_{n-1} | evidence)
         posterior_ln_minus_1 = self._calculate_posterior(prior_ln_minus_1, is_correct)
 
-        # 3. Apply transition (learning) P(L_n) = P(L_{n-1} | evidence) + (1 - P(L_{n-1} | evidence)) * P(T)
-        # This means: Prob they know now = Prob they knew before (given evidence) OR (Prob they didn't know * Prob they learned)
+        # 2. Apply transition (learning) P(L_n) = P(L_{n-1} | evidence) + (1 - P(L_{n-1} | evidence)) * P(T)
         new_ln = posterior_ln_minus_1 + (1.0 - posterior_ln_minus_1) * self.p_t
+        return max(0.0, min(1.0, new_ln))
 
-        # Clamp probability
-        new_ln = max(0.0, min(1.0, new_ln))
+    async def update_mastery(self, user_id: str, skill: str, is_correct: bool, existing_skill_mastery: SkillMastery) -> float:
+        """
+        Updates the mastery probability for a user and skill using an existing SkillMastery object.
+        This is more efficient as it avoids a separate DB query.
+        """
+        # 1. Get prior mastery P(L_{n-1}) directly from the passed object
+        prior_ln_minus_1 = existing_skill_mastery.mastery_level
 
-        # 4. Store the updated mastery P(L_n)
-        update_bkt_mastery(user_id, skill, new_ln)
-        # logger.info(f"BKT Update: User={user_id}, Skill={skill}, Correct={is_correct}, Prior={prior_ln_minus_1:.4f}, Posterior={posterior_ln_minus_1:.4f}, New P(L)={new_ln:.4f}")
+        # 2. Calculate the new mastery level
+        new_ln = self._calculate_mastery_update(prior_ln_minus_1, is_correct)
 
+        # 3. Update the mastery on the existing object
+        existing_skill_mastery.mastery_level = new_ln
+        
+        logger.debug(f"BKT Update: User={user_id}, Skill={skill}, Correct={is_correct}, Prior={prior_ln_minus_1:.4f}, New P(L)={new_ln:.4f}")
+        
+        return new_ln
 
-    def predict_correct_probability(self, user_id: str, skill: str) -> float:
+    async def predict_correct_probability(self, user_id: str, skill: str) -> float:
         """Predicts the probability the user will answer the NEXT question on this skill correctly."""
         # P(Correct_next | L_n) = P(L_n) * (1 - P(S)) + (1 - P(L_n)) * P(G)
-        current_mastery = get_bkt_mastery(user_id, skill, self.p_l0)
+        # This still requires a query if we don't have the object, which is fine for this separate function.
+        current_mastery = await get_bkt_mastery(user_id, skill, self.p_l0)
         prob_correct = (current_mastery * (1.0 - self.p_s)) + \
                        ((1.0 - current_mastery) * self.p_g)
         return prob_correct

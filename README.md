@@ -4,21 +4,23 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
 
 ## Current Project Status
 
-**The project has successfully completed Stage 4.5.** The core backend is fully functional, including the RAG pipeline, BKT student modeling, and a complete, adaptive personalization and feedback loop.
+**The project has successfully completed Stage 5.5.** The core backend is fully functional, including the RAG pipeline, BKT student modeling, a complete, adaptive personalization and feedback loop, persistent user data in a PostgreSQL database, and an expanded user model with interaction history.
 
 * **✅ Implemented Features:**
-    * FastAPI backend with endpoints for questions, hints, answers, user state, and preferences.
+    * FastAPI backend with endpoints for questions, hints, answers, user profiles, and preferences.
+    * **PostgreSQL Database:** Persistent storage for all user data, including mastery, preferences, and interaction history.
     * PDF ingestion pipeline into a ChromaDB vector store.
-    * RAG agent with a dynamic prompt engine for personalized hint generation.
+    * RAG agent with a dynamic prompt engine that uses user history for context-aware hint generation.
     * Support for multiple LLM backends (Ollama, OpenAI, Google Gemini).
     * Bayesian Knowledge Tracker (BKT) to model student mastery per skill.
     * Intervention Controller that flags the need for proactive hints.
-    * **Hybrid Feedback Loop:** A `/feedback` endpoint that records both explicit user ratings and implicit performance changes (BKT state) to adapt to the user.
+    * **Unified Hybrid Feedback Loop:** The `/answer` endpoint records both explicit user ratings and implicit performance changes (BKT state) to adapt to the user.
     * **Adaptive Hint Selection:** An epsilon-greedy algorithm that balances exploiting the best-known hint style with exploring new ones.
-    * Comprehensive integration test suite using `pytest`.
+    * **Multiple Question Types:** Support for `multiple_choice` and `fill_in_the_blank` questions.
+    * Comprehensive, automated integration test suite using `pytest` and a custom validation script.
 
 * **Next Immediate Goal:**
-    * **Implement Stage 5: Data Persistence & Expanded User Model.** This involves migrating the in-memory state to a persistent SQLite database, enriching the user model with a full interaction history, and adding support for multiple question types.
+    * **Implement Stage 6: User Interface (UI).** This involves building a Streamlit application for students to interact with the tutor and an admin dashboard for instructors.
 
 ## Project Setup
 

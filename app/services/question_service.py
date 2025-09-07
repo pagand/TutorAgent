@@ -1,6 +1,7 @@
 # app/services/question_service.py
 import csv
 from typing import List, Dict, Optional, Set
+import json
 from app.models.question import Question
 from app.utils.logger import logger
 from app.utils.config import settings
@@ -13,7 +14,7 @@ class QuestionService:
         # self.load_questions(csv_path)
         logger.info("QuestionService initialized (data loading deferred).")
 
-    def load_questions(self, csv_path: Optional[str]= None ):
+    def load_questions(self, csv_path: Optional[str] = None):
         """Loads questions from the specified CSV path."""
         csv_path = csv_path if csv_path is not None else settings.QUESTION_CSV_FILE_PATH
         try:
@@ -24,17 +25,25 @@ class QuestionService:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
                     try:
+                        question_type = row.get("question_type", "multiple_choice").strip()
+                        options = None
+                        if question_type == "multiple_choice":
+                            # Safely parse options, expecting a JSON-like string '["opt1", "opt2"]'
+                            try:
+                                options_raw = row.get("options")
+                                if options_raw:
+                                    options = json.loads(options_raw)
+                            except (json.JSONDecodeError, TypeError):
+                                logger.error(f"Skipping row due to invalid JSON in 'options': {row}")
+                                continue
+
                         question = Question(
                             question_number=int(row["id"]),
-                            question=row["question"],
-                            answer1=row["answer_1"],
-                            answer2=row["answer_2"],
-                            answer3=row["answer_3"],
-                            answer4=row["answer_4"],
-                            # Handle potential variations in correct answer format (e.g., '1' vs 'Answer 1')
-                            # Assuming correct_answer column stores the *index* (1-4)
-                            correct_answer=row["correct_answer"].strip(),
-                            skill=row["skill"].strip()
+                            question=row["question"].strip(),
+                            question_type=question_type,
+                            options=options,
+                            correct_answer=row["correct_answer"].strip().strip('"'),
+                            skill=row["skill"].strip().strip('"')
                         )
                         self.questions.append(question)
                         self.questions_by_id[question.question_number] = question
@@ -47,12 +56,10 @@ class QuestionService:
             logger.info(f"Loaded {len(self.questions)} questions.")
             logger.info(f"Found {len(self.skills)} unique skills: {self.skills}")
             if not self.questions:
-                 logger.warning(f"No questions loaded from {csv_path}. Check the file format and content.")
+                logger.warning(f"No questions loaded from {csv_path}. Check the file format and content.")
 
         except FileNotFoundError:
-             logger.error(f"Question CSV file not found at: {csv_path}")
-             # Optionally raise an error to prevent startup without questions
-             # raise FileNotFoundError(f"Question CSV file not found: {csv_path}")
+            logger.error(f"Question CSV file not found at: {csv_path}")
         except Exception as e:
             logger.exception(f"Error loading questions from {csv_path}: {e}")
 
@@ -67,14 +74,18 @@ class QuestionService:
         return list(self.skills)
 
     def check_answer(self, question_id: int, user_answer: str) -> Optional[bool]:
-        """Checks if the user's answer is correct for the given question ID."""
+        """Checks if the user's answer is correct based on the question type."""
         question = self.get_question_by_id(question_id)
         if not question:
-            return None # Question not found
+            return None
 
-        # Assuming correct_answer is the index (1-4) and user_answer is the index (1-4)
-        # Add more robust checking if user_answer format can vary
-        return str(user_answer).strip() == str(question.correct_answer).strip()
+        user_answer_stripped = str(user_answer).strip()
+        correct_answer_stripped = str(question.correct_answer).strip()
+
+        if question.question_type == "fill_in_the_blank":
+            return user_answer_stripped.lower() == correct_answer_stripped.lower()
+        # Default to multiple_choice or any other type with a direct string match
+        return user_answer_stripped == correct_answer_stripped
 
 # Instantiate the service globally or manage via dependency injection
 question_service = QuestionService()

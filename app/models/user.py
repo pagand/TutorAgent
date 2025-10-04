@@ -62,6 +62,7 @@ class InteractionLog(Base):
     # Hint and feedback details (for a single interaction loop)
     hint_shown = Column(Boolean, default=False)
     hint_style_used = Column(String, nullable=True)
+    hint_text = Column(Text, nullable=True) # <-- ADDED
     user_feedback_rating = Column(Integer, nullable=True) # e.g., 1-5
     
     # Performance metrics

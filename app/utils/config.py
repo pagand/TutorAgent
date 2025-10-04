@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     retrieval_k: int = 3
     hf_cache_dir: str = "./chroma_db/hf_cache" # Directory for Hugging Face cache
+    log_level: str = os.getenv("LOG_LEVEL", "DEBUG").upper()
 
     # general LLM config
     max_output_tokens: int = 30 # for test

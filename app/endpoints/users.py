@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.question_service import question_service
-from app.state_manager import get_bkt_mastery, get_user_or_create, get_user_profile_with_session
+from app.state_manager import get_bkt_mastery, get_user_or_create, get_user_profile_with_session, delete_user_by_id
 from app.utils.config import settings
 from app.utils.logger import logger
 from app.utils.db import get_db
@@ -36,6 +36,16 @@ async def create_user(user_create: UserCreate, db: AsyncSession = Depends(get_db
     
     # Use the same session to get the full profile
     return await get_user_profile_with_session(db, user_create.user_id)
+
+@router.delete("/{user_id}", response_model=dict)
+async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Deletes a user and all their associated data from the database.
+    """
+    success = await delete_user_by_id(db, user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": f"User '{user_id}' deleted successfully."}
 
 @router.get("/{user_id}/bkt", response_model=Dict[str, float])
 async def get_user_bkt_state(user_id: str, db: AsyncSession = Depends(get_db)):

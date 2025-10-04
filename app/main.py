@@ -1,6 +1,7 @@
 # FastAPI entry point; includes API orchestration and async event loop
 # app/main.py
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 # Import routers
 from app.endpoints import questions, hints, answer, users, preferences
@@ -59,7 +60,22 @@ async def lifespan(app: FastAPI):
 
 # --- Rest of main.py remains the same ---
 # Initialize FastAPI app with the lifespan manager
-app = FastAPI(title="AI Tutor POC - Stage 4.5", lifespan=lifespan)
+app = FastAPI(title="AI Tutor POC - Stage 5.5", lifespan=lifespan)
+
+# --- CORS Middleware ---
+# This must be added before the routers are included
+origins = [
+    "http://localhost:3000", # Default Next.js dev server
+    "http://localhost",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Allow all methods
+    allow_headers=["*"], # Allow all headers
+)
 
 from app.endpoints import (
     questions,
@@ -79,7 +95,7 @@ app.include_router(preferences.router) # Added preferences router
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the AI Tutor API (Stage 4.5)."}
+    return {"message": "Welcome to the AI Tutor API (Stage 5.5)."}
 
 
 # Remove the __main__ block if using lifespan manager correctly with uvicorn

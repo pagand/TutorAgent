@@ -25,6 +25,7 @@ class AnswerRequest(BaseModel):
     # Hint-related fields, only present if a hint was shown
     hint_shown: bool = False
     hint_style_used: str | None = None
+    hint_text: str | None = None
     pre_hint_mastery: float | None = None
     feedback_rating: int | None = Field(None, ge=1, le=5)
 
@@ -98,6 +99,7 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         time_taken_ms=time_taken,
         hint_shown=request.hint_shown,
         hint_style_used=request.hint_style_used,
+        hint_text=request.hint_text, # <-- ADDED
         user_feedback_rating=request.feedback_rating,
         bkt_change=bkt_change_value
     )

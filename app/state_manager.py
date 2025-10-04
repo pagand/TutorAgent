@@ -97,3 +97,18 @@ async def get_user_profile_with_session(session: AsyncSession, user_id: str) -> 
         "skill_mastery": skill_mastery_data,
         "interaction_history": interaction_log_data,
     }
+
+async def delete_user_by_id(session: AsyncSession, user_id: str) -> bool:
+    """Deletes a user and all their associated data from the database."""
+    logger.debug(f"Attempting to delete user: {user_id}")
+    result = await session.execute(select(User).filter_by(id=user_id))
+    user = result.scalars().first()
+    
+    if not user:
+        logger.warning(f"User '{user_id}' not found for deletion.")
+        return False
+        
+    await session.delete(user)
+    await session.commit()
+    logger.info(f"Successfully deleted user '{user_id}'.")
+    return True

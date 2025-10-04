@@ -4,7 +4,7 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
 
 ## Current Project Status
 
-**The project has successfully completed Stage 5.5.** The core backend is fully functional, including the RAG pipeline, BKT student modeling, a complete, adaptive personalization and feedback loop, persistent user data in a PostgreSQL database, and an expanded user model with interaction history.
+**The project has successfully completed Stage 5.6.** The core backend is fully functional, including the RAG pipeline, BKT student modeling, a complete, adaptive personalization and feedback loop, persistent user data in a PostgreSQL database, and an expanded user model with interaction history.
 
 * **✅ Implemented Features:**
     * FastAPI backend with endpoints for questions, hints, answers, user profiles, and preferences.
@@ -46,9 +46,20 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
     * Edit the `.env` file to configure your desired `LLM_PROVIDER` (`ollama`, `openai`, `google`) and add the corresponding API keys if necessary.
 
 5.  **Run the Application:**
+Back end:
     ```bash
-    uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+    uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload (--log-level debug)
     ```
+front end:
+```bash
+npm run dev
+```
+
+admin dashboard:
+```bash
+streamlit run streamlit_app/app.py
+```
+
 
 ## Running Tests
 

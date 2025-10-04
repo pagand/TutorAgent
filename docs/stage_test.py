@@ -93,6 +93,7 @@ if create_user(user_id_4):
         hint_data_4 = hint_response_4.json()
         hint_style_used_4 = hint_data_4.get("hint_style")
         pre_hint_mastery_4 = hint_data_4.get("pre_hint_mastery")
+        hint_text_4 = hint_data_4.get("hint")
         print(f"Hint style received: {hint_style_used_4}, Pre-hint mastery: {pre_hint_mastery_4}")
 
         # Now, submit an answer and provide feedback at the same time
@@ -104,6 +105,7 @@ if create_user(user_id_4):
             "hint_shown": True,
             "hint_style_used": hint_style_used_4,
             "pre_hint_mastery": pre_hint_mastery_4,
+            "hint_text": hint_text_4,
             "feedback_rating": 5 
         }
         answer_response_4 = requests.post(f"{base_url}/answer/", json=answer_payload_4)
@@ -146,6 +148,7 @@ if create_user(user_id_4_5):
         hint_data_seed = hint_response_seed.json()
         hint_style_seed = hint_data_seed.get("hint_style")
         pre_hint_mastery_seed = hint_data_seed.get("pre_hint_mastery")
+        hint_text_seed = hint_data_seed.get("hint")
         print(f"Seeding with hint style: {hint_style_seed}, Pre-hint mastery: {pre_hint_mastery_seed}")
 
         # Now, submit an answer to that question with a high rating
@@ -156,6 +159,7 @@ if create_user(user_id_4_5):
             "hint_shown": True,
             "hint_style_used": hint_style_seed,
             "pre_hint_mastery": pre_hint_mastery_seed,
+            "hint_text": hint_text_seed,
             "feedback_rating": 5 
         }
         requests.post(f"{base_url}/answer/", json=answer_payload_seed)
@@ -191,6 +195,7 @@ if create_user(user_id_4_5):
         hint_data_4_5_2 = hint_response_4_5_2.json()
         hint_style_4_5_2 = hint_data_4_5_2.get("hint_style")
         pre_hint_mastery_4_5_2 = hint_data_4_5_2.get("pre_hint_mastery")
+        hint_text_4_5_2 = hint_data_4_5_2.get("hint")
         print(f"Testing hybrid feedback with hint style: {hint_style_4_5_2}, Pre-hint mastery: {pre_hint_mastery_4_5_2}")
         
         # This time, the user answers incorrectly (bad performance) and gives a low rating (bad explicit feedback)
@@ -201,6 +206,7 @@ if create_user(user_id_4_5):
             "hint_shown": True,
             "hint_style_used": hint_style_4_5_2,
             "pre_hint_mastery": pre_hint_mastery_4_5_2,
+            "hint_text": hint_text_4_5_2,
             "feedback_rating": 1 
         }
         answer_response_4_5 = requests.post(f"{base_url}/answer/", json=answer_payload_4_5)
@@ -238,6 +244,7 @@ if create_user(user_id_5):
     hint_data_5 = hint_response_5.json()
     hint_style_5 = hint_data_5.get("hint_style")
     pre_hint_mastery_5 = hint_data_5.get("pre_hint_mastery")
+    hint_text_5 = hint_data_5.get("hint")
     print(f"Hint received with style: {hint_style_5}, Pre-hint mastery: {pre_hint_mastery_5}")
 
     print("\n3. Answering the second question after seeing the hint...")
@@ -247,7 +254,8 @@ if create_user(user_id_5):
         "user_answer": "A better answer", 
         "hint_shown": True,
         "hint_style_used": hint_style_5,
-        "pre_hint_mastery": pre_hint_mastery_5
+        "pre_hint_mastery": pre_hint_mastery_5,
+        "hint_text": hint_text_5
     })
     
     # Fetch the consolidated profile
@@ -395,6 +403,7 @@ if __name__ == "__main__":
         hint_data = hint_response.json()
         hint_style_used = hint_data.get("hint_style")
         pre_hint_mastery = hint_data.get("pre_hint_mastery")
+        hint_text = hint_data.get("hint")
         print(f"Hint received with style: {hint_style_used}, Pre-hint mastery: {pre_hint_mastery}")
 
         # 2. Submit an answer for that question, including all hint and feedback details
@@ -406,6 +415,7 @@ if __name__ == "__main__":
             "hint_shown": True,
             "hint_style_used": hint_style_used,
             "pre_hint_mastery": pre_hint_mastery,
+            "hint_text": hint_text,
             "feedback_rating": 4
         }
         answer_response = requests.post(f"{base_url}/answer/", json=answer_payload)

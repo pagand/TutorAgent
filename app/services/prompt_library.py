@@ -11,7 +11,7 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
-**Student's Recent Interaction History:**
+**Student's Recent Interaction History (<q> shows the question and <a> shows students answer, and <h> shows the provided hints):**
 ---------------------
 {user_history}
 ---------------------
@@ -32,7 +32,7 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
-**Student's Recent Interaction History:**
+**Student's Recent Interaction History (<q> shows the question and <a> shows students answer, and <h> shows the provided hints):**
 ---------------------
 {user_history}
 ---------------------
@@ -53,7 +53,7 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
-**Student's Recent Interaction History:**
+**Student's Recent Interaction History (<q> shows the question and <a> shows students answer, and <h> shows the provided hints):**
 ---------------------
 {user_history}
 ---------------------
@@ -74,7 +74,7 @@ PROMPT_LIBRARY = {
 {context}
 ---------------------
 
-**Student's Recent Interaction History:**
+**Student's Recent Interaction History (<q> shows the question and <a> shows students answer, and <h> shows the provided hints):**
 ---------------------
 {user_history}
 ---------------------

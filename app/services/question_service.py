@@ -25,14 +25,25 @@ class QuestionService:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
                     try:
-                        question_type = row.get("question_type", "multiple_choice").strip()
-                        options = None
+                        raw_question_type = row.get("question_type", "").strip()
+                        if not raw_question_type:
+                            logger.warning(f"Row {row['id']} is missing question_type, defaulting to multiple_choice.")
+                            question_type = "multiple_choice"
+                        else:
+                            question_type = raw_question_type
+                        
+                        options = [] # Default to an empty list
                         if question_type == "multiple_choice":
                             # Safely parse options, expecting a JSON-like string '["opt1", "opt2"]'
                             try:
                                 options_raw = row.get("options")
                                 if options_raw:
-                                    options = json.loads(options_raw)
+                                    # json.loads should handle the string-encoded list
+                                    parsed_options = json.loads(options_raw)
+                                    if isinstance(parsed_options, list):
+                                        options = parsed_options
+                                    else:
+                                        logger.warning(f"Options for question {row['id']} are not a list, defaulting to empty.")
                             except (json.JSONDecodeError, TypeError):
                                 logger.error(f"Skipping row due to invalid JSON in 'options': {row}")
                                 continue
@@ -40,7 +51,7 @@ class QuestionService:
                         question = Question(
                             question_number=int(row["id"]),
                             question=row["question"].strip(),
-                            question_type=question_type,
+                            question_type=question_type.strip('"'),
                             options=options,
                             correct_answer=row["correct_answer"].strip().strip('"'),
                             skill=row["skill"].strip().strip('"')
@@ -82,10 +93,14 @@ class QuestionService:
         user_answer_stripped = str(user_answer).strip()
         correct_answer_stripped = str(question.correct_answer).strip()
 
-        if question.question_type == "fill_in_the_blank":
-            return user_answer_stripped.lower() == correct_answer_stripped.lower()
-        # Default to multiple_choice or any other type with a direct string match
-        return user_answer_stripped == correct_answer_stripped
+        # Polymorphic answer checking
+        if question.question_type == "multiple_choice":
+            # Frontend sends 1-based index as a string
+            return user_answer_stripped == correct_answer_stripped
+        
+        # Default behavior for fill_in_the_blank and any other potential types
+        # Case-insensitive and whitespace-insensitive comparison
+        return user_answer_stripped.lower() == correct_answer_stripped.lower()
 
 # Instantiate the service globally or manage via dependency injection
 question_service = QuestionService()

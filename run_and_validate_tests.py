@@ -143,12 +143,30 @@ def check_server_status():
 def run_stage_tests():
     # ... (same as before)
     print_header("RUNNING STAGE TESTS")
+    
+    # --- NEW: Apply database migrations ---
+    print("Applying database migrations...")
+    try:
+        migration_process = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            capture_output=True, text=True, check=True
+        )
+        print_pass("Migrations applied successfully.")
+    except subprocess.CalledProcessError as e:
+        print_fail("Database migration failed.")
+        print(f"Return Code: {e.returncode}")
+        print(f"{Colors.FAIL}--- STDOUT ---{Colors.ENDC}\n{e.stdout}")
+        print(f"{Colors.FAIL}--- STDERR ---{Colors.ENDC}\n{e.stderr}")
+        return None
+    # --- END NEW ---
+
     print(f"Executing script: {STAGE_TEST_SCRIPT_PATH}")
     try:
         process = subprocess.run(
             [sys.executable, STAGE_TEST_SCRIPT_PATH, "--clear-db"],
             capture_output=True, text=True, check=True
         )
+
         print_pass("Test script executed successfully.")
         return process.stdout
     except subprocess.CalledProcessError as e:

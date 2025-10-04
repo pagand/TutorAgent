@@ -1,23 +1,28 @@
-# Configures Python’s built-in logging module to monitor the various stages and component calls
 # app/utils/logger.py
 import logging
+import sys
+from app.utils.config import settings # <-- ADDED
 
-def setup_logger():
-    logger = logging.getLogger("ai_tutor")
-    logger.setLevel(logging.DEBUG)
+# Get the logger instance for our application.
+logger = logging.getLogger("ai_tutor")
 
-    # Create console handler with a higher log level
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    
-    # Create formatter and add it to the handlers
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    
-    # Add the handlers to the logger
-    if not logger.hasHandlers():
-        logger.addHandler(ch)
-    
-    return logger
+# Set the level from the settings file, defaulting to INFO if the level is invalid.
+log_level = getattr(logging, settings.log_level, logging.INFO)
+logger.setLevel(log_level)
 
-logger = setup_logger()
+# Clear any existing handlers to prevent duplicate logs during hot-reloads.
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+# Create a handler that writes to standard output.
+handler = logging.StreamHandler(sys.stdout)
+
+# Create a formatter with our desired, more detailed format.
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# Add our custom handler to the logger.
+logger.addHandler(handler)
+
+# Prevent log messages from being passed to the root logger to avoid double printing.
+logger.propagate = False

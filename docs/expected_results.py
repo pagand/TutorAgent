@@ -53,5 +53,14 @@ EXPECTED_RESULTS = {
     ],
     "Verifying Refactor: History-Informed Prompt": [
         {"type": "string_contains", "value": ">>> VERIFICATION STEP <<<"},
+    ],
+    # --- ADDED FOR STAGE 5.7 ---
+    "Testing Stage 5.7: Proactive Intervention": [
+        {"type": "string_contains", "value": "User intervention preference is 'manual'. Intervention should be false."},
+        {"type": "json_value_equals", "path": "Response for check (preference):.intervention_needed", "expected": False},
+        {"type": "string_contains", "value": "User intervention preference is 'proactive' but time is below threshold. Intervention should be false."},
+        {"type": "json_value_equals", "path": "Response for check (time below):.intervention_needed", "expected": False},
+        {"type": "string_contains", "value": "User intervention preference is 'proactive' and time is above threshold. Intervention should be true."},
+        {"type": "json_value_equals", "path": "Response for check (time above):.intervention_needed", "expected": True},
     ]
 }

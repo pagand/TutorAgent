@@ -24,8 +24,10 @@ class User(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # Preferences, etc. can be added here
-    preferences = Column(JSON, default=lambda: {"preferred_hint_style": "Automatic", "feedback_preference": "immediate"})
+    preferences = Column(JSON, default=lambda: {
+        "hint_style_preference": "adaptive",
+        "intervention_preference": "manual"
+    })
     feedback_scores = Column(JSON, default=lambda: {})
 
     # Relationships

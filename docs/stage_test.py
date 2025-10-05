@@ -74,9 +74,10 @@ print("-" * 20)
 print("\n--- Testing Stage 4: Personalization & Unified Feedback ---")
 user_id_4 = "stage4_test_user"
 if create_user(user_id_4):
-    # Set a preference
+    # Set a preference using the CORRECT, complete payload
     preferences_payload_4 = {
-        "preferred_hint_style": "Analogy",
+        "hint_style_preference": "Analogy",
+        "intervention_preference": "manual"
     }
     preferences_response = requests.put(f"{base_url}/users/{user_id_4}/preferences/", json=preferences_payload_4)
     print(f"Status Code for PUT /preferences: {preferences_response.status_code}")
@@ -139,7 +140,10 @@ if create_user(user_id_4_5):
     # 1. Seed feedback to train the model by forcing a specific style
     print("\n1. Seeding feedback by simulating an interaction...")
     # Set a preference to make the hint style predictable
-    requests.put(f"{base_url}/users/{user_id_4_5}/preferences/", json={"preferred_hint_style": "Socratic Question"})
+    requests.put(f"{base_url}/users/{user_id_4_5}/preferences/", json={
+        "hint_style_preference": "Socratic Question",
+        "intervention_preference": "manual"
+    })
     
     hint_payload_seed = {"user_id": user_id_4_5, "question_number": 1, "user_answer": "Incorrect"}
     hint_response_seed = requests.post(f"{base_url}/hints/", json=hint_payload_seed)
@@ -178,7 +182,10 @@ if create_user(user_id_4_5):
 
     # 2. Test Adaptive Selection (Exploitation)
     print("\n2. Testing Adaptive Hint Selection (should exploit the high-rated style)...")
-    requests.put(f"{base_url}/users/{user_id_4_5}/preferences/", json={"preferred_hint_style": "Automatic"})
+    requests.put(f"{base_url}/users/{user_id_4_5}/preferences/", json={
+        "hint_style_preference": "adaptive",
+        "intervention_preference": "manual"
+    })
     hint_payload_4_5 = {"user_id": user_id_4_5, "question_number": 2, "user_answer": "Incorrect"}
     hint_response_4_5 = requests.post(f"{base_url}/hints/", json=hint_payload_4_5)
     print(f"Status Code for /hints: {hint_response_4_5.status_code}")
@@ -487,6 +494,45 @@ if __name__ == "__main__":
     else:
         print(f"Error: Could not create user '{user_id_refactor}'. Skipping refactor verification test.")
     print("-" * 20)
+
+
+    # --- Stage 5.7: Test Proactive Intervention Check ---
+    print("\n--- Testing Stage 5.7: Proactive Intervention ---")
+    user_id_5_7 = f"stage5_7_intervention_user_{int(time.time())}"
+    if create_user(user_id_5_7):
+        # Scenario 1: Intervention preference is 'manual'. Should return False.
+        print("\n1. User intervention preference is 'manual'. Intervention should be false.")
+        requests.put(f"{base_url}/users/{user_id_5_7}/preferences/", json={"intervention_preference": "manual"})
+        check_payload_1 = {"user_id": user_id_5_7, "question_number": 1, "time_spent_ms": 99999}
+        check_response_1 = requests.post(f"{base_url}/intervention-check", json=check_payload_1)
+        print(f"Status Code: {check_response_1.status_code}")
+        print("Response for check (preference):", json.dumps(check_response_1.json(), indent=2))
+
+        # --- SETUP for time-based tests: Create a user with a "middle" mastery level ---
+        print("\nSetting up for time-based check by creating a user with mid-level mastery...")
+        # Answer incorrectly once, then correctly once, to land mastery above the 0.4 threshold but not too high.
+        requests.post(f"{base_url}/answer/", json={"user_id": user_id_5_7, "question_number": 2, "user_answer": "wrong answer"})
+        requests.post(f"{base_url}/answer/", json={"user_id": user_id_5_7, "question_number": 2, "user_answer": "1"}) # Correct answer is "1"
+        # --- END SETUP ---
+
+        # Scenario 2: Preference is 'proactive', but time spent is BELOW threshold. Should return False.
+        print("\n2. User intervention preference is 'proactive' but time is below threshold. Intervention should be false.")
+        requests.put(f"{base_url}/users/{user_id_5_7}/preferences/", json={"intervention_preference": "proactive"})
+        check_payload_2 = {"user_id": user_id_5_7, "question_number": 2, "time_spent_ms": 100} # Very short time
+        check_response_2 = requests.post(f"{base_url}/intervention-check", json=check_payload_2)
+        print(f"Status Code: {check_response_2.status_code}")
+        print("Response for check (time below):", json.dumps(check_response_2.json(), indent=2))
+
+        # Scenario 3: Preference is 'proactive' AND time spent is ABOVE threshold. Should return True.
+        print("\n3. User intervention preference is 'proactive' and time is above threshold. Intervention should be true.")
+        check_payload_3 = {"user_id": user_id_5_7, "question_number": 2, "time_spent_ms": 99999} # Very long time
+        check_response_3 = requests.post(f"{base_url}/intervention-check", json=check_payload_3)
+        print(f"Status Code: {check_response_3.status_code}")
+        print("Response for check (time above):", json.dumps(check_response_3.json(), indent=2))
+    else:
+        print(f"Error: Could not create user '{user_id_5_7}'. Skipping Stage 5.7 tests.")
+    print("-" * 20)
+
 
     if args.clear_db:
         clear_test_database(interactive=False)

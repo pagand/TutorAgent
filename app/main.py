@@ -78,12 +78,64 @@ app.add_middleware(
 )
 
 from app.endpoints import (
-    questions,
-    answer,
-    hints,
-    users,
-    preferences
+    questions as questions_router,
+    answer as answer_router,
+    hints as hints_router,
+    users as users_router,
+    preferences as preferences_router,
+    proactive_hints as proactive_hints_router
 )
+from app.services.rag_agent import ensure_rag_components_initialized
+from app.services.question_service import question_service
+from app.utils.logger import logger
+
+# --- App Initialization ---
+app = FastAPI(
+    title="AI Tutor API",
+    description="API for a personalized AI-powered tutor.",
+    version="0.6.0",
+)
+
+# --- Middleware ---
+# Add CORS middleware to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict this to your frontend's domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Event Handlers ---
+@app.on_event("startup")
+async def startup_event():
+    """
+    Application startup logic:
+    - Load questions from CSV
+    - Initialize RAG components
+    """
+    logger.info("Application startup...")
+    # The init_db() call is removed as Alembic now manages the database schema.
+    question_service.load_questions()
+    try:
+        ensure_rag_components_initialized()
+    except Exception as e:
+        logger.critical(f"Failed to initialize RAG components on startup: {e}")
+    logger.info("Application startup complete.")
+
+# --- API Routers ---
+app.include_router(questions_router.router, prefix="/questions")
+app.include_router(answer_router.router, prefix="/answer")
+app.include_router(hints_router.router, prefix="/hints")
+app.include_router(users_router.router, prefix="/users")
+app.include_router(preferences_router.router) # Prefix is defined in the router itself
+app.include_router(proactive_hints_router.router) # No prefix needed based on design
+
+# --- Root Endpoint ---
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the AI Tutor API"}
+
 
 # --- Routers ---
 app.include_router(questions.router, prefix="/questions", tags=["Questions"])

@@ -2,9 +2,13 @@
 from enum import Enum
 
 class HintStyle(str, Enum):
-    """Enumeration for the different styles of hints."""
+    """Enumeration for the different styles of hints that can be generated."""
     ANALOGY = "Analogy"
     SOCRATIC_QUESTION = "Socratic Question"
     WORKED_EXAMPLE = "Worked Example"
     CONCEPTUAL = "Conceptual"
-    AUTOMATIC = "Automatic" # Represents user's choice to let the system decide
+
+class InterventionPreference(str, Enum):
+    """Enumeration for the user's proactive intervention preference."""
+    PROACTIVE = "proactive"
+    MANUAL = "manual"

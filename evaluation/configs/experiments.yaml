@@ -1,0 +1,21 @@
+- name: "Control Group (No Hints)"
+  tutor_config:
+    intervention_preference: "manual"
+    hint_style_preference: "none" 
+  max_tries: 1
+  description: "Establishes a baseline with no tutor assistance."
+
+# - name: "Treatment Group (Manual Hints)"
+#   tutor_config:
+#     intervention_preference: "manual"
+#     hint_style_preference: "adaptive"
+#   max_tries: 2
+#   description: "Tests the adaptive hint selection without proactive intervention."
+
+- name: "Treatment Group (Full Adaptive System)"
+  tutor_config:
+    intervention_preference: "proactive"
+    hint_style_preference: "adaptive"
+  max_tries: 2
+  description: "Tests the full suite of proactive and adaptive features."
+

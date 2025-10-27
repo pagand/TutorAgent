@@ -39,8 +39,9 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 2. Only proceed if the user's preference is "proactive"
-    if user.preferences.get("intervention_preference") != "proactive":
+    # 2. Only proceed if the user's preference is "proactive" and hints are not disabled
+    user_prefs = user.preferences
+    if user_prefs.get("intervention_preference") != "proactive" or user_prefs.get("hint_style_preference") == "none":
         return InterventionCheckResponse(intervention_needed=False)
 
     # 3. Get the question to find the relevant skill

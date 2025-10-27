@@ -8,7 +8,12 @@ load_dotenv(override=True)
 
 class Settings(BaseSettings):
     # PDF and ChromaDB Settings
+    # pdf_path: str = "evaluation/data/evaluation_source.pdf" 
+    # QUESTION_CSV_FILE_PATH: str = "evaluation/data/server_ready_questions.csv" 
+
     pdf_path: str = "data/source_material.pdf"
+    QUESTION_CSV_FILE_PATH: str =  "data/questions.csv"
+
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection_name: str = "ai_tutor_collection"
     embedding_model_name: str = 'all-MiniLM-L6-v2'
@@ -20,8 +25,6 @@ class Settings(BaseSettings):
 
     # general LLM config
     max_output_tokens: int = 30 # for test
-
-    QUESTION_CSV_FILE_PATH: str = "data/questions.csv"
 
     # --- LLM Provider Configuration ---
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama").lower()
@@ -53,7 +56,7 @@ class Settings(BaseSettings):
     # Intervention Controller Thresholds (Stage 3)
     intervention_mastery_threshold: float = 0.4
     intervention_max_consecutive_errors: int = 2
-    intervention_time_limit_ms: int = 60000 # 60 seconds
+    intervention_time_limit_ms: int = 10000 # 10 seconds
 
     # Personalization Settings (Stage 4.5)
     exploration_rate: float = 0.2  # 20% chance to explore a random hint style

@@ -48,7 +48,7 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Question not found")
 
     skill = question.skill
-    is_correct = question_service.check_answer(q_id, user_ans)
+    is_correct = question_service.check_answer(question, user_ans)
 
     result = await db.execute(select(SkillMastery).filter_by(user_id=user_id, skill_id=skill))
     skill_mastery = result.scalars().first()
@@ -63,13 +63,9 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         db.add(skill_mastery)
         await db.flush()
 
-    # Store the mastery level *before* the BKT update
-    mastery_before_update = skill_mastery.mastery_level
-
     # Update BKT Mastery
     updated_mastery_level = await bkt_service.update_mastery(user_id, skill, is_correct, existing_skill_mastery=skill_mastery)
     
-    # --- Consolidated Interaction Logging ---
     bkt_change_value = None
     if request.hint_shown:
         if request.pre_hint_mastery is None or request.hint_style_used is None:
@@ -89,7 +85,6 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         )
         logger.info(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value:.4f}, Rating: {request.feedback_rating}")
 
-    # Create the single, consolidated log entry for this answer attempt
     log_entry = InteractionLog(
         user_id=user_id,
         question_id=q_id,
@@ -99,20 +94,18 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         time_taken_ms=time_taken,
         hint_shown=request.hint_shown,
         hint_style_used=request.hint_style_used,
-        hint_text=request.hint_text, # <-- ADDED
+        hint_text=request.hint_text,
         user_feedback_rating=request.feedback_rating,
         bkt_change=bkt_change_value
     )
     db.add(log_entry)
 
-    # Update consecutive errors
     if is_correct:
         skill_mastery.consecutive_errors = 0
     else:
         skill_mastery.consecutive_errors += 1
     db.add(skill_mastery)
 
-    # Check for Intervention Need
     intervention_needed = intervention.check_intervention(user_id, skill, time_taken,
                                                                 current_mastery=updated_mastery_level,
                                                                 consecutive_errors=skill_mastery.consecutive_errors)

@@ -1,6 +1,6 @@
 # app/endpoints/preferences.py
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.personalization_service import personalization_service
@@ -8,7 +8,7 @@ from app.utils.db import get_db
 from app.models.enums import HintStyle, InterventionPreference
 
 # --- Type Definitions ---
-# The user can either pick a specific hint style or choose "adaptive"
+# The user can either pick a specific hint style, "adaptive", or "none"
 HintStylePreference = Union[HintStyle, str]
 
 # --- Router Setup ---
@@ -21,12 +21,26 @@ router = APIRouter(
 class Preferences(BaseModel):
     hint_style_preference: HintStylePreference = Field(
         "adaptive", 
-        description="The desired hint style ('Analogy', 'Conceptual', etc.) or 'adaptive' to let the system choose."
+        description="The desired hint style ('Analogy', 'Conceptual', etc.), 'adaptive' to let the system choose, or 'none' to disable hints."
     )
     intervention_preference: InterventionPreference = Field(
         "manual",
         description="Whether the user wants proactive hint prompts ('proactive') or not ('manual')."
     )
+
+    @validator('hint_style_preference')
+    def validate_hint_style(cls, v):
+        """Allow Enum members, 'adaptive', or 'none'."""
+        if isinstance(v, HintStyle):
+            return v
+        if v in ["adaptive", "none"]:
+            return v
+        # Try to match against Enum values if a raw string is passed
+        for member in HintStyle:
+            if member.value == v:
+                return member
+        raise ValueError(f"'{v}' is not a valid hint style, 'adaptive', or 'none'")
+
 
 @router.put("/", response_model=Preferences)
 async def update_preferences(user_id: str, preferences: Preferences, db: AsyncSession = Depends(get_db)):

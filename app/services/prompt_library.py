@@ -17,6 +17,7 @@ PROMPT_LIBRARY = {
 ---------------------
 
 **Student's Question:** {question}
+{options}
 
 **Student's Answer Attempt:** {user_answer}
 
@@ -38,6 +39,7 @@ PROMPT_LIBRARY = {
 ---------------------
 
 **Student's Question:** {question}
+{options}
 
 **Student's Answer Attempt:** {user_answer}
 
@@ -59,6 +61,7 @@ PROMPT_LIBRARY = {
 ---------------------
 
 **Student's Question:** {question}
+{options}
 
 **Student's Answer Attempt:** {user_answer}
 
@@ -80,6 +83,7 @@ PROMPT_LIBRARY = {
 ---------------------
 
 **Student's Question:** {question}
+{options}
 
 **Student's Answer Attempt:** {user_answer}
 

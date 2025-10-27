@@ -60,3 +60,4 @@ python-dotenv
 pyteststreamlit
 pandas
 streamlit
+PyPDF2

@@ -1,0 +1,36 @@
+- name: "Struggling Student"
+  initial_knowledge_prompt: "[PDF_TEXT_PERCENT:50]"
+  guess_probability: 0.6
+  hint_request_probability: 1.0
+  hint_request_timing: "after_feedback"
+  give_feedback_probability: 0.9
+  proactive_wait_seconds: 15
+  accept_proactive_hint_probability: 0.9 # Likely to accept help
+
+
+# - name: "Anxious Student"
+#   initial_knowledge_prompt: "[PDF_TEXT_PERCENT:75]"
+#   guess_probability: 0.3
+#   hint_request_probability: 0.6
+#   hint_request_timing: "before_answer"
+#   give_feedback_probability: 0.8
+#   proactive_wait_seconds: 12
+#   accept_proactive_hint_probability: 0.95 # Very likely to accept help
+
+# - name: "Confident but Wrong"
+#   initial_knowledge_prompt: "[PDF_TEXT_PERCENT:85]"
+#   guess_probability: 0.95
+#   hint_request_probability: 0.1
+#   hint_request_timing: "after_feedback"
+#   give_feedback_probability: 0.4
+#   proactive_wait_seconds: 8
+#   accept_proactive_hint_probability: 0.2  # Unlikely to accept help
+
+- name: "Expert Student"
+  initial_knowledge_prompt: "[USE_OWN_KNOWLEDGE]"
+  guess_probability: 1.0
+  hint_request_probability: 0.2
+  hint_request_timing: "after_feedback"
+  give_feedback_probability: 0.5
+  proactive_wait_seconds: 5
+  accept_proactive_hint_probability: 0.1

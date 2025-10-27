@@ -1,0 +1,4 @@
+id,question,question_type,skill,options,correct_answer
+1,What is the primary mechanism LoRA uses to adapt a frozen transformer weight matrix W?,multiple_choice,[LoRA-Quantization-Basics],"[""It fine-tunes the entire W matrix"", ""It inserts a low-rank adapter AB while keeping W frozen"", ""It replaces W with a quantized approximation"", ""It prunes W to fewer parameters""]",2
+2,In QLoRA the base model is commonly quantized to how many bits in the example given in the document?,fill_in_the_blank,[LoRA-Quantization-Basics],,4
+3,What symbol does the document use to denote the quantization error between the quantized weight and the original full-precision weight?,multiple_choice,[LoRA-Quantization-Basics],"[""\u03b4 (delta)"", ""\u03b5 (epsilon)"", ""\u03b7 (eta)"", ""\u03ba (kappa)""]",2

@@ -15,19 +15,22 @@
 *.log
 
 # --- Databases and Data Stores ---
-chroma_db/          
+chroma_db*          
 *.sqlite
 *.sqlite3
 *.db
 
 .pytest_cache*
 alembic*
+results*
+plots*
 
 # LLM plannar
 DEVELOPMENT_PLAN.md
 ARCHITECTURE.md
 TESTING_STRATEGY.md
 IMPROVEMENT.md
+LLMaS_plan.md
 Plan_Profile-Centric_FrontEnd.md
 frontend*
 

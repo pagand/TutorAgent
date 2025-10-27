@@ -225,6 +225,7 @@ def validate_results(output, expected_results):
     return overall_success
 
 def main():
+    print("Make sure the db is correct and the config file has the test cases and questions.")
     if not check_server_status():
         sys.exit(1)
 

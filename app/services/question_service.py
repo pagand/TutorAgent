@@ -84,23 +84,22 @@ class QuestionService:
     def get_all_skills(self) -> List[str]:
         return list(self.skills)
 
-    def check_answer(self, question_id: int, user_answer: str) -> Optional[bool]:
-        """Checks if the user's answer is correct based on the question type."""
-        question = self.get_question_by_id(question_id)
-        if not question:
-            return None
-
-        user_answer_stripped = str(user_answer).strip()
-        correct_answer_stripped = str(question.correct_answer).strip()
-
-        # Polymorphic answer checking
-        if question.question_type == "multiple_choice":
-            # Frontend sends 1-based index as a string
-            return user_answer_stripped == correct_answer_stripped
+    def check_answer(self, question: Question, user_answer: str) -> bool:
+        """Validates a user's answer against the correct answer."""
+        logger.debug(f"Checking answer for Q{question.question_number}. User answer: '{user_answer}', Correct answer: '{question.correct_answer}'")
         
-        # Default behavior for fill_in_the_blank and any other potential types
-        # Case-insensitive and whitespace-insensitive comparison
-        return user_answer_stripped.lower() == correct_answer_stripped.lower()
+        user_answer_clean = user_answer.strip().lower()
+        correct_answer_clean = question.correct_answer.lower()
+
+        if question.question_type == "fill_in_the_blank":
+            return user_answer_clean == correct_answer_clean
+        
+        if question.question_type == "multiple_choice":
+            # For multiple choice, we strictly check the 1-based index.
+            return user_answer_clean == correct_answer_clean
+
+        # Default fallback for any other future question types
+        return user_answer_clean == correct_answer_clean
 
 # Instantiate the service globally or manage via dependency injection
 question_service = QuestionService()

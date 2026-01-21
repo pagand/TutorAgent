@@ -534,5 +534,56 @@ if __name__ == "__main__":
     print("-" * 20)
 
 
+    # --- Verification Test for Skipped Question Logic ---
+    print("\n--- Verifying Refactor: Skipped Question Logic ---")
+    user_id_skip = f"skip_test_user_{int(time.time())}"
+    if create_user(user_id_skip):
+        # 1. Get initial mastery for a skill
+        profile_before = requests.get(f"{base_url}/users/{user_id_skip}/profile").json()
+        mastery_before = 0.2 # Default
+        for skill in profile_before.get("skill_mastery", []):
+            if skill['skill_id'] == '[LoRA-Quantization-Basics]':
+                mastery_before = skill['mastery_level']
+        print(f"Initial mastery for [LoRA-Quantization-Basics]: {mastery_before}")
+
+        # 2. Submit a skipped answer
+        print("\n1. Submitting a skipped answer...")
+        skip_payload = {
+            "user_id": user_id_skip,
+            "question_number": 1,
+            "skipped": True
+        }
+        skip_response = requests.post(f"{base_url}/answer/", json=skip_payload)
+        print(f"Status Code for skipped answer: {skip_response.status_code}")
+
+        # 3. Fetch profile and verify mastery is unchanged and skip is logged
+        print("\n2. Fetching profile to verify...")
+        profile_after = requests.get(f"{base_url}/users/{user_id_skip}/profile").json()
+        mastery_after = 0.2 # Default
+        for skill in profile_after.get("skill_mastery", []):
+            if skill['skill_id'] == '[LoRA-Quantization-Basics]':
+                mastery_after = skill['mastery_level']
+        print(f"Mastery after skip: {mastery_after}")
+        
+        print("\n" + "="*60)
+        print(">>> VERIFICATION STEP <<<")
+        print("Verifying BKT mastery was not changed by the skipped question...")
+        if mastery_before == mastery_after:
+            print("\nSUCCESS: BKT mastery is unchanged.")
+        else:
+            print(f"\nERROR: BKT mastery changed. Before: {mastery_before}, After: {mastery_after}")
+        
+        history = profile_after.get("interaction_history", [])
+        if history and history[0].get("user_answer") is None:
+             print("\nSUCCESS: Interaction log correctly shows a skipped answer (user_answer is null).")
+        else:
+             print("\nERROR: Interaction log does not correctly reflect the skipped answer.")
+        print("="*60)
+
+    else:
+        print(f"Error: Could not create user '{user_id_skip}'.")
+    print("-" * 20)
+
+
     if args.clear_db:
         clear_test_database(interactive=False)

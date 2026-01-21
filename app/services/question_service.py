@@ -90,16 +90,28 @@ class QuestionService:
         
         user_answer_clean = user_answer.strip().lower()
         correct_answer_clean = question.correct_answer.lower()
-
-        if question.question_type == "fill_in_the_blank":
-            return user_answer_clean == correct_answer_clean
         
         if question.question_type == "multiple_choice":
             # For multiple choice, we strictly check the 1-based index.
             return user_answer_clean == correct_answer_clean
 
-        # Default fallback for any other future question types
-        return user_answer_clean == correct_answer_clean
+        # For text answers: Check if ALL words in the correct answer appear in the user's answer
+        # This handles prefixes, suffixes, and extra words.
+        # e.g. Correct: "good teacher" -> tokens: ["good", "teacher"]
+        # User: "he is a goodteachers" -> "good" is in "goodteachers", "teacher" is in "goodteachers" -> True
+        
+        # Simple tokenization by splitting on whitespace
+        correct_tokens = [t for t in correct_answer_clean.split() if t]
+        
+        if not correct_tokens:
+            return user_answer_clean == correct_answer_clean
+            
+        # Check if every correct token exists as a substring in the user answer
+        for token in correct_tokens:
+            if token not in user_answer_clean:
+                return False
+                
+        return True
 
 # Instantiate the service globally or manage via dependency injection
 question_service = QuestionService()

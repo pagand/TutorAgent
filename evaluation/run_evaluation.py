@@ -1,5 +1,4 @@
 import re
-import uuid
 import json
 from datetime import datetime
 import os
@@ -15,7 +14,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from prepare_data import convert_evaluation_questions
+from prepare_data import convert_evaluation_questions, SOURCE_QUESTIONS_PATH
 from app.utils.config import settings # Import settings to access API key
 import google.generativeai as genai
 import PyPDF2
@@ -24,7 +23,7 @@ import PyPDF2
 BASE_URL = "http://127.0.0.1:8000"
 PERSONAS_CONFIG_PATH = "evaluation/configs/personas.yaml"
 EXPERIMENTS_CONFIG_PATH = "evaluation/configs/experiments.yaml"
-QUESTIONS_PATH = "evaluation/data/evaluation_questions.csv" # Use the human-readable source
+QUESTIONS_PATH = SOURCE_QUESTIONS_PATH
 EVALUATION_PDF_PATH = "evaluation/data/evaluation_source.pdf"
 RESULTS_DIR = "evaluation/results"
 
@@ -71,6 +70,51 @@ def parse_llm_answer(persona_name: str, raw_answer: str) -> str:
             return match.group(1).strip()
     return raw_answer.strip()
 
+# --- Knowledge Base Helper ---
+def _update_knowledge_base(student, question: pd.Series, is_correct: bool, correct_answer_index: str, hint_text: str | None):
+    """
+    Formats and adds a memory of an interaction to the student's knowledge base.
+    A memory is only added if the student received a hint OR answered correctly.
+    """
+    if not hint_text and not is_correct:
+        return  # Do not learn anything if the attempt was wrong and no hint was given
+
+    # Initialize the "learned" section if it's the first memory
+    if len(student.knowledge_base) < 2 and student.knowledge_base:
+        # This assumes knowledge_base[0] is the PDF text if it exists
+        student.knowledge_base.append("\n\n--- Things Learned So Far ---")
+    elif not student.knowledge_base:
+        student.knowledge_base.append("\n\n--- Things Learned So Far ---")
+
+
+    question_text = question['question_text']
+    
+    memory_parts = [f'- Question: "{question_text}"']
+
+    if hint_text:
+        memory_parts.append(f'Hint Received: "{hint_text}"')
+
+    if is_correct:
+        correct_answer_text = ""
+        if question['question_type'] == 'multiple_choice' and correct_answer_index and correct_answer_index.isdigit():
+            try:
+                options_list = str(question['options']).split('|')
+                answer_index = int(correct_answer_index) - 1
+                if 0 <= answer_index < len(options_list):
+                    correct_answer_text = options_list[answer_index]
+            except (ValueError, IndexError):
+                correct_answer_text = correct_answer_index  # Fallback
+        else:
+            correct_answer_text = correct_answer_index  # For FITB
+        
+        if correct_answer_text:
+            memory_parts.append(f'Correct Answer: "{correct_answer_text}"')
+
+    memory = " | ".join(memory_parts)
+    student.knowledge_base.append(memory)
+    print(f"[{student.user_id}] Added to knowledge base: {memory}")
+
+
 # --- Simulated Student Class ---
 class SimulatedStudent:
     """Represents an LLM-based agent simulating a student."""
@@ -81,16 +125,18 @@ class SimulatedStudent:
         
         knowledge_source = self.persona.get('initial_knowledge_prompt', '')
         print(f"Found knowledge source for persona '{self.persona['name']}': {knowledge_source}")
+        
+        # Knowledge base is now a list to keep hints separate and clean
+        self.knowledge_base = [] 
+        
         if knowledge_source.startswith('[PDF_TEXT_PERCENT:'):
             try:
                 percentage = int(knowledge_source.split(':')[1].strip(']'))
-                self.knowledge_base = get_text_from_pdf(EVALUATION_PDF_PATH, percentage)
+                initial_knowledge = get_text_from_pdf(EVALUATION_PDF_PATH, percentage)
+                if initial_knowledge:
+                    self.knowledge_base.append(initial_knowledge)
             except (ValueError, IndexError):
-                self.knowledge_base = ""
-        elif knowledge_source == "[USE_OWN_KNOWLEDGE]":
-            self.knowledge_base = "[USE_OWN_KNOWLEDGE]"
-        else:
-            self.knowledge_base = ""
+                pass # Knowledge base remains empty
         
         if not settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is not set in the environment.")
@@ -98,84 +144,145 @@ class SimulatedStudent:
         self.llm_client = genai.GenerativeModel(settings.google_model_name)
         
         print(f"Initialized student: {self.user_id} with persona '{self.persona['name']}'")
-        print(f"Knowledge base seeded with {len(self.knowledge_base.split())} words.")
+        # Report initial knowledge based on the first element if it exists
+        initial_word_count = len(self.knowledge_base[0].split()) if self.knowledge_base else 0
+        print(f"Knowledge base seeded with {initial_word_count} words.")
 
     def _get_system_prompt(self) -> str:
-        # ... (rest of the class is correct)
-        persona_name = self.persona['name']
-        guess_prob = self.persona.get('guess_probability', 0.5)
-        
-        base_instruction = f"""
-You are role-playing as a student.
-- If you are unsure of an answer, you have two choices: either make a logical guess based on your limited KNOWLEDGE BASE, or respond with the exact phrase "I don't know.".
-- You are {guess_prob*100:.0f}% likely to guess and {100-guess_prob*100:.0f}% likely to say "I don't know.".
-- CRITICAL: If you are given a `TUTOR HINT`, you MUST use it to re-evaluate your previous answer and provide a new, improved response. Do not simply repeat your old answer.
-"""
-        if "Struggling" in persona_name or "Anxious" in persona_name:
-            return f"{base_instruction}\n- You are finding the material difficult and may make mistakes."
-        elif "Confident" in persona_name:
-            return f"{base_instruction}\n- You are a confident student and should answer decisively. Avoid saying 'I don't know' unless absolutely necessary."
-        elif "Expert" in persona_name:
-            return """
-You are role-playing as an expert in this field.
-- First, answer the question using your own extensive knowledge.
-- After providing your answer, you MUST then consult the provided KNOWLEDGE BASE.
-- Add a short, second paragraph to your response starting with "Verification:". In this paragraph, state whether the knowledge base confirms your answer, contradicts it, or provides insufficient information.
-"""
-        return base_instruction
+        # Impartial Evaluator Prompt
+        return """
+You are an impartial Knowledge Base Evaluator.
+Your task is to analyze the provided [KNOWLEDGE BASE] and determine if it contains the answer to the [QUESTION].
 
-    def answer_question(self, question: pd.Series, hint: str | None = None, previous_answer: str | None = None) -> str:
+**INSTRUCTIONS:**
+1. **Analyze:** Search the [KNOWLEDGE BASE] (including "Things Learned So Far" and "IMMEDIATE HINT") for the answer.
+2. **Evaluate Confidence:** Assign a score (0-100) representing how supported the answer is by the text.
+    - 100: The exact answer is explicitly stated.
+    - 75: The answer is strongly implied or requires a minor logical step.
+    - 50: Partial information is present, or multiple options are plausible.
+    - 25: Very little relevant information; mostly guessing.
+    - 0: No relevant information found.
+3. **List Plausible Options:**
+    - If **Multiple Choice**: List the indices (e.g., ["1", "3"]) of all options that are NOT contradicted by the text. Eliminate clearly wrong ones.
+    - If **Fill-in-the-Blank**: List the most likely phrase(s) found in the text. If unknown, return [""].
+4. **Format:** Output ONLY a JSON object.
+
+**JSON FORMAT:**
+{
+  "score": <int 0-100>,
+  "options": ["<option1>", "<option2>", ...]
+}
+"""
+
+    def answer_question(self, question: pd.Series, hint: str | None = None, previous_answer: str | None = None) -> tuple[str, str, str, list]:
         options_text = ""
         if question['question_type'] == 'multiple_choice':
             options_list = str(question['options']).split('|')
-            options_text = "\n".join(f"- {opt}" for opt in options_list)
+            options_text = "\n".join(f"{i+1}. {opt}" for i, opt in enumerate(options_list))
             options_text = f"\n**Multiple Choice Options:**\n{options_text}"
 
-        hint_text = f"**TUTOR HINT:**\n{hint}\n" if hint else ""
-        previous_answer_text = f"Your previous answer was '{previous_answer}', which was INCORRECT. You MUST provide a different answer based on the TUTOR HINT.\n" if previous_answer else ""
-
-        knowledge_text = f"**KNOWLEDGE BASE (for verification only):**\n---\n{get_text_from_pdf(EVALUATION_PDF_PATH, 100)}\n---" if self.persona['name'] == "Expert Student" else f"**KNOWLEDGE BASE:**\n---\n{self.knowledge_base}\n---"
-
+        # --- Build Knowledge Context ---
+        knowledge_base_text = "\n".join(self.knowledge_base)
+        
         prompt = f"""
 {self._get_system_prompt()}
-{knowledge_text}
-{previous_answer_text}
-**QUESTION:**
+
+[KNOWLEDGE BASE]
+{knowledge_base_text}
+
+[IMMEDIATE HINT]
+{hint if hint else "None"}
+
+[QUESTION]
 {question['question_text']}
 {options_text}
-{hint_text}
-**INSTRUCTIONS FOR YOUR ANSWER:**
-- If the question is multiple-choice, respond with only the full text of the single best option.
-- If the question is fill-in-the-blank, respond with only the word or short phrase that fills the blank.
-- Follow all instructions in your role-playing persona.
 
-Your Answer:
+Provide your evaluation in JSON format:
 """
-        print(f"[{self.user_id}] Generating answer for question: {question['question_text']}")
+        print(f"[{self.user_id}] Evaluating question: {question['question_text']}")
         try:
             response = self.llm_client.generate_content(prompt)
-            return response.text.strip() if response.parts else "Error: Blocked by API"
+            raw_response = response.text.strip()
+            
+            # Clean up potential markdown formatting (```json ... ```)
+            clean_json = raw_response.replace("```json", "").replace("```", "").strip()
+            data = json.loads(clean_json)
+            
+            confidence = data.get("score", 0)
+            plausible = data.get("options", [])
+            
+            print(f"   -> Score: {confidence}, Options: {plausible}")
+            
+            # --- Systematic Decision Logic ---
+            # guess_probability acts as Risk Tolerance (0.0 = Coward, 1.0 = Daredevil)
+            # Threshold = (1 - Risk Tolerance) * 100
+            
+            risk_tolerance = self.persona.get('guess_probability', 0.5)
+            confidence_threshold = (1.0 - risk_tolerance) * 100
+            
+            final_answer = "I don't know"
+            
+            # Check if sufficient confidence AND plausible options exist
+            if confidence >= confidence_threshold and plausible and plausible != [""]:
+                # Pick randomly from the plausible set
+                final_answer = random.choice(plausible)
+            
+            # Return raw_response (JSON) for debug log, but final_answer (String) for CSV/Logic
+            return prompt, raw_response, str(final_answer), plausible
+
         except Exception as e:
-            print(f"[{self.user_id}] ERROR calling LLM API: {e}")
-            return "Error: LLM API call failed."
+            print(f"[{self.user_id}] ERROR in answer generation: {e}")
+            return prompt, "Error", "I don't know", []
 
     def learn_from_hint(self, hint_text: str):
-        print(f"[{self.user_id}] Learning from hint: {hint_text}")
-        self.knowledge_base += f"\n\nTutor Hint: {hint_text}"
+        # This method is now a placeholder; learning is handled by _update_knowledge_base
+        print(f"[{self.user_id}] Received hint: {hint_text}")
+        pass
 
     def decide_to_request_hint(self) -> bool:
         return random.random() < self.persona.get('hint_request_probability', 1.0)
 
-    def rate_hint(self, hint_style: str) -> int | None:
-        if random.random() >= self.persona.get('give_feedback_probability', 1.0):
-            return None
-        if hint_style not in self.hint_style_experience:
-            return 3 
-        was_successful_last_time = self.hint_style_experience[hint_style]
-        return 5 if was_successful_last_time else 1
+    def rate_hint(self, is_correct: bool, is_skipped: bool) -> int:
+        """Deterministic rating logic: 5=Correct, 3=Skip, 1=Wrong."""
+        if is_skipped:
+            return 3
+        if is_correct:
+            return 5
+        return 1
 
     def update_hint_experience(self, hint_style: str, was_successful: bool):
         self.hint_style_experience[hint_style] = was_successful
+
+    def get_simulated_think_time(self) -> int:
+        """Generates a random think time based on persona."""
+        min_ms = self.persona.get('min_think_time_ms', 3000)
+        max_ms = self.persona.get('max_think_time_ms', 10000)
+        return random.randint(min_ms, max_ms)
+
+def _proxy_backend_validation_for_simulation(question: pd.Series, user_answer: str) -> bool:
+    """
+    PROXY FUNCTION: Duplicates the backend's validation logic (app.services.question_service.check_answer).
+    """
+    correct_answer_clean = question['correct_answer'].strip().lower()
+    user_answer_clean = user_answer.strip().lower()
+    
+    if question['question_type'] == 'multiple_choice':
+        return user_answer_clean == correct_answer_clean
+    
+    # Token-based inclusion (Option C)
+    stop_words = {"a", "an", "the", "of", "and", "in", "on", "at", "to", "is", "are", "was", "were"}
+    correct_tokens = [t for t in correct_answer_clean.split() if t not in stop_words]
+    
+    if not correct_tokens:
+        correct_tokens = [t for t in correct_answer_clean.split() if t]
+
+    if not correct_tokens:
+        return user_answer_clean == correct_answer_clean
+        
+    for token in correct_tokens:
+        if token not in user_answer_clean:
+            return False
+    return True
 
 # --- API Client Class ---
 class EvaluationRunner:
@@ -192,211 +299,292 @@ class EvaluationRunner:
         response.raise_for_status()
         print(f"[{user_id}] Preferences set to: {tutor_config}")
 
-# --- Main Simulation Logic ---
+# --- New Logging and Simulation Logic ---
+def _generate_run_id(experiment: dict, persona: dict) -> str:
+    """Creates a unique, descriptive ID for a single simulation run."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{experiment['name'].replace(' ', '_')}_{persona['name'].replace(' ', '_')}_{timestamp}"
+
+def _log_csv_event(
+    results_log: list, interaction_id: str, question: pd.Series,
+    attempt_number: str, event_type: str, simulated_duration_ms: int,
+    common_log_data: dict, event_specific_data: dict
+):
+    """A centralized function to append a new event row to the results list for the CSV."""
+    log_entry = {
+        "interaction_id": interaction_id,
+        "question_number": int(question['question_number']),
+        "skill_id": question['skill_id'],
+        "difficulty": question['difficulty'],
+        "attempt_number": attempt_number,
+        "event_type": event_type,
+        "simulated_duration_ms": simulated_duration_ms,
+        **common_log_data,
+        **event_specific_data
+    }
+    results_log.append(log_entry)
+
+
+def _run_question_attempt(
+    question: pd.Series, student: 'SimulatedStudent', runner: 'EvaluationRunner',
+    attempt_type: str, cumulative_attempt_num: int, results_log: list, detailed_log_dir: str,
+    run_id: str, experiment_name: str, persona_name: str
+) -> tuple[bool, bool]:
+    """
+    Runs a SINGLE attempt for a question. 
+    Returns: (is_correct, is_skipped)
+    """
+    interaction_id = datetime.now().strftime("%H:%M:%S.%f")
+    attempt_str = f"revisit_{cumulative_attempt_num}" if attempt_type == 'revisit' else str(cumulative_attempt_num)
+    
+    print(f"--- Question {int(question['question_number'])} Attempt {attempt_str} (ID: {interaction_id}) ---")
+
+    json_log_path = os.path.join(detailed_log_dir, f"{interaction_id.replace(':', '_').replace('.', '_')}.json")
+    json_log_for_attempt = {
+        "interaction_id": interaction_id, "run_id": run_id, "user_id": student.user_id,
+        "experiment_name": experiment_name, "persona_name": persona_name,
+        "question_number": int(question['question_number']), "attempt_number": attempt_str,
+        "pre_attempt_knowledge_base": "\n".join(student.knowledge_base),
+        "events": []
+    }
+
+    simulated_duration_ms = student.get_simulated_think_time()
+    proactive_offered = False
+    hint_data = None
+    hint_trigger = "NONE"
+    final_hint_text = None
+
+    # 1. Proactive Intervention Check
+    if cumulative_attempt_num == 1:
+        payload = { "user_id": student.user_id, "question_number": int(question['question_number']), "time_spent_ms": simulated_duration_ms }
+        response = runner.session.post(f"{BASE_URL}/intervention-check", json=payload)
+        proactive_offered = response.json().get('intervention_needed', False)
+        print(f"[{student.user_id}] Proactive check (waited {simulated_duration_ms}ms): {proactive_offered}")
+        if proactive_offered and random.random() < student.persona.get('accept_proactive_hint_probability', 1.0):
+            hint_trigger = "PROACTIVE_ACCEPTED"
+        elif proactive_offered:
+            hint_trigger = "PROACTIVE_IGNORED"
+
+    # 2. Manual Hint Request Logic
+    if hint_trigger == "NONE" and student.decide_to_request_hint() and "No Hints" not in experiment_name:
+        hint_timing = student.persona.get("hint_request_timing")
+        if cumulative_attempt_num == 1 and hint_timing == "before_answer":
+            hint_trigger = "MANUAL_BEFORE_ANSWER"
+        elif cumulative_attempt_num > 1:
+            hint_trigger = "MANUAL_AFTER_FEEDBACK"
+
+    # 3. Fetch Hint
+    if hint_trigger in ["PROACTIVE_ACCEPTED", "MANUAL_BEFORE_ANSWER", "MANUAL_AFTER_FEEDBACK"]:
+        print(f"[{student.user_id}] Requesting hint (Trigger: {hint_trigger}).")
+        payload = {"user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": "Not provided"}
+        response = runner.session.post(f"{BASE_URL}/hints", json=payload)
+        if response.status_code == 200:
+            hint_data = response.json()
+            final_hint_text = hint_data.get('hint')
+            student.learn_from_hint(final_hint_text)
+            _log_csv_event(
+                results_log, interaction_id, question, attempt_str, "HINT", simulated_duration_ms,
+                common_log_data={"proactive_offered": proactive_offered},
+                event_specific_data={ "mastery_after_event": hint_data.get("pre_hint_mastery"), "hint_trigger": hint_trigger, "hint_style_used": hint_data.get("hint_style"), "feedback_rating": None, "answer_submitted": None, "plausible_options": None, "is_correct": None }
+            )
+            json_log_for_attempt['events'].append({'type': 'HINT', 'details': { "trigger": hint_trigger, **hint_data }})
+            simulated_duration_ms = student.get_simulated_think_time()
+        else:
+            print(f"CRITICAL ERROR: Hint request failed with status {response.status_code}: {response.text}")
+            json_log_for_attempt['events'].append({'type': 'HINT_FAILED', 'details': { "trigger": hint_trigger, "status_code": response.status_code, "error": response.text }})
+
+    # 4. Generate Answer (unpack 4 values now)
+    prompt, raw_json_response, parsed_answer, plausible_options = student.answer_question(question, hint=final_hint_text, previous_answer=None)
+    
+    print(f"[{student.user_id}] Student's Parsed Answer: \"{parsed_answer}\" ")
+    answer_event_details = { "llm_prompt": prompt, "llm_raw_response": raw_json_response, "parsed_answer": parsed_answer }
+
+    # 5. Handle Skip/Answer and Feedback
+    # Fix: stricter check for "error" to avoid flagging "quantization error" as a skip
+    is_skip = "i don't know" in parsed_answer.lower() or parsed_answer.strip().lower().startswith("error")
+    
+    if not is_skip:
+        local_correct = _proxy_backend_validation_for_simulation(question, parsed_answer)
+        rating = student.rate_hint(is_correct=local_correct, is_skipped=False) if hint_data else None
+    else:
+        local_correct = False
+        rating = student.rate_hint(is_correct=False, is_skipped=True) if hint_data else None
+
+    payload = {"user_id": student.user_id, "question_number": int(question['question_number'])}
+    if is_skip:
+        payload["skipped"] = True
+        event_type = "SKIP"
+    else:
+        payload["user_answer"] = parsed_answer
+        event_type = "ANSWER"
+        
+    if hint_data:
+        payload.update({
+            "hint_shown": True, 
+            "hint_style_used": hint_data.get("hint_style"), 
+            "hint_text": final_hint_text, 
+            "pre_hint_mastery": hint_data.get("pre_hint_mastery"), 
+            "feedback_rating": rating 
+        })
+
+    # 6. Submit to Server
+    response = runner.session.post(f"{BASE_URL}/answer", json=payload)
+    tutor_feedback = response.json()
+    is_correct = tutor_feedback.get('correct', False)
+
+    if hint_data:
+        student.update_hint_experience(hint_data.get("hint_style"), is_correct)
+
+    _log_csv_event(
+        results_log, interaction_id, question, attempt_str, event_type, simulated_duration_ms,
+        common_log_data={"proactive_offered": proactive_offered},
+        event_specific_data={ "answer_submitted": parsed_answer, "plausible_options": str(plausible_options), "is_correct": is_correct, "mastery_after_event": tutor_feedback.get('current_mastery'), "hint_trigger": hint_trigger, "hint_style_used": hint_data.get("hint_style") if hint_data else None, "feedback_rating": rating }
+    )
+    answer_event_details['tutor_feedback'] = tutor_feedback
+    json_log_for_attempt['events'].append({'type': event_type, 'details': answer_event_details})
+    with open(json_log_path, 'w') as f: json.dump(json_log_for_attempt, f, indent=2)
+
+    _update_knowledge_base(student, question, is_correct, tutor_feedback.get('correct_answer'), final_hint_text)
+    
+    return is_correct, is_skip
+
+
 def run_single_simulation(experiment: dict, persona: dict, questions: pd.DataFrame):
+    """Orchestrates a single simulation run for one experiment-persona combination."""
     print("\n" + "="*50)
     print(f"Starting simulation: Experiment '{experiment['name']}' with Persona '{persona['name']}'")
     print("="*50)
 
     student = SimulatedStudent(persona)
     runner = EvaluationRunner()
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_filename_base = f"{experiment['name'].replace(' ', '_')}_{persona['name'].replace(' ', '_')}_{timestamp}"
-    detailed_log_dir = os.path.join(RESULTS_DIR, results_filename_base)
+    run_id = _generate_run_id(experiment, persona)
+    detailed_log_dir = os.path.join(RESULTS_DIR, run_id)
     os.makedirs(detailed_log_dir, exist_ok=True)
 
     runner.create_user(student.user_id)
     runner.set_preferences(student.user_id, experiment['tutor_config'])
 
-    results = []
-    skipped_questions = []
-    max_tries = experiment.get('max_tries', 1)
-
-    print(f"\n--- Starting Initial Question Loop (Max Tries per Question: {max_tries}) ---")
-    for _, question in questions.iterrows():
-        is_correct = False
-        last_answer = None
+    results_log = []
+    unresolved_questions = list(questions.to_dict('records'))
+    max_tries = experiment.get('max_tries', 2)
+    
+    question_attempts_tracker = {int(q['question_number']): 0 for q in unresolved_questions}
+    
+    # --- Round 1 ---
+    print(f"\n--- Round 1: Initial Attempts ---")
+    questions_for_revisit = []
+    
+    for question_dict in unresolved_questions:
+        question = pd.Series(question_dict)
+        q_num = int(question['question_number'])
         
-        for i in range(max_tries):
-            attempt_num = i + 1
-            interaction_id = str(uuid.uuid4())
-            
-            log_entry = {
-                "timestamp": datetime.now().isoformat(), "interaction_id": interaction_id,
-                "experiment_name": experiment['name'], "persona_name": persona['name'],
-                "user_id": student.user_id, "question_number": int(question['question_number']),
-                "skill_id": question['skill_id'], "difficulty": question['difficulty'], 
-                "attempt": attempt_num, "skipped": False,
-                "simulated_time_spent_ms": None, "proactive_check_result": None,
-                "initial_answer": None, "post_hint_answer": None,
-                "initial_correctness": None, "initial_mastery": None,
-                "feedback_rating": None, "post_hint_correctness": None, "post_hint_mastery": None,
-                "revisit_correctness": None, "revisit_mastery": None,
-                "hint_style_used": None
-            }
-
-            detailed_log = { "interaction_id": interaction_id, "pre_answer_knowledge_base": student.knowledge_base }
-            print(f"--- Question {log_entry['question_number']} Attempt {attempt_num} ({log_entry['skill_id']}) ---")
-
-            hint_data = None
-            if attempt_num == 1:
-                wait_time = student.persona.get('proactive_wait_seconds', 0)
-                if wait_time > 0:
-                    log_entry['simulated_time_spent_ms'] = wait_time * 1000
-                    time.sleep(1)
-                    payload = { "user_id": student.user_id, "question_number": int(question['question_number']), "time_spent_ms": wait_time * 1000 }
-                    response = runner.session.post(f"{BASE_URL}/intervention-check", json=payload)
-                    intervention_needed = response.json().get('intervention_needed', False)
-                    log_entry["proactive_check_result"] = intervention_needed
-                    print(f"[{student.user_id}] Proactive intervention check result: {intervention_needed}")
-
-                    if intervention_needed:
-                        acceptance_prob = float(student.persona.get('accept_proactive_hint_probability', 1.0))
-                        if random.random() < acceptance_prob:
-                            print(f"[{student.user_id}] Accepting proactive hint.")
-                            hint_payload = {"user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": "Not provided"}
-                            hint_response = runner.session.post(f"{BASE_URL}/hints", json=hint_payload)
-                            if hint_response.status_code == 200:
-                                hint_data = hint_response.json()
-                                student.learn_from_hint(hint_data['hint'])
-                        else:
-                            print(f"[{student.user_id}] Ignoring proactive hint.")
-
-            if hint_data is None:
-                hint_timing = student.persona.get("hint_request_timing")
-                should_request_hint = student.decide_to_request_hint() and "No Hints" not in experiment['name']
-
-                if (attempt_num == 1 and hint_timing == "before_answer" and should_request_hint):
-                    print(f"[{student.user_id}] Requesting hint before answering.")
-                    payload = {"user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": "Not provided"}
-                    response = runner.session.post(f"{BASE_URL}/hints", json=payload)
-                    if response.status_code == 200:
-                        hint_data = response.json()
-                        student.learn_from_hint(hint_data['hint'])
-                elif (attempt_num > 1 and hint_timing == "after_feedback" and should_request_hint):
-                    print(f"[{student.user_id}] Requesting hint after incorrect answer.")
-                    payload = {"user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": last_answer}
-                    response = runner.session.post(f"{BASE_URL}/hints", json=payload)
-                    if response.status_code == 200:
-                        hint_data = response.json()
-                        student.learn_from_hint(hint_data['hint'])
-
-            raw_answer = student.answer_question(question, hint=hint_data['hint'] if hint_data else None, previous_answer=last_answer)
-            answer = parse_llm_answer(student.persona['name'], raw_answer)
-            print(f"[{student.user_id}] Student's Answer: \"{answer}\"")
-            
-            if attempt_num == 1:
-                log_entry["initial_answer"] = raw_answer
-            else:
-                log_entry["post_hint_answer"] = raw_answer
-
-            last_answer = answer
-
-            if "i don't know" in answer.lower() or "error:" in answer.lower():
-                log_entry["skipped"] = True
-                if question['question_number'] not in [q['question_number'] for q in skipped_questions]:
-                    skipped_questions.append(question)
-                results.append(log_entry)
-                continue 
-
-            payload = {
-                "user_id": student.user_id, 
-                "question_number": int(question['question_number']), 
-                "user_answer": answer 
-            }
-
-            if hint_data:
-                detailed_log.update({
-                    "hint_text": hint_data.get("hint"),
-                    "hint_style_used": hint_data.get("hint_style"),
-                    "retrieved_context": hint_data.get("context"),
-                    "final_prompt": hint_data.get("final_prompt")
-                })
-                hint_style = hint_data.get("hint_style")
-                log_entry["hint_style_used"] = hint_style
-                rating = student.rate_hint(hint_style)
-                log_entry["feedback_rating"] = rating
-                
-                if rating is not None:
-                    payload["feedback_rating"] = rating
-                payload["hint_shown"] = True
-                payload["hint_style_used"] = hint_style
-                payload["hint_text"] = hint_data.get("hint")
-                payload["pre_hint_mastery"] = hint_data.get("pre_hint_mastery")
-
-            response = runner.session.post(f"{BASE_URL}/answer", json=payload)
-            tutor_feedback = response.json()
-            is_correct = tutor_feedback['correct']
-
-            if hint_data:
-                student.update_hint_experience(hint_data.get("hint_style"), is_correct)
-            
-            if hint_data or attempt_num > 1:
-                log_entry.update({ "post_hint_correctness": is_correct, "post_hint_mastery": tutor_feedback['current_mastery'] })
-            else:
-                log_entry.update({ "initial_correctness": is_correct, "initial_mastery": tutor_feedback['current_mastery'] })
-
-            print(f"[{student.user_id}] Tutor feedback: {tutor_feedback}")
-            
-            results.append(log_entry)
-            with open(os.path.join(detailed_log_dir, f"{interaction_id}.json"), 'w') as f: json.dump(detailed_log, f, indent=2)
-            
-            if is_correct:
-                skipped_questions = [q for q in skipped_questions if q['question_number'] != question['question_number']]
-                break
+        question_attempts_tracker[q_num] += 1
+        is_correct, is_skip = _run_question_attempt(
+            question, student, runner, "initial", question_attempts_tracker[q_num],
+            results_log, detailed_log_dir, run_id, experiment['name'], persona['name']
+        )
         
-    revisit_attempts = 0
-    max_revisits = 2 
-    while skipped_questions and revisit_attempts < max_revisits:
-        revisit_attempts += 1
-        print(f"\n--- Revisiting {len(skipped_questions)} Skipped Questions (Pass {revisit_attempts}) ---")
-        
-        questions_to_retry = skipped_questions[:]
-        skipped_questions.clear()
-
-        for question in questions_to_retry:
-            interaction_id = str(uuid.uuid4())
-            print(f"--- Re-attempting Question {question['question_number']} ---")
+        if is_correct: continue
+        if is_skip:
+            if question_attempts_tracker[q_num] < max_tries:
+                questions_for_revisit.append(question_dict)
+            continue
             
-            log_entry = {
-                "timestamp": datetime.now().isoformat(), "interaction_id": interaction_id,
-                "experiment_name": experiment['name'], "persona_name": persona['name'],
-                "user_id": student.user_id, "question_number": int(question['question_number']),
-                "skill_id": question['skill_id'], "difficulty": question['difficulty'], 
-                "attempt": max_tries + revisit_attempts, "skipped": False,
-                "initial_answer": "I don't know",
-                "revisit_correctness": None, "revisit_mastery": None,
-            }
+        # Immediate Retry for Failure
+        if not is_correct and not is_skip and question_attempts_tracker[q_num] < max_tries:
+             question_attempts_tracker[q_num] += 1
+             _run_question_attempt(
+                question, student, runner, "immediate_retry", question_attempts_tracker[q_num],
+                results_log, detailed_log_dir, run_id, experiment['name'], persona['name']
+            )
 
-            raw_answer = student.answer_question(question, hint=None, previous_answer="I don't know")
-            answer = parse_llm_answer(student.persona['name'], raw_answer)
-            print(f"[{student.user_id}] Student's Answer: \"{answer}\"")
+    # --- Round 2 ---
+    if questions_for_revisit:
+        print(f"\n--- Round 2: Revisiting {len(questions_for_revisit)} Skipped Questions ---")
+        for question_dict in questions_for_revisit:
+            question = pd.Series(question_dict)
+            q_num = int(question['question_number'])
+            
+            question_attempts_tracker[q_num] += 1
+            is_correct, is_skip = _run_question_attempt(
+                question, student, runner, "revisit", question_attempts_tracker[q_num],
+                results_log, detailed_log_dir, run_id, experiment['name'], persona['name']
+            )
+            
+            if not is_correct and not is_skip and question_attempts_tracker[q_num] < max_tries:
+                 question_attempts_tracker[q_num] += 1
+                 _run_question_attempt(
+                    question, student, runner, "revisit_retry", question_attempts_tracker[q_num],
+                    results_log, detailed_log_dir, run_id, experiment['name'], persona['name']
+                )
 
-            log_entry["post_hint_answer"] = raw_answer
+    # --- Metrics ---
+    results_df = pd.DataFrame(results_log)
+    
+    final_status_map = {}
+    for q_num, group in results_df.groupby('question_number'):
+        last_event = group.sort_values('interaction_id').iloc[-1]
+        if last_event['event_type'] == 'ANSWER' and last_event['is_correct']:
+            final_status_map[q_num] = 'CORRECT'
+        elif last_event['event_type'] == 'SKIP':
+            final_status_map[q_num] = 'SKIPPED'
+        else: 
+            final_status_map[q_num] = 'INCORRECT'
+    results_df['final_status'] = results_df['question_number'].map(final_status_map)
 
-            if "i don't know" in answer.lower() or "error:" in answer.lower():
-                log_entry["skipped"] = True
-                skipped_questions.append(question)
-                print(f"[{student.user_id}] Still doesn't know.")
-            else:
-                payload = { "user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": answer }
-                response = runner.session.post(f"{BASE_URL}/answer", json=payload)
-                tutor_feedback = response.json()
-                is_correct = tutor_feedback['correct']
-                log_entry.update({ "revisit_correctness": is_correct, "revisit_mastery": tutor_feedback['current_mastery'] })
-                print(f"[{student.user_id}] Revisit Tutor feedback: {tutor_feedback}")
+    cum_actual_attempts = 0
+    cum_opportunities = 0
+    cum_correct = 0
+    unique_correct_q = set()
+    unique_seen_q = set()
+    
+    engagement_list = []
+    accuracy_list = []
+    grade_list = []
 
-            results.append(log_entry)
+    # Re-verify results_df order? It should be appended sequentially.
+    for _, row in results_df.iterrows():
+        event_type = row['event_type']
+        q_num = int(row['question_number'])
+        
+        unique_seen_q.add(q_num)
+        
+        if event_type == 'ANSWER':
+            cum_opportunities += 1
+            cum_actual_attempts += 1
+            if row['is_correct']:
+                cum_correct += 1
+                unique_correct_q.add(q_num)
+        elif event_type == 'SKIP':
+            cum_opportunities += 1
+            
+        engagement = cum_actual_attempts / cum_opportunities if cum_opportunities > 0 else 0
+        accuracy = cum_correct / cum_actual_attempts if cum_actual_attempts > 0 else 0
+        grade = len(unique_correct_q) / len(unique_seen_q) if unique_seen_q else 0
+        
+        engagement_list.append(engagement)
+        accuracy_list.append(accuracy)
+        grade_list.append(grade)
 
-    results_df = pd.DataFrame(results)
-    main_csv_path = os.path.join(RESULTS_DIR, f"{results_filename_base}.csv")
+    results_df['metric_engagement'] = engagement_list
+    results_df['metric_accuracy'] = accuracy_list
+    results_df['metric_grade'] = grade_list
+
+    main_csv_path = os.path.join(RESULTS_DIR, f"{run_id}.csv")
     results_df.to_csv(main_csv_path, index=False)
+
+    total_questions = len(questions)
+    final_correct = len(unique_correct_q) # Use the set length, which is safe.
+    final_grade_percent = (final_correct / total_questions) * 100 if total_questions > 0 else 0
 
     print("\n" + "="*50)
     print(f"Simulation finished. Main results saved to {main_csv_path}")
     print(f"Detailed logs saved in directory: {detailed_log_dir}")
+    print(f"\n--- FINAL METRICS ---")
+    print(f"Correct (Unique): {final_correct}/{total_questions} ({final_grade_percent:.1f}%)")
+    print(f"Total Correct Events: {cum_correct}")
     print("="*50)
+
 
 # --- Configuration Loading ---
 def load_config(path: str) -> dict:

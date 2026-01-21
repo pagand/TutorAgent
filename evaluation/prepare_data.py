@@ -1,10 +1,11 @@
 import pandas as pd
 import json
 import os
+from app.utils.config import settings
 
 # Define file paths
-SOURCE_QUESTIONS_PATH = os.path.join("evaluation", "data", "evaluation_questions.csv")
-SERVER_READY_PATH = os.path.join("evaluation", "data", "server_ready_questions.csv")
+SOURCE_QUESTIONS_PATH = os.path.join("evaluation", "data", "new_evaluation_questions.csv")
+SERVER_READY_PATH = settings.QUESTION_CSV_FILE_PATH 
 
 def convert_evaluation_questions():
     """

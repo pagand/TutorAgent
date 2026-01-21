@@ -4,7 +4,7 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
 
 ## Current Project Status
 
-**The project has successfully completed Stage 5.6.** The core backend is fully functional, including the RAG pipeline, BKT student modeling, a complete, adaptive personalization and feedback loop, persistent user data in a PostgreSQL database, and an expanded user model with interaction history.
+**The project has successfully completed Stage 7 (Formal Evaluation).** The core backend is fully functional, and the initial round of evaluation using the LLM-as-a-Student framework has yielded critical insights into the system's pedagogical effectiveness.
 
 * **✅ Implemented Features:**
     * FastAPI backend with endpoints for questions, hints, answers, user profiles, and preferences.
@@ -18,9 +18,10 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
     * **Adaptive Hint Selection:** An epsilon-greedy algorithm that balances exploiting the best-known hint style with exploring new ones.
     * **Multiple Question Types:** Support for `multiple_choice` and `fill_in_the_blank` questions.
     * Comprehensive, automated integration test suite using `pytest` and a custom validation script.
+    * **LLM-as-a-Student Evaluation Framework:** A complete, configurable framework for offline evaluation of the tutor's effectiveness.
 
 * **Next Immediate Goal:**
-    * **Implement Stage 6: User Interface (UI).** This involves building a Streamlit application for students to interact with the tutor and an admin dashboard for instructors.
+    * **Tune System Based on Evaluation Findings.** The immediate priority is to adjust system parameters based on the results of the formal evaluation. This includes lowering the `intervention_mastery_threshold` to make proactive hints less aggressive and improving hint prompts to be more Socratic. The secondary goal is to implement the full user interface (Stage 6).
 
 ## Project Setup
 
@@ -75,3 +76,10 @@ The project uses `pytest` for high-level integration testing.
     pytest -m stage5
     ```
 For more details on the testing strategy, see `TESTING_STRATEGY.md`.
+
+
+if changing the database:
+```bash
+alembic revision --autogenerate -m "the revision message"
+alembic upgrade head 
+```

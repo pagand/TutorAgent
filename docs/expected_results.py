@@ -62,5 +62,10 @@ EXPECTED_RESULTS = {
         {"type": "json_value_equals", "path": "Response for check (time below):.intervention_needed", "expected": False},
         {"type": "string_contains", "value": "User intervention preference is 'proactive' and time is above threshold. Intervention should be true."},
         {"type": "json_value_equals", "path": "Response for check (time above):.intervention_needed", "expected": True},
+    ],
+    "Verifying Refactor: Skipped Question Logic": [
+        {"type": "string_contains", "value": "Submitting a skipped answer..."},
+        {"type": "string_contains", "value": "SUCCESS: BKT mastery is unchanged."},
+        {"type": "string_contains", "value": "SUCCESS: Interaction log correctly shows a skipped answer (user_answer is null)."},
     ]
 }

@@ -19,7 +19,8 @@ router = APIRouter()
 class AnswerRequest(BaseModel):
     user_id: str
     question_number: int
-    user_answer: str
+    user_answer: str | None = None
+    skipped: bool = False
     time_taken_ms: int | None = None
     
     # Hint-related fields, only present if a hint was shown
@@ -48,7 +49,13 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Question not found")
 
     skill = question.skill
-    is_correct = question_service.check_answer(question, user_ans)
+    
+    if request.skipped:
+        is_correct = False
+    else:
+        if user_ans is None:
+            raise HTTPException(status_code=422, detail="user_answer cannot be null if skipped is false")
+        is_correct = question_service.check_answer(question, user_ans)
 
     result = await db.execute(select(SkillMastery).filter_by(user_id=user_id, skill_id=skill))
     skill_mastery = result.scalars().first()
@@ -58,13 +65,16 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
             user_id=user_id, 
             skill_id=skill, 
             mastery_level=settings.bkt_p_l0, 
-            consecutive_errors=0
+            consecutive_errors=0,
+            consecutive_skips=0
         )
         db.add(skill_mastery)
         await db.flush()
 
-    # Update BKT Mastery
-    updated_mastery_level = await bkt_service.update_mastery(user_id, skill, is_correct, existing_skill_mastery=skill_mastery)
+    if not request.skipped:
+        updated_mastery_level = await bkt_service.update_mastery(user_id, skill, is_correct, existing_skill_mastery=skill_mastery)
+    else:
+        updated_mastery_level = skill_mastery.mastery_level
     
     bkt_change_value = None
     if request.hint_shown:
@@ -74,16 +84,17 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
                 detail="If hint_shown is true, pre_hint_mastery and hint_style_used must be provided."
             )
         
-        bkt_change_value = updated_mastery_level - request.pre_hint_mastery
+        if not request.skipped:
+            bkt_change_value = updated_mastery_level - request.pre_hint_mastery
 
         await personalization_service.record_feedback(
             session=db,
             user_id=user_id,
             hint_style=request.hint_style_used,
-            bkt_change=bkt_change_value,
+            bkt_change=bkt_change_value or 0,
             rating=request.feedback_rating
         )
-        logger.info(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value:.4f}, Rating: {request.feedback_rating}")
+        logger.info(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value}, Rating: {request.feedback_rating}")
 
     log_entry = InteractionLog(
         user_id=user_id,
@@ -100,15 +111,25 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
     )
     db.add(log_entry)
 
-    if is_correct:
+    if request.skipped:
+        skill_mastery.consecutive_skips += 1
+        skill_mastery.consecutive_errors = 0
+    elif is_correct:
+        skill_mastery.consecutive_skips = 0
         skill_mastery.consecutive_errors = 0
     else:
+        skill_mastery.consecutive_skips = 0
         skill_mastery.consecutive_errors += 1
     db.add(skill_mastery)
 
-    intervention_needed = intervention.check_intervention(user_id, skill, time_taken,
-                                                                current_mastery=updated_mastery_level,
-                                                                consecutive_errors=skill_mastery.consecutive_errors)
+    intervention_needed = intervention.check_intervention(
+        user_id, 
+        skill, 
+        time_taken,
+        current_mastery=updated_mastery_level,
+        consecutive_errors=skill_mastery.consecutive_errors,
+        consecutive_skips=skill_mastery.consecutive_skips
+    )
 
     await db.commit()
 

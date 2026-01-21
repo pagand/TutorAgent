@@ -8,14 +8,14 @@ def check_intervention(
     skill: str, 
     time_taken_ms: int | None,
     current_mastery: float,
-    consecutive_errors: int
+    consecutive_errors: int,
+    consecutive_skips: int
 ) -> bool:
-    """Checks if intervention is needed based on time, mastery, and errors."""
+    """Checks if intervention is needed based on time, mastery, errors, and skips."""
 
-    # 1. Check Dynamic Time Taken first to ensure time-based tests are reliable.
+    # 1. Check Dynamic Time Taken
     if time_taken_ms is not None:
         base_limit = settings.intervention_time_limit_ms
-        # This balanced formula scales the multiplier between 0.8 and 1.2
         mastery_multiplier = 0.8 + (current_mastery * 0.4)
         adjusted_time_limit = base_limit * mastery_multiplier
         
@@ -25,7 +25,7 @@ def check_intervention(
             logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Time ({time_taken_ms}ms) > Adjusted Threshold ({adjusted_time_limit:.0f}ms)")
             return True
 
-    # 2. Check Mastery Threshold (Immediate check for struggling users)
+    # 2. Check Mastery Threshold
     if current_mastery < settings.intervention_mastery_threshold:
         logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Mastery ({current_mastery:.3f}) < Threshold ({settings.intervention_mastery_threshold})")
         return True
@@ -33,6 +33,11 @@ def check_intervention(
     # 3. Check Consecutive Errors
     if consecutive_errors >= settings.intervention_max_consecutive_errors:
         logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Errors ({consecutive_errors}) >= Threshold ({settings.intervention_max_consecutive_errors})")
+        return True
+        
+    # 4. Check Consecutive Skips
+    if consecutive_skips >= settings.intervention_max_consecutive_skips:
+        logger.info(f"Intervention Triggered (User: {user_id}, Skill: {skill}): Skips ({consecutive_skips}) >= Threshold ({settings.intervention_max_consecutive_skips})")
         return True
 
     logger.debug(f"No intervention triggered for User: {user_id}, Skill: {skill}")

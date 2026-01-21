@@ -42,6 +42,7 @@ class SkillMastery(Base):
     skill_id = Column(String, index=True)
     mastery_level = Column(Float, default=settings.bkt_p_l0)
     consecutive_errors = Column(Integer, default=0)
+    consecutive_skips = Column(Integer, default=0)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationship

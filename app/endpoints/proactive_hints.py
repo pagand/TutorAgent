@@ -58,9 +58,11 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
     if not skill_mastery:
         current_mastery = settings.bkt_p_l0
         consecutive_errors = 0
+        consecutive_skips = 0
     else:
         current_mastery = skill_mastery.mastery_level
         consecutive_errors = skill_mastery.consecutive_errors
+        consecutive_skips = skill_mastery.consecutive_skips
 
     # 5. Call the enhanced intervention logic
     is_needed = intervention.check_intervention(
@@ -68,7 +70,8 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
         skill=skill,
         time_taken_ms=time_spent,
         current_mastery=current_mastery,
-        consecutive_errors=consecutive_errors
+        consecutive_errors=consecutive_errors,
+        consecutive_skips=consecutive_skips
     )
 
     return InterventionCheckResponse(intervention_needed=is_needed)

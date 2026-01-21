@@ -25,7 +25,7 @@ alembic*
 results*
 plots*
 
-# LLM plannar
+# # LLM plannar
 DEVELOPMENT_PLAN.md
 ARCHITECTURE.md
 TESTING_STRATEGY.md

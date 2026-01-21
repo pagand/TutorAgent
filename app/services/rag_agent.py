@@ -166,8 +166,8 @@ def get_rag_chain(hint_style: str):
 
     base_prompt = PROMPT_LIBRARY.get(hint_style)
     if not base_prompt:
-        logger.warning(f"Hint style '{hint_style}' not found in PROMPT_LIBRARY. Falling back to 'Conceptual'.")
-        base_prompt = PROMPT_LIBRARY["Conceptual"]
+        logger.warning(f"Hint style '{hint_style}' not found in PROMPT_LIBRARY. Falling back to 'Socratic Question'.")
+        base_prompt = PROMPT_LIBRARY["Socratic Question"]
 
     rag_prompt = PromptTemplate.from_template(base_prompt.template)
 

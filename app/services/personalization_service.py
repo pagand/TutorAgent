@@ -56,9 +56,28 @@ class PersonalizationService:
         # --- Epsilon-Greedy Logic for 'adaptive' preference ---
         # In a real pytest environment, we would monkeypatch settings.exploration_rate
         # For the script runner, we temporarily hardcode it to 0.0 for predictable exploitation.
-        effective_exploration_rate = 0.0 # settings.exploration_rate
+        user = await get_user_or_create(session, user_id)
+        feedback_scores = user.feedback_scores or {}
+        
+        count = sum([b.get('count') for b in feedback_scores.values()])
 
-        if random.random() < effective_exploration_rate:
+        # Warm-up phase: Higher exploration (0.8) for the first 5 interactions
+        if count < 5:
+            effective_exploration_rate = settings.warmup_exploration_rate
+            logger.debug(f"User {user_id} in warm-up phase (count={count}). Using high exploration rate: {effective_exploration_rate}")
+        else:
+            effective_exploration_rate = settings.exploration_rate
+            
+        if feedback_scores:
+            average_ratings = {
+            style: data["total_rating"] / data["count"]
+            for style, data in feedback_scores.items() if data["count"] > 0
+            }
+        else:
+            average_ratings = {}
+
+        # make the exploration adaptive based on sparsity of the feedbacks (if low feedback >> more random selection)
+        if random.random() < effective_exploration_rate + (0.5/(count+1)):
             # Exploration: choose a random style
             available_styles = [s.value for s in HintStyle]
             chosen_style = random.choice(available_styles)
@@ -66,20 +85,9 @@ class PersonalizationService:
             return chosen_style
 
         # Exploitation: choose the best-known style
-        user = await get_user_or_create(session, user_id)
-        feedback_scores = user.feedback_scores
-        if not feedback_scores:
-            logger.debug(f"No feedback scores for user {user_id}. Defaulting to Conceptual.")
-            return HintStyle.CONCEPTUAL.value
-
-        average_ratings = {
-            style: data["total_rating"] / data["count"]
-            for style, data in feedback_scores.items() if data["count"] > 0
-        }
-
-        if not average_ratings:
-            logger.debug(f"No ratings yet for user {user_id}. Defaulting to Conceptual.")
-            return HintStyle.CONCEPTUAL.value
+        if not feedback_scores or not average_ratings:
+            logger.debug(f"No feedback scores for user {user_id}. Defaulting to Socratic Question.")
+            return HintStyle.SOCRATIC_QUESTION.value
 
         best_style = max(average_ratings, key=average_ratings.get)
         logger.info(f"Adaptive selection for user {user_id}: Exploiting best style '{best_style}'.")

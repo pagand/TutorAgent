@@ -8,11 +8,11 @@ load_dotenv(override=True)
 
 class Settings(BaseSettings):
     # PDF and ChromaDB Settings
-    # pdf_path: str = "evaluation/data/evaluation_source.pdf" 
-    # QUESTION_CSV_FILE_PATH: str = "evaluation/data/server_ready_questions.csv" 
+    pdf_path: str = "evaluation/data/evaluation_source.pdf" 
+    QUESTION_CSV_FILE_PATH: str = "evaluation/data/server_ready_questions.csv" 
 
-    pdf_path: str = "data/source_material.pdf"
-    QUESTION_CSV_FILE_PATH: str =  "data/questions.csv"
+    # pdf_path: str = "data/source_material.pdf"
+    # QUESTION_CSV_FILE_PATH: str =  "data/questions.csv"
 
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection_name: str = "ai_tutor_collection"
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     log_level: str = os.getenv("LOG_LEVEL", "DEBUG").upper()
 
     # general LLM config
-    max_output_tokens: int = 30 # for test
+    max_output_tokens: int = 100 # for test
 
     # --- LLM Provider Configuration ---
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama").lower()
@@ -54,12 +54,14 @@ class Settings(BaseSettings):
     bkt_p_s: float = 0.1   # Prob of slipping (knowing but answering wrong)
 
     # Intervention Controller Thresholds (Stage 3)
-    intervention_mastery_threshold: float = 0.4
+    intervention_mastery_threshold: float = 0.15
     intervention_max_consecutive_errors: int = 2
+    intervention_max_consecutive_skips: int = 1 # show hint if question was skipped
     intervention_time_limit_ms: int = 10000 # 10 seconds
 
     # Personalization Settings (Stage 4.5)
-    exploration_rate: float = 0.2  # 20% chance to explore a random hint style
+    exploration_rate: float = 0.2  # 20% chance to explore a random hint style (plus the adaptive count of available feedbacks)
+    warmup_exploration_rate: float = 0.8 # 80% chance to explore in the first 5 questions
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
     # --- Database Settings (Stage 5) ---

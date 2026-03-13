@@ -344,9 +344,13 @@ Analyze the references above and provide your evaluation in JSON format:
                 raw_response = response.text.strip()
                 llm_cache.set(cache_key, raw_response)
 
-            # Robust JSON extraction: Try to find all valid JSON blocks
-            # We use a non-greedy regex to find candidates
-            json_candidates = re.findall(r'(\{.*?\})', raw_response, re.DOTALL)
+            # Robust JSON extraction: 
+            # 1. First, try extracting from Markdown code blocks (high-signal)
+            json_candidates = re.findall(r'```json\s*(.*?)\s*```', raw_response, re.DOTALL)
+            
+            # 2. Backward compatibility: if no tags found, try the old non-greedy brace method
+            if not json_candidates:
+                json_candidates = re.findall(r'(\{.*?\})', raw_response, re.DOTALL)
             
             data = None
             
@@ -363,14 +367,16 @@ Analyze the references above and provide your evaluation in JSON format:
                     if "score" in candidate_data and "options" in candidate_data:
                         data = candidate_data
                         break # Found a valid JSON block matching our schema
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, ValueError):
                     continue
             
             if data is None:
-                # Fallback: if no non-greedy match worked (e.g. nested objects), try greedy as last resort
+                # 3. Last resort: if no non-greedy match worked (e.g. nested objects), try greedy
                 greedy_match = re.search(r'(\{.*\})', raw_response, re.DOTALL)
                 if greedy_match:
-                    data = json.loads(greedy_match.group(1))
+                    # Apply backslash fix to greedy match as well
+                    fixed_greedy = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', greedy_match.group(1))
+                    data = json.loads(fixed_greedy)
                 else:
                     # No braces found at all
                     raise json.JSONDecodeError("No JSON object found in response", raw_response, 0)

@@ -140,6 +140,18 @@ def _initialize_rag_components():
             # 3. Initialize LLM
             if _llm_client is None:
                 logger.info(f"Initializing LLM client for provider: {settings.llm_provider}")
+                
+                # --- LLM Caching Setup ---
+                if settings.use_llm_cache:
+                    try:
+                        from langchain_community.cache import SQLiteCache
+                        from langchain.globals import set_llm_cache
+                        cache_db = os.path.join(settings.chroma_persist_dir, "llm_cache.db")
+                        set_llm_cache(SQLiteCache(database_path=cache_db))
+                        logger.info(f"LLM Caching enabled (SQLite): {cache_db}")
+                    except (ImportError, AttributeError) as e:
+                        logger.warning(f"Failed to enable LLM caching: {e}. Proceeding without cache.")
+
                 provider = settings.llm_provider
                 if provider == "ollama":
                     _llm_client = Ollama(base_url=settings.ollama_base_url, model=settings.ollama_model)

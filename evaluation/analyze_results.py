@@ -9,8 +9,9 @@ import numpy as np
 import ast
 
 # --- Configuration ---
-RESULTS_DIR = "evaluation/results"
-PLOTS_DIR = "evaluation/plots"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
+PLOTS_DIR = os.path.join(SCRIPT_DIR, "plots")
 
 # --- Helper Functions ---
 def safe_divide(numerator, denominator):
@@ -38,16 +39,24 @@ def load_data(results_dir: str) -> pd.DataFrame:
         try:
             temp = pd.read_csv(f)
             filename = os.path.basename(f).replace('.csv', '')
-            parts = filename.split('_')
-            if len(parts) >= 4:
-                persona = "_".join(parts[-4:-2])
-                experiment = "_".join(parts[:-4])
+            
+            # Robust Parsing with '___'
+            if '___' in filename:
+                parts = filename.split('___')
+                experiment = parts[0].replace('-', ' ')
+                persona = parts[1].replace('-', ' ')
             else:
-                experiment = "Unknown"; persona = "Unknown"
+                # Fallback for old files
+                parts = filename.split('_')
+                if len(parts) >= 4:
+                    persona = "_".join(parts[-4:-2]).replace('_', ' ')
+                    experiment = "_".join(parts[:-4]).replace('_', ' ')
+                else:
+                    experiment = "Unknown"; persona = "Unknown"
 
             temp['run_id'] = filename
-            temp['experiment_name'] = experiment.replace('_', ' ')
-            temp['persona_name'] = persona.replace('_', ' ')
+            temp['experiment_name'] = experiment
+            temp['persona_name'] = persona
             df_list.append(temp)
         except Exception as e:
             print(f"Skipping {f}: {e}")
@@ -79,6 +88,12 @@ def load_data(results_dir: str) -> pd.DataFrame:
 
 def plot_trajectories(df: pd.DataFrame):
     print("\n" + "="*20 + " Plotting Trajectories " + "="*20)
+    
+    # Filter out HINT events for trajectory plotting to avoid "Dead Data" artifacts
+    # and re-calculate step to ensure a continuous X-axis of meaningful interactions
+    plot_df = df[df['event_type'] != 'HINT'].copy()
+    plot_df['interaction_step'] = plot_df.groupby('run_id').cumcount() + 1
+    
     metrics = {
         'metric_grade': 'Running Grade (Unique Correct / Total Bank)',
         'metric_engagement': 'Engagement (Attempts / Opportunities)',
@@ -87,12 +102,12 @@ def plot_trajectories(df: pd.DataFrame):
     }
     
     for metric, label in metrics.items():
-        if metric not in df.columns: continue
+        if metric not in plot_df.columns: continue
         plt.figure(figsize=(12, 7))
         # Use simple mean aggregation for lines
-        sns.lineplot(data=df, x='step', y=metric, hue='experiment_name', style='persona_name')
+        sns.lineplot(data=plot_df, x='interaction_step', y=metric, hue='experiment_name', style='persona_name')
         plt.title(f'Trajectory of {label}')
-        plt.xlabel('Interaction Sequence (Step)')
+        plt.xlabel('Interaction Sequence (Attempts/Skips)')
         plt.ylabel(label)
         plt.grid(True, linestyle='--', alpha=0.6)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -104,11 +119,10 @@ def analyze_skill_acquisition(df: pd.DataFrame):
     print("\n" + "="*20 + " Skill Acquisition (Transfer Learning) " + "="*20)
     if 'skill_id' not in df.columns: return
 
-    # Filter for Attempt 1 only to measure initial capability
-    first_attempts = df[df['attempt_int'] == 1].copy()
+    # Filter for Attempt 1 and EXCLUDE HINT rows to avoid double-counting failures
+    first_attempts = df[(df['attempt_int'] == 1) & (df['event_type'] != 'HINT')].copy()
     
     # Calculate encounter number for each skill per user
-    # We sort by timestamp/step to ensure correct order
     first_attempts = first_attempts.sort_values(['run_id', 'step'])
     first_attempts['skill_encounter'] = first_attempts.groupby(['run_id', 'skill_id']).cumcount() + 1
     
@@ -184,22 +198,27 @@ def analyze_hint_convergence(df: pd.DataFrame):
         plt.close()
 
 def analyze_learning_efficiency(df: pd.DataFrame):
-    print("\n" + "="*20 + " Learning Efficiency " + "="*20)
-    # Filter for Correct Questions
-    correct_qs = df[df['is_correct'] == True].copy()
+    print("\n" + "="*20 + " Learning Efficiency (Work-Normalized) " + "="*20)
     
-    # Find attempt number where it was solved
-    solved_at = correct_qs.groupby(['run_id', 'question_number'])['attempt_int'].min().reset_index()
-    meta = df[['run_id', 'experiment_name', 'persona_name']].drop_duplicates()
-    solved_at = solved_at.merge(meta, on='run_id')
+    # Filter HINT rows and only count actual attempts/skips per run
+    attempts_df = df[df['event_type'].isin(['ANSWER', 'SKIP'])].copy()
     
-    efficiency = solved_at.groupby(['experiment_name', 'persona_name'])['attempt_int'].mean().reset_index()
-    print(efficiency.to_string())
+    per_run = attempts_df.groupby(['run_id', 'experiment_name', 'persona_name']).agg(
+        total_correct=('is_correct', 'sum'),
+        total_attempts=('event_type', 'count'),
+        total_questions=('question_number', 'nunique')
+    ).reset_index()
+    
+    # Efficiency Score = Correct answers per unit of student effort (Attempt or Skip)
+    per_run['efficiency_score'] = per_run['total_correct'] / per_run['total_attempts']
+    
+    efficiency_summary = per_run.groupby(['experiment_name', 'persona_name'])['efficiency_score'].mean().reset_index()
+    print(efficiency_summary.to_string())
 
     plt.figure(figsize=(10, 6))
-    sns.barplot(data=efficiency, x='persona_name', y='attempt_int', hue='experiment_name')
-    plt.title('Average Attempts Required to Solve a Question')
-    plt.ylabel('Attempts')
+    sns.barplot(data=efficiency_summary, x='persona_name', y='efficiency_score', hue='experiment_name')
+    plt.title('Learning Efficiency (Correct Answers per Student Action)')
+    plt.ylabel('Efficiency Score (Higher is Better)')
     plt.tight_layout()
     plt.savefig(os.path.join(PLOTS_DIR, "learning_efficiency.png"))
     plt.close()
@@ -208,8 +227,14 @@ def analyze_intervention_quality(df: pd.DataFrame):
     print("\n" + "="*20 + " Intervention Analysis " + "="*20)
     if 'proactive_offered' not in df.columns: return
 
-    # Filter for Treatment, First Attempts
-    proactive = df[(df['attempt_int'] == 1) & (df['experiment_name'].str.contains('Treatment'))].copy()
+    # Filter for Treatment, First Attempts, and only actual outcomes (ANSWER/SKIP)
+    # This prevents HINT rows from being counted as 'False' failures
+    proactive = df[
+        (df['attempt_int'] == 1) & 
+        (df['experiment_name'].str.contains('Treatment')) &
+        (df['event_type'].isin(['ANSWER', 'SKIP']))
+    ].copy()
+    
     if proactive.empty: return
 
     def get_status(row):

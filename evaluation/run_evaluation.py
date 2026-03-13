@@ -8,6 +8,7 @@ import yaml
 import pandas as pd
 import requests
 import time
+import hashlib
 
 # Add project root to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -18,20 +19,62 @@ from prepare_data import convert_evaluation_questions, SOURCE_QUESTIONS_PATH
 from app.utils.config import settings # Import settings to access API key
 import google.generativeai as genai
 import PyPDF2
+random.seed(42)
 
 # --- Constants ---
 BASE_URL = "http://127.0.0.1:8000"
-PERSONAS_CONFIG_PATH = "evaluation/configs/personas.yaml"
-EXPERIMENTS_CONFIG_PATH = "evaluation/configs/experiments.yaml"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSONAS_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "personas.yaml")
+EXPERIMENTS_CONFIG_PATH = os.path.join(SCRIPT_DIR, "configs", "experiments.yaml")
 QUESTIONS_PATH = SOURCE_QUESTIONS_PATH
-EVALUATION_PDF_PATH = "evaluation/data/evaluation_source.pdf"
-RESULTS_DIR = "evaluation/results"
+EVALUATION_PDF_PATH = os.path.join(SCRIPT_DIR, "data", "evaluation_source.pdf")
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
+LLM_CACHE_PATH = os.path.join(SCRIPT_DIR, "data", "llm_cache.json")
+CACHE_SCOPE_EXP_NAME = False # Set to True to scope cache by experiment name and prompt
+
+# --- LLM Caching Mechanism ---
+class LLMCache:
+    """Persistent disk cache for LLM responses to reduce costs and latency."""
+    def __init__(self, cache_path: str):
+        self.cache_path = cache_path
+        self.cache = self._load_cache()
+
+    def _load_cache(self) -> dict:
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"WARNING: Could not load LLM cache: {e}")
+        return {}
+
+    def _save_cache(self):
+        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+        try:
+            with open(self.cache_path, 'w') as f:
+                json.dump(self.cache, f, indent=2)
+        except Exception as e:
+            print(f"WARNING: Could not save LLM cache: {e}")
+
+    def get(self, prompt: str) -> str | None:
+        """Returns cached response for a prompt hash, or None."""
+        prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+        return self.cache.get(prompt_hash)
+
+    def set(self, prompt: str, response: str):
+        """Stores response in cache and persists to disk."""
+        prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()
+        self.cache[prompt_hash] = response
+        self._save_cache()
+
+# Global cache instance
+llm_cache = LLMCache(LLM_CACHE_PATH)
 
 # --- PDF Helper ---
 PDF_CACHE = {}
 
-def get_text_from_pdf(path: str, percentage: int) -> str:
-    """Extracts a percentage of the text from a PDF, using a cache."""
+def get_text_from_pdf(path: str, percentage: int, start_pct: int = 0) -> str:
+    """Extracts a window of text from a PDF, using a cache."""
     if path in PDF_CACHE:
         full_text = PDF_CACHE[path]
     else:
@@ -57,9 +100,11 @@ def get_text_from_pdf(path: str, percentage: int) -> str:
         print(f"WARNING: Could not extract any text from '{path}'.")
         return ""
     
-    slice_index = int(len(full_text) * (percentage / 100))
-    print(f"Extracted {len(full_text)} chars, returning first {percentage}% ({slice_index} chars).")
-    return full_text[:slice_index]
+    start_index = int(len(full_text) * (start_pct / 100))
+    end_index = int(len(full_text) * (min(start_pct + percentage, 100) / 100))
+    
+    print(f"Extracted {len(full_text)} chars, returning window {start_pct}%-{start_pct+percentage}% ({end_index - start_index} chars).")
+    return full_text[start_index:end_index]
 
 # --- Robust Parsing Helper ---
 def parse_llm_answer(persona_name: str, raw_answer: str) -> str:
@@ -71,172 +116,298 @@ def parse_llm_answer(persona_name: str, raw_answer: str) -> str:
     return raw_answer.strip()
 
 # --- Knowledge Base Helper ---
-def _update_knowledge_base(student, question: pd.Series, is_correct: bool, correct_answer_index: str, hint_text: str | None):
+def _update_knowledge_base(student, question: pd.Series, user_answer: str, is_correct: bool, correct_answer_index: str, hint_text: str | None):
     """
-    Formats and adds a memory of an interaction to the student's knowledge base.
-    A memory is only added if the student received a hint OR answered correctly.
+    Updates student memory with a structured log of attempts and outcomes.
+    Groups attempts by question and eliminates 'trial and error' noise once correct.
+    NOTE: Hints are no longer persisted to historical context to reduce prompt bloat.
     """
-    if not hint_text and not is_correct:
-        return  # Do not learn anything if the attempt was wrong and no hint was given
-
-    # Initialize the "learned" section if it's the first memory
-    if len(student.knowledge_base) < 2 and student.knowledge_base:
-        # This assumes knowledge_base[0] is the PDF text if it exists
-        student.knowledge_base.append("\n\n--- Things Learned So Far ---")
-    elif not student.knowledge_base:
-        student.knowledge_base.append("\n\n--- Things Learned So Far ---")
-
-
-    question_text = question['question_text']
+    question_text = question['question_text'].strip()
     
-    memory_parts = [f'- Question: "{question_text}"']
-
-    if hint_text:
-        memory_parts.append(f'Hint Received: "{hint_text}"')
-
-    if is_correct:
-        correct_answer_text = ""
-        if question['question_type'] == 'multiple_choice' and correct_answer_index and correct_answer_index.isdigit():
+    # 1. Resolve display answer
+    display_answer = user_answer
+    options_list = []
+    if question['question_type'] == 'multiple_choice':
+        options_list = [opt.strip() for opt in str(question['options']).split('|')]
+        if user_answer and user_answer.isdigit():
             try:
-                options_list = str(question['options']).split('|')
-                answer_index = int(correct_answer_index) - 1
-                if 0 <= answer_index < len(options_list):
-                    correct_answer_text = options_list[answer_index]
-            except (ValueError, IndexError):
-                correct_answer_text = correct_answer_index  # Fallback
-        else:
-            correct_answer_text = correct_answer_index  # For FITB
-        
-        if correct_answer_text:
-            memory_parts.append(f'Correct Answer: "{correct_answer_text}"')
+                idx = int(user_answer) - 1
+                if 0 <= idx < len(options_list):
+                    display_answer = options_list[idx]
+            except: pass
 
-    memory = " | ".join(memory_parts)
-    student.knowledge_base.append(memory)
-    print(f"[{student.user_id}] Added to knowledge base: {memory}")
+    # 2. Extract existing state for this question to rebuild it
+    existing_failures = []
+    new_kb = []
+    for entry in student.knowledge_base:
+        # Check if this entry block is for the current question
+        if entry.startswith(f'## QUESTION SUMMARY: "{question_text}"'):
+            # Extract previous failed answers from the "- your answer:" lines
+            for line in entry.split('\n'):
+                if line.strip().startswith("- your answer:"):
+                    # Extract text after the colon
+                    raw_val = line.split(":", 1)[1].strip()
+                    existing_failures.append(raw_val)
+        else:
+            new_kb.append(entry)
+    
+    student.knowledge_base = new_kb
+
+    # 3. Build new entry block
+    if is_correct:
+        entry = f'## QUESTION SUMMARY: "{question_text}" ##\nStatus: CORRECT\nYour verified correct answer: <{display_answer}>'
+    else:
+        # Add current failure if it's a real answer (not a skip/error)
+        if display_answer and "i don't know" not in display_answer.lower() and not display_answer.lower().startswith("error"):
+            if display_answer not in existing_failures:
+                existing_failures.append(display_answer)
+        
+        entry_lines = [f'## QUESTION SUMMARY: "{question_text}" ##', "Status: INCORRECT / NEEDS REVISIT"]
+        if existing_failures:
+            entry_lines.append("Previous Failed Attempts (DO NOT REPEAT):")
+            for f in existing_failures:
+                entry_lines.append(f"- your answer: {f}")
+        
+        if question['question_type'] == 'multiple_choice':
+            remaining = [opt for opt in options_list if opt not in existing_failures]
+            if remaining:
+                entry_lines.append(f"Remaining possible options: {', '.join(remaining)}")
+            
+        entry = "\n".join(entry_lines)
+
+    student.knowledge_base.append(entry)
+    print(f"[{student.user_id}] Memory updated for question: {question_text[:50]}...")
 
 
 # --- Simulated Student Class ---
 class SimulatedStudent:
     """Represents an LLM-based agent simulating a student."""
-    def __init__(self, persona_config: dict):
+    def __init__(self, persona_config: dict, experiment_name: str):
         self.user_id = f"sim_{persona_config['name'].lower().replace(' ', '_')}_{int(time.time())}"
         self.persona = persona_config
+        self.experiment_name = experiment_name
         self.hint_style_experience = {}
         
         knowledge_source = self.persona.get('initial_knowledge_prompt', '')
         print(f"Found knowledge source for persona '{self.persona['name']}': {knowledge_source}")
         
-        # Knowledge base is now a list to keep hints separate and clean
+        # Knowledge base stores Learning History (attempts/outcomes)
         self.knowledge_base = [] 
+        
+        # Static Context (PDF excerpts seeded at init)
+        self.static_context = ""
         
         if knowledge_source.startswith('[PDF_TEXT_PERCENT:'):
             try:
                 percentage = int(knowledge_source.split(':')[1].strip(']'))
-                initial_knowledge = get_text_from_pdf(EVALUATION_PDF_PATH, percentage)
-                if initial_knowledge:
-                    self.knowledge_base.append(initial_knowledge)
+                self.static_context = get_text_from_pdf(EVALUATION_PDF_PATH, percentage)
             except (ValueError, IndexError):
-                pass # Knowledge base remains empty
+                pass 
+        elif knowledge_source == "[Expert]":
+            # Expert uses heuristic chunking per question; no static context seeded.
+            print(f"[{self.user_id}] Expert Persona: Static context will be dynamically loaded per question.")
+            pass
         
         if not settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is not set in the environment.")
         genai.configure(api_key=settings.google_api_key)
         self.llm_client = genai.GenerativeModel(settings.google_model_name)
         
-        print(f"Initialized student: {self.user_id} with persona '{self.persona['name']}'")
-        # Report initial knowledge based on the first element if it exists
-        initial_word_count = len(self.knowledge_base[0].split()) if self.knowledge_base else 0
+        print(f"Initialized student: {self.user_id} with persona '{self.persona['name']}' in experiment '{self.experiment_name}'")
+        # Report initial knowledge based on static context
+        initial_word_count = len(self.static_context.split()) if self.static_context else 0
         print(f"Knowledge base seeded with {initial_word_count} words.")
 
     def _get_system_prompt(self) -> str:
-        # Impartial Evaluator Prompt
         return """
-You are an impartial Knowledge Base Evaluator.
-Your task is to analyze the provided [KNOWLEDGE BASE] and determine if it contains the answer to the [QUESTION].
+You are a Simulated Student participating in an educational evaluation. 
+Your goal is to answer the [QUESTION] accurately by leveraging your [KNOWLEDGE BASE] and your [LEARNING HISTORY].
 
-**INSTRUCTIONS:**
-1. **Analyze:** Search the [KNOWLEDGE BASE] (including "Things Learned So Far" and "IMMEDIATE HINT") for the answer.
-2. **Evaluate Confidence:** Assign a score (0-100) representing how supported the answer is by the text.
-    - 100: The exact answer is explicitly stated.
-    - 75: The answer is strongly implied or requires a minor logical step.
-    - 50: Partial information is present, or multiple options are plausible.
-    - 25: Very little relevant information; mostly guessing.
-    - 0: No relevant information found.
-3. **List Plausible Options:**
-    - If **Multiple Choice**: List the indices (e.g., ["1", "3"]) of all options that are NOT contradicted by the text. Eliminate clearly wrong ones.
-    - If **Fill-in-the-Blank**: List the most likely phrase(s) found in the text. If unknown, return [""].
-4. **Format:** Output ONLY a JSON object.
+**GUIDELINES FOR DECISION MAKING:**
+1. **Domain Knowledge:** Analyze the provided reference text (e.g., PDF excerpts) for direct answers or relevant concepts.
+2. **Learning from Experience:** Review your "Learning History" (previous interactions recorded in the Knowledge Base).
+    - If you see a previous attempt at the SAME question marked as "INCORRECT," use that feedback to eliminate that specific option and rethink your logic.
+    - If you see a previous "CORRECT" answer from a related question, use that acquired knowledge to derive the answer to the current question.
+3. **Metacognition:** Reflect on your past mistakes and successes. Do not repeat failed strategies. Use all feedback provided by the tutor (results and hints) to evolve your understanding.
 
-**JSON FORMAT:**
+**TASK:**
+1. **Evaluate Confidence (0-100):** How well is the answer supported by your combined knowledge and history?
+    - 100: Explicitly stated or verified in history.
+    - 50: Partial information or logical deduction required.
+    - 0: No information; purely guessing.
+2. **List Plausible Options:**
+    - For Multiple Choice: List the indices (e.g., ["1", "3"]) of all remaining options that are likely correct. You MUST remove any options you have already tried and found to be INCORRECT.
+    - For Fill-in-the-Blank: List the most likely phrase(s).
+
+**OUTPUT FORMAT:**
+Only output a JSON object:
 {
-  "score": <int 0-100>,
-  "options": ["<option1>", "<option2>", ...]
+  "score": <int>,
+  "options": ["<opt1>", "<opt2>", ...]
 }
 """
 
-    def answer_question(self, question: pd.Series, hint: str | None = None, previous_answer: str | None = None) -> tuple[str, str, str, list]:
+    def answer_question(self, question: pd.Series, hint: str | None = None, is_revisit: bool = False) -> tuple[str, str, str, list]:
         options_text = ""
         if question['question_type'] == 'multiple_choice':
             options_list = str(question['options']).split('|')
             options_text = "\n".join(f"{i+1}. {opt}" for i, opt in enumerate(options_list))
             options_text = f"\n**Multiple Choice Options:**\n{options_text}"
 
-        # --- Build Knowledge Context ---
-        knowledge_base_text = "\n".join(self.knowledge_base)
+        # --- 1. Build Domain Context ---
+        dynamic_context = self.static_context
+        if self.persona.get('initial_knowledge_prompt') == "[Expert]":
+            segment = int(question.get('context_segment', 1))
+            # 35% chunks with overlap to ensure full coverage
+            windows = {
+                1: (0, 35),      # Segment 1: 0% to 35%
+                2: (32.5, 35),   # Segment 2: 32.5% to 67.5%
+                3: (65, 35)      # Segment 3: 65% to 100%
+            }
+            
+            distractor_id = 1 if segment == 2 else 2
+            
+            # Load Target
+            s1, sp1 = windows.get(segment, (0, 100))
+            t1 = get_text_from_pdf(EVALUATION_PDF_PATH, sp1, s1)
+            
+            # Load Distractor
+            s2, sp2 = windows.get(distractor_id, (0, 100))
+            t2 = get_text_from_pdf(EVALUATION_PDF_PATH, sp2, s2)
+            
+            dynamic_context = t1 + "\n\n" + t2
+            print(f"[{self.user_id}] Expert Context: Target {segment} + Distractor {distractor_id}")
+
+        # --- 2. Build History Window (5/10 Rule) ---
+        question_text = question['question_text'].strip()
+        current_failure_block = None
+        other_history = []
         
+        for entry in self.knowledge_base:
+            if entry.startswith(f'## QUESTION SUMMARY: "{question_text}"'):
+                current_failure_block = entry
+            else:
+                other_history.append(entry)
+        
+        # Window size logic: 10 for revisit rounds, 5 for initial/retry rounds
+        window_size = 10 if is_revisit else 5
+        history_window = other_history[-window_size:]
+        
+        # Always include current question failure (signal) regardless of window size
+        if current_failure_block:
+            history_window.append(current_failure_block)
+            
+        history_text = "\n\n".join(history_window) if history_window else "No previous history available."
+
+        # --- 3. Construct Prompt with Explicit Section Blocks ---
         prompt = f"""
 {self._get_system_prompt()}
 
-[KNOWLEDGE BASE]
-{knowledge_base_text}
+# ***[SECTION: DOMAIN KNOWLEDGE - PDF REFERENCE]***
+{dynamic_context}
 
-[IMMEDIATE HINT]
-{hint if hint else "None"}
 
-[QUESTION]
-{question['question_text']}
+# ***[SECTION: STUDENT LEARNING HISTORY & PREVIOUS RESULTS]***
+--- LEARNING HISTORY ---
+{history_text}
+
+
+# ***[SECTION: TUTOR FEEDBACK - IMMEDIATE HINT]***
+
+{hint if hint else "None provided for this specific attempt."}
+
+# ***[SECTION: CURRENT EVALUATION TASK]***
+
+**QUESTION:** {question_text}
 {options_text}
 
-Provide your evaluation in JSON format:
+Analyze the references above and provide your evaluation in JSON format:
 """
-        print(f"[{self.user_id}] Evaluating question: {question['question_text']}")
+        print(f"[{self.user_id}] Evaluating question: {question_text[:50]}...")
+        raw_response = ""
         try:
-            response = self.llm_client.generate_content(prompt)
-            raw_response = response.text.strip()
+            # --- Check Cache First ---
+            if CACHE_SCOPE_EXP_NAME:
+                cache_key = f"{self.experiment_name}::{prompt}"
+            else:
+                cache_key = prompt
+                
+            cached_response = llm_cache.get(cache_key)
             
-            # Clean up potential markdown formatting (```json ... ```)
-            clean_json = raw_response.replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean_json)
+            if cached_response:
+                print(f"   [CACHE HIT]")
+                raw_response = cached_response
+            else:
+                print(f"   [API CALL] Generating answer (pacing 2s)...")
+                time.sleep(2)
+                response = self.llm_client.generate_content(prompt)
+                raw_response = response.text.strip()
+                llm_cache.set(cache_key, raw_response)
+
+            # Robust JSON extraction: Try to find all valid JSON blocks
+            # We use a non-greedy regex to find candidates
+            json_candidates = re.findall(r'(\{.*?\})', raw_response, re.DOTALL)
             
+            data = None
+            
+            # Try parsing each candidate
+            for candidate in json_candidates:
+                try:
+                    # --- FIX: Handle LaTeX backslashes ---
+                    # LLMs often output \sqrt or \epsilon which are invalid JSON escapes.
+                    # We escape them by doubling the backslash, while preserving valid ones like \"
+                    fixed_candidate = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', candidate)
+                    candidate_data = json.loads(fixed_candidate)
+                    
+                    # Verify schema minimally
+                    if "score" in candidate_data and "options" in candidate_data:
+                        data = candidate_data
+                        break # Found a valid JSON block matching our schema
+                except json.JSONDecodeError:
+                    continue
+            
+            if data is None:
+                # Fallback: if no non-greedy match worked (e.g. nested objects), try greedy as last resort
+                greedy_match = re.search(r'(\{.*\})', raw_response, re.DOTALL)
+                if greedy_match:
+                    data = json.loads(greedy_match.group(1))
+                else:
+                    # No braces found at all
+                    raise json.JSONDecodeError("No JSON object found in response", raw_response, 0)
+
             confidence = data.get("score", 0)
             plausible = data.get("options", [])
-            
+
+            # --- Strict Numerical Filtering for MC ---
+            if question['question_type'] == 'multiple_choice':
+                options_count = len(str(question['options']).split('|'))
+                valid_indices = {str(i+1) for i in range(options_count)}
+                plausible = [p for p in plausible if str(p) in valid_indices]
+
             print(f"   -> Score: {confidence}, Options: {plausible}")
-            
-            # --- Systematic Decision Logic ---
-            # guess_probability acts as Risk Tolerance (0.0 = Coward, 1.0 = Daredevil)
-            # Threshold = (1 - Risk Tolerance) * 100
-            
+
             risk_tolerance = self.persona.get('guess_probability', 0.5)
             confidence_threshold = (1.0 - risk_tolerance) * 100
-            
+
             final_answer = "I don't know"
-            
-            # Check if sufficient confidence AND plausible options exist
             if confidence >= confidence_threshold and plausible and plausible != [""]:
-                # Pick randomly from the plausible set
                 final_answer = random.choice(plausible)
-            
-            # Return raw_response (JSON) for debug log, but final_answer (String) for CSV/Logic
+
             return prompt, raw_response, str(final_answer), plausible
 
         except Exception as e:
-            print(f"[{self.user_id}] ERROR in answer generation: {e}")
-            return prompt, "Error", "I don't know", []
+            print(f"\n[{self.user_id}] FATAL ERROR in answer generation: {e}")
+            print(f"=========================================================")
+            print(f"RAW RESPONSE:\n{raw_response}")
+            print(f"=========================================================")
+            print(f"PROMPT (LAST 500 CHARS):\n...{prompt[-500:]}")
+            print(f"=========================================================")
+            print("Stopping experiment to avoid corrupted results.")
+            sys.exit(1)
 
     def learn_from_hint(self, hint_text: str):
-        # This method is now a placeholder; learning is handled by _update_knowledge_base
-        print(f"[{self.user_id}] Received hint: {hint_text}")
+        # Processing logic moved to _update_knowledge_base
+        print(f"[{self.user_id}] Received hint: {hint_text[:50]}...")
         pass
 
     def decide_to_request_hint(self) -> bool:
@@ -244,10 +415,8 @@ Provide your evaluation in JSON format:
 
     def rate_hint(self, is_correct: bool, is_skipped: bool) -> int:
         """Deterministic rating logic: 5=Correct, 3=Skip, 1=Wrong."""
-        if is_skipped:
-            return 3
-        if is_correct:
-            return 5
+        if is_skipped: return 3
+        if is_correct: return 5
         return 1
 
     def update_hint_experience(self, hint_style: str, was_successful: bool):
@@ -263,18 +432,27 @@ def _proxy_backend_validation_for_simulation(question: pd.Series, user_answer: s
     """
     PROXY FUNCTION: Duplicates the backend's validation logic (app.services.question_service.check_answer).
     """
+    if question['question_type'] == 'multiple_choice':
+        # Student answers with index; source CSV stores text. Convert text -> index.
+        options_list = str(question['options']).split('|')
+        try:
+            correct_index = str(options_list.index(question['correct_answer'].strip()) + 1)
+            return user_answer.strip() == correct_index
+        except ValueError:
+            return False
+
     correct_answer_clean = question['correct_answer'].strip().lower()
     user_answer_clean = user_answer.strip().lower()
     
-    if question['question_type'] == 'multiple_choice':
-        return user_answer_clean == correct_answer_clean
-    
     # Token-based inclusion (Option C)
+    import re
     stop_words = {"a", "an", "the", "of", "and", "in", "on", "at", "to", "is", "are", "was", "were"}
-    correct_tokens = [t for t in correct_answer_clean.split() if t not in stop_words]
+    
+    # Use regex to find all alphanumeric words, effectively splitting on hyphens and punctuation
+    correct_tokens = [t for t in re.findall(r'\w+', correct_answer_clean) if t not in stop_words]
     
     if not correct_tokens:
-        correct_tokens = [t for t in correct_answer_clean.split() if t]
+        correct_tokens = [t for t in re.findall(r'\w+', correct_answer_clean) if t]
 
     if not correct_tokens:
         return user_answer_clean == correct_answer_clean
@@ -303,7 +481,9 @@ class EvaluationRunner:
 def _generate_run_id(experiment: dict, persona: dict) -> str:
     """Creates a unique, descriptive ID for a single simulation run."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{experiment['name'].replace(' ', '_')}_{persona['name'].replace(' ', '_')}_{timestamp}"
+    exp_name = experiment['name'].replace(' ', '-')
+    pers_name = persona['name'].replace(' ', '-')
+    return f"{exp_name}___{pers_name}___{timestamp}"
 
 def _log_csv_event(
     results_log: list, interaction_id: str, question: pd.Series,
@@ -336,6 +516,7 @@ def _run_question_attempt(
     """
     interaction_id = datetime.now().strftime("%H:%M:%S.%f")
     attempt_str = f"revisit_{cumulative_attempt_num}" if attempt_type == 'revisit' else str(cumulative_attempt_num)
+    is_revisit = attempt_type in ['revisit', 'revisit_retry']
     
     print(f"--- Question {int(question['question_number'])} Attempt {attempt_str} (ID: {interaction_id}) ---")
 
@@ -344,7 +525,7 @@ def _run_question_attempt(
         "interaction_id": interaction_id, "run_id": run_id, "user_id": student.user_id,
         "experiment_name": experiment_name, "persona_name": persona_name,
         "question_number": int(question['question_number']), "attempt_number": attempt_str,
-        "pre_attempt_knowledge_base": "\n".join(student.knowledge_base),
+        "pre_attempt_knowledge_base": "\n\n".join(student.knowledge_base),
         "events": []
     }
 
@@ -359,7 +540,7 @@ def _run_question_attempt(
         payload = { "user_id": student.user_id, "question_number": int(question['question_number']), "time_spent_ms": simulated_duration_ms }
         response = runner.session.post(f"{BASE_URL}/intervention-check", json=payload)
         proactive_offered = response.json().get('intervention_needed', False)
-        print(f"[{student.user_id}] Proactive check (waited {simulated_duration_ms}ms): {proactive_offered}")
+        print(f"[{student.user_id}] Proactive check: {proactive_offered}")
         if proactive_offered and random.random() < student.persona.get('accept_proactive_hint_probability', 1.0):
             hint_trigger = "PROACTIVE_ACCEPTED"
         elif proactive_offered:
@@ -377,9 +558,16 @@ def _run_question_attempt(
     if hint_trigger in ["PROACTIVE_ACCEPTED", "MANUAL_BEFORE_ANSWER", "MANUAL_AFTER_FEEDBACK"]:
         print(f"[{student.user_id}] Requesting hint (Trigger: {hint_trigger}).")
         payload = {"user_id": student.user_id, "question_number": int(question['question_number']), "user_answer": "Not provided"}
+        
+        print(f"   [API CALL] Fetching hint (pacing 2s)...")
+        time.sleep(2)
         response = runner.session.post(f"{BASE_URL}/hints", json=payload)
         if response.status_code == 200:
             hint_data = response.json()
+            if hint_data.get("hint_style") == "error":
+                print(f"[{student.user_id}] FATAL: Backend reported an API Error in hint generation.")
+                sys.exit(1)
+
             final_hint_text = hint_data.get('hint')
             student.learn_from_hint(final_hint_text)
             _log_csv_event(
@@ -390,17 +578,16 @@ def _run_question_attempt(
             json_log_for_attempt['events'].append({'type': 'HINT', 'details': { "trigger": hint_trigger, **hint_data }})
             simulated_duration_ms = student.get_simulated_think_time()
         else:
-            print(f"CRITICAL ERROR: Hint request failed with status {response.status_code}: {response.text}")
-            json_log_for_attempt['events'].append({'type': 'HINT_FAILED', 'details': { "trigger": hint_trigger, "status_code": response.status_code, "error": response.text }})
+            print(f"CRITICAL ERROR: Hint request failed with status {response.status_code}")
+            sys.exit(1)
 
-    # 4. Generate Answer (unpack 4 values now)
-    prompt, raw_json_response, parsed_answer, plausible_options = student.answer_question(question, hint=final_hint_text, previous_answer=None)
+    # 4. Generate Answer
+    prompt, raw_json_response, parsed_answer, plausible_options = student.answer_question(question, hint=final_hint_text, is_revisit=is_revisit)
     
-    print(f"[{student.user_id}] Student's Parsed Answer: \"{parsed_answer}\" ")
+    print(f"[{student.user_id}] Parsed Answer: \"{parsed_answer}\" ")
     answer_event_details = { "llm_prompt": prompt, "llm_raw_response": raw_json_response, "parsed_answer": parsed_answer }
 
     # 5. Handle Skip/Answer and Feedback
-    # Fix: stricter check for "error" to avoid flagging "quantization error" as a skip
     is_skip = "i don't know" in parsed_answer.lower() or parsed_answer.strip().lower().startswith("error")
     
     if not is_skip:
@@ -444,7 +631,7 @@ def _run_question_attempt(
     json_log_for_attempt['events'].append({'type': event_type, 'details': answer_event_details})
     with open(json_log_path, 'w') as f: json.dump(json_log_for_attempt, f, indent=2)
 
-    _update_knowledge_base(student, question, is_correct, tutor_feedback.get('correct_answer'), final_hint_text)
+    _update_knowledge_base(student, question, parsed_answer, is_correct, tutor_feedback.get('correct_answer'), final_hint_text)
     
     return is_correct, is_skip
 
@@ -455,7 +642,7 @@ def run_single_simulation(experiment: dict, persona: dict, questions: pd.DataFra
     print(f"Starting simulation: Experiment '{experiment['name']}' with Persona '{persona['name']}'")
     print("="*50)
 
-    student = SimulatedStudent(persona)
+    student = SimulatedStudent(persona, experiment['name'])
     runner = EvaluationRunner()
     run_id = _generate_run_id(experiment, persona)
     detailed_log_dir = os.path.join(RESULTS_DIR, run_id)
@@ -542,11 +729,9 @@ def run_single_simulation(experiment: dict, persona: dict, questions: pd.DataFra
     accuracy_list = []
     grade_list = []
 
-    # Re-verify results_df order? It should be appended sequentially.
     for _, row in results_df.iterrows():
         event_type = row['event_type']
         q_num = int(row['question_number'])
-        
         unique_seen_q.add(q_num)
         
         if event_type == 'ANSWER':
@@ -574,15 +759,11 @@ def run_single_simulation(experiment: dict, persona: dict, questions: pd.DataFra
     results_df.to_csv(main_csv_path, index=False)
 
     total_questions = len(questions)
-    final_correct = len(unique_correct_q) # Use the set length, which is safe.
+    final_correct = len(unique_correct_q)
     final_grade_percent = (final_correct / total_questions) * 100 if total_questions > 0 else 0
 
     print("\n" + "="*50)
-    print(f"Simulation finished. Main results saved to {main_csv_path}")
-    print(f"Detailed logs saved in directory: {detailed_log_dir}")
-    print(f"\n--- FINAL METRICS ---")
-    print(f"Correct (Unique): {final_correct}/{total_questions} ({final_grade_percent:.1f}%)")
-    print(f"Total Correct Events: {cum_correct}")
+    print(f"Simulation finished. Results: {final_correct}/{total_questions} ({final_grade_percent:.1f}%)")
     print("="*50)
 
 

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # general LLM config
     max_output_tokens: int = 100 # for test
+    use_llm_cache: bool =  os.getenv("USE_HINT_CACHE", True)
 
     # --- LLM Provider Configuration ---
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama").lower()
@@ -54,10 +55,10 @@ class Settings(BaseSettings):
     bkt_p_s: float = 0.1   # Prob of slipping (knowing but answering wrong)
 
     # Intervention Controller Thresholds (Stage 3)
-    intervention_mastery_threshold: float = 0.15
+    intervention_mastery_threshold: float = 0.20 # was 0.15
     intervention_max_consecutive_errors: int = 2
     intervention_max_consecutive_skips: int = 1 # show hint if question was skipped
-    intervention_time_limit_ms: int = 10000 # 10 seconds
+    intervention_time_limit_ms: int = 10000 # 10 sec
 
     # Personalization Settings (Stage 4.5)
     exploration_rate: float = 0.2  # 20% chance to explore a random hint style (plus the adaptive count of available feedbacks)

@@ -1,11 +1,19 @@
 import pandas as pd
 import json
 import os
+import sys
+
+# Add project root to the Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from app.utils.config import settings
 
 # Define file paths
-SOURCE_QUESTIONS_PATH = os.path.join("evaluation", "data", "new_evaluation_questions.csv")
-SERVER_READY_PATH = settings.QUESTION_CSV_FILE_PATH 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_QUESTIONS_PATH = os.path.join(SCRIPT_DIR, "data", "new_evaluation_questions.csv")
+SERVER_READY_PATH = os.path.join(project_root, settings.QUESTION_CSV_FILE_PATH)
 
 def convert_evaluation_questions():
     """
@@ -27,7 +35,8 @@ def convert_evaluation_questions():
             "id": row["question_number"],
             "question": row["question_text"],
             "question_type": row["question_type"],
-            "skill": row["skill_id"]
+            "skill": row["skill_id"],
+            "context_segment": row.get("context_segment", 1)
         }
 
         # Process options and correct_answer based on question type

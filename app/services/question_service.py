@@ -87,31 +87,34 @@ class QuestionService:
     def check_answer(self, question: Question, user_answer: str) -> bool:
         """Validates a user's answer against the correct answer."""
         logger.debug(f"Checking answer for Q{question.question_number}. User answer: '{user_answer}', Correct answer: '{question.correct_answer}'")
-        
+
         user_answer_clean = user_answer.strip().lower()
         correct_answer_clean = question.correct_answer.lower()
-        
+
         if question.question_type == "multiple_choice":
             # For multiple choice, we strictly check the 1-based index.
             return user_answer_clean == correct_answer_clean
 
-        # For text answers: Check if ALL words in the correct answer appear in the user's answer
-        # This handles prefixes, suffixes, and extra words.
-        # e.g. Correct: "good teacher" -> tokens: ["good", "teacher"]
-        # User: "he is a goodteachers" -> "good" is in "goodteachers", "teacher" is in "goodteachers" -> True
-        
-        # Simple tokenization by splitting on whitespace
-        correct_tokens = [t for t in correct_answer_clean.split() if t]
-        
+        # For Fill-in-the-Blank: Check if ALL significant words in the correct answer appear in the user's answer
+        # Use regex to tokenize to handle hyphens, slashes, etc. as word boundaries
+        import re
+        stop_words = {"a", "an", "the", "of", "and", "in", "on", "at", "to", "is", "are", "was", "were"}
+
+        # Tokenize correct answer and filter stop words
+        correct_tokens = [t for t in re.findall(r'\w+', correct_answer_clean) if t not in stop_words]
+
+        # If everything was a stop word, fallback to all tokens
+        if not correct_tokens:
+            correct_tokens = [t for t in re.findall(r'\w+', correct_answer_clean) if t]
+
         if not correct_tokens:
             return user_answer_clean == correct_answer_clean
-            
+
         # Check if every correct token exists as a substring in the user answer
         for token in correct_tokens:
             if token not in user_answer_clean:
                 return False
-                
-        return True
 
+        return True
 # Instantiate the service globally or manage via dependency injection
 question_service = QuestionService()

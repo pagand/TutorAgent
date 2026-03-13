@@ -19,6 +19,7 @@ chroma_db*
 *.sqlite
 *.sqlite3
 *.db
+*_cache.json
 
 .pytest_cache*
 alembic*

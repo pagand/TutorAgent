@@ -24,7 +24,7 @@
   hint_request_probability: 0.1
   hint_request_timing: "after_feedback"
   give_feedback_probability: 0.8
-  accept_proactive_hint_probability: 0.2  # Unlikely to accept help
+  accept_proactive_hint_probability: 0.4  # Unlikely to accept help
   min_think_time_ms: 3000
   max_think_time_ms: 10500
 
@@ -34,7 +34,7 @@
   hint_request_probability: 0.9
   hint_request_timing: "after_feedback"
   give_feedback_probability: 0.5
-  accept_proactive_hint_probability: 0.5
+  accept_proactive_hint_probability: 0.85
   min_think_time_ms: 5000
   max_think_time_ms: 11000
 
@@ -44,6 +44,6 @@
   hint_request_probability: 0.5
   hint_request_timing: "after_feedback"
   give_feedback_probability: 0.9
-  accept_proactive_hint_probability: 0.85
+  accept_proactive_hint_probability: 0.6
   min_think_time_ms: 2000
   max_think_time_ms: 10500

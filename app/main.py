@@ -18,8 +18,11 @@ from app.endpoints import (
     hints as hints_router,
     users as users_router,
     preferences as preferences_router,
-    proactive_hints as proactive_hints_router
+    proactive_hints as proactive_hints_router,
 )
+from app.endpoints.session import router as session_router
+from app.endpoints.chat import router as chat_router
+from app.endpoints.action_log import router as action_log_router
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized
 from app.services.question_service import question_service
@@ -72,9 +75,12 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
+# Set ALLOWED_ORIGIN env var to your CloudFront domain in production.
+# Falls back to wildcard only when explicitly set to "*" (local dev).
+_allowed_origins = os.getenv("ALLOWED_ORIGIN", "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your frontend's domain
+    allow_origins=[_allowed_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -88,6 +94,9 @@ app.include_router(users_router.router, prefix="/users", tags=["Users"])
 # The prefix for preferences is defined within its own router to include the user_id path parameter
 app.include_router(preferences_router.router) 
 app.include_router(proactive_hints_router.router)
+app.include_router(session_router)
+app.include_router(chat_router)
+app.include_router(action_log_router)
 
 # --- Root Endpoint ---
 @app.get("/")

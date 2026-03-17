@@ -1,4 +1,5 @@
 # app/state_manager.py
+import random
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from app.models.user import User, SkillMastery, InteractionLog
@@ -19,8 +20,16 @@ async def get_user_or_create(session: AsyncSession, user_id: str) -> User:
     result = await session.execute(select(User).filter_by(id=user_id))
     user = result.scalars().first()
     if not user:
-        logger.info(f"Adding new user '{user_id}' to session.")
-        user = User(id=user_id)
+        ab_group = random.choice(["adaptive", "free_choice"])
+        logger.info(f"Adding new user '{user_id}' to session. A/B group: {ab_group}")
+        user = User(
+            id=user_id,
+            preferences={
+                "hint_style_preference": "adaptive",
+                "intervention_preference": "proactive",
+                "ab_group": ab_group,
+            }
+        )
         session.add(user)
     return user
 

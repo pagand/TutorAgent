@@ -65,8 +65,12 @@ class Settings(BaseSettings):
     warmup_exploration_rate: float = 0.8 # 80% chance to explore in the first 5 questions
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
+    # --- Exam Timer Settings ---
+    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 15 * 60 * 1000))  # 25 minutes default
+
     # --- Database Settings (Stage 5) ---
     database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/aitutor_db")
+    test_database_url: str = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
     model_config = {
         "env_file": ".env",

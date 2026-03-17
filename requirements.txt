@@ -57,7 +57,10 @@ langchain-aws
 langchain-chroma 
 boto3 
 python-dotenv
-pyteststreamlit
+pytest
+pytest-asyncio
+httpx
+aiosqlite
 pandas
 streamlit
 PyPDF2

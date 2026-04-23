@@ -6,8 +6,9 @@ import Link from 'next/link'
 import { useQuiz } from '@/context/QuizContext'
 import {
   getQuestions, startSession, getHint, submitAnswer,
-  checkIntervention, logAction, logIntervention,
+  checkIntervention, logAction, logIntervention, getUserProfile,
 } from '@/services/apiClient'
+import type { QuestionStatus } from '@/types'
 import TimerBar from './TimerBar'
 import QuestionNavStrip from './QuestionNavStrip'
 import AnswerInput from './AnswerInput'
@@ -74,9 +75,12 @@ export default function QuizPageContent() {
 
     async function init() {
       try {
-        const sessionData = await startSession(storedUserId!, storedSessionId)
+        const [sessionData, qs, profile] = await Promise.all([
+          startSession(storedUserId!, storedSessionId),
+          getQuestions(storedUserId!),
+          getUserProfile(storedUserId!),
+        ])
         localStorage.setItem('examStartMs', String(sessionData.exam_start_ms))
-        const qs = await getQuestions(storedUserId!)
         dispatch({
           type: 'LOAD_QUIZ',
           userId: storedUserId!,
@@ -85,6 +89,54 @@ export default function QuizPageContent() {
           examStartMs: sessionData.exam_start_ms,
           examDurationMs: sessionData.exam_duration_ms,
         })
+
+        // Reconstruct question states from interaction history
+        const logsByQuestion: Record<number, typeof profile.interaction_history> = {}
+        for (const log of profile.interaction_history) {
+          if (!logsByQuestion[log.question_id]) logsByQuestion[log.question_id] = []
+          logsByQuestion[log.question_id].push(log)
+        }
+
+        const questionStates: Record<number, QuestionStatus> = {}
+        const retryCount: Record<number, number> = {}
+        const userAnswers: Record<number, string> = {}
+
+        for (const [qidStr, logs] of Object.entries(logsByQuestion)) {
+          const qid = Number(qidStr)
+          const realAttempts = logs.filter(l => l.user_answer !== null)
+          const anyCorrect = realAttempts.some(l => l.is_correct)
+
+          if (anyCorrect) {
+            questionStates[qid] = 'correct'
+            retryCount[qid] = realAttempts.length
+            const correctLog = realAttempts.find(l => l.is_correct)
+            if (correctLog?.user_answer) userAnswers[qid] = correctLog.user_answer
+          } else if (realAttempts.length >= 2) {
+            questionStates[qid] = 'wrong_2'
+            retryCount[qid] = 2
+            const last = realAttempts[realAttempts.length - 1]
+            if (last.user_answer) userAnswers[qid] = last.user_answer
+          } else if (realAttempts.length === 1) {
+            questionStates[qid] = 'wrong_1'
+            retryCount[qid] = 1
+            if (realAttempts[0].user_answer) userAnswers[qid] = realAttempts[0].user_answer
+          } else {
+            // Only skip logs — no real answer submitted
+            questionStates[qid] = 'skipped'
+            retryCount[qid] = 0
+          }
+        }
+
+        // completed_answers come from backend (only revealed for fully-attempted questions)
+        const correctAnswers: Record<number, string> = {}
+        for (const [qidStr, ans] of Object.entries(profile.completed_answers)) {
+          correctAnswers[Number(qidStr)] = ans
+        }
+
+        if (Object.keys(questionStates).length > 0) {
+          dispatch({ type: 'RESTORE_STATE', questionStates, retryCount, userAnswers, correctAnswers })
+        }
+
         logAction({ user_id: storedUserId!, session_id: storedSessionId, action_type: 'session_start' })
       } catch (err) {
         setLoadError('Failed to load quiz. Please refresh.')

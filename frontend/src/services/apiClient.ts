@@ -13,7 +13,27 @@ export const createUser = async (userId: string) => {
   return res.data
 }
 
-export const getUserProfile = async (userId: string) => {
+export interface InteractionLogEntry {
+  timestamp: string
+  question_id: number
+  skill: string
+  user_answer: string | null
+  is_correct: boolean
+  time_taken_ms: number | null
+  hint_shown: boolean
+  hint_style_used: string | null
+  user_feedback_rating: number | null
+  bkt_change: number | null
+}
+
+export interface UserProfile {
+  user_id: string
+  preferences: Record<string, string>
+  interaction_history: InteractionLogEntry[]
+  completed_answers: Record<number, string>
+}
+
+export const getUserProfile = async (userId: string): Promise<UserProfile> => {
   const res = await apiClient.get(`/users/${userId}/profile`)
   return res.data
 }

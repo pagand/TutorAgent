@@ -9,6 +9,7 @@ from datetime import datetime
 from app.utils.config import settings
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.question_service import question_service
 
 
 
@@ -82,6 +83,7 @@ async def get_user_profile_with_session(session: AsyncSession, user_id: str) -> 
         for sm in user.skill_mastery
     ]
     
+    sorted_logs = sorted(user.interaction_logs, key=lambda x: x.timestamp)
     interaction_log_data = [
         {
             "timestamp": log.timestamp.isoformat(),
@@ -95,8 +97,23 @@ async def get_user_profile_with_session(session: AsyncSession, user_id: str) -> 
             "user_feedback_rating": log.user_feedback_rating,
             "bkt_change": log.bkt_change,
         }
-        for log in sorted(user.interaction_logs, key=lambda x: x.timestamp, reverse=True)[:20] # Return last 20
+        for log in sorted_logs
     ]
+
+    # Build completed_answers: correct answers revealed only for fully-attempted questions
+    # (correct or 2+ wrong attempts). Safe to expose — exam is over for those questions.
+    logs_by_question: dict[int, list] = {}
+    for log in sorted_logs:
+        logs_by_question.setdefault(log.question_id, []).append(log)
+
+    completed_answers: dict[int, str] = {}
+    for qid, logs in logs_by_question.items():
+        real_attempts = [l for l in logs if l.user_answer is not None]
+        any_correct = any(l.is_correct for l in real_attempts)
+        if any_correct or len(real_attempts) >= 2:
+            q = question_service.get_question_by_id(qid)
+            if q:
+                completed_answers[qid] = str(q.correct_answer)
 
     return {
         "user_id": user.id,
@@ -105,6 +122,7 @@ async def get_user_profile_with_session(session: AsyncSession, user_id: str) -> 
         "feedback_scores": user.feedback_scores,
         "skill_mastery": skill_mastery_data,
         "interaction_history": interaction_log_data,
+        "completed_answers": completed_answers,
     }
 
 async def delete_user_by_id(session: AsyncSession, user_id: str) -> bool:

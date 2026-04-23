@@ -13,6 +13,7 @@ type QuizAction =
   | { type: 'SET_DRAFT'; questionNumber: number; answer: string }
   | { type: 'APPEND_CHAT'; userMessage: string; tutorResponse: string }
   | { type: 'COMPLETE' }
+  | { type: 'RESTORE_STATE'; questionStates: Record<number, QuestionStatus>; retryCount: Record<number, number>; userAnswers: Record<number, string>; correctAnswers: Record<number, string> }
 
 const initialState: QuizState = {
   userId: '',
@@ -166,6 +167,30 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
 
     case 'COMPLETE': {
       return { ...state, isComplete: true }
+    }
+
+    case 'RESTORE_STATE': {
+      const { questionStates, retryCount, userAnswers, correctAnswers } = action
+      const allFinal = state.questions.every(q => {
+        const s = questionStates[q.question_number] ?? 'unanswered'
+        return s === 'correct' || s === 'wrong_2' || s === 'skipped'
+      })
+      const firstResumable = state.questions.findIndex(q => {
+        const s = questionStates[q.question_number] ?? 'unanswered'
+        return s === 'unanswered' || s === 'wrong_1' || s === 'skipped'
+      })
+      const resumeIndex = firstResumable === -1 ? state.questions.length - 1 : firstResumable
+      const highestReachedIndex = Math.min(resumeIndex, state.questions.length - 1)
+      return {
+        ...state,
+        questionStates,
+        retryCount,
+        userAnswers,
+        correctAnswers,
+        currentQuestionIndex: allFinal ? state.currentQuestionIndex : resumeIndex,
+        highestReachedIndex,
+        isComplete: allFinal,
+      }
     }
 
     default:

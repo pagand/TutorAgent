@@ -7,9 +7,11 @@ interface AnswerInputProps {
   onChange: (value: string) => void
   disabled?: boolean
   wrongAnswer?: string  // grays out a previously-tried wrong option
+  onChoiceSelect?: (value: string) => void
+  onInputFocus?: () => void
 }
 
-export default function AnswerInput({ questionType, options, value, onChange, disabled, wrongAnswer }: AnswerInputProps) {
+export default function AnswerInput({ questionType, options, value, onChange, disabled, wrongAnswer, onChoiceSelect, onInputFocus }: AnswerInputProps) {
   return (
     <div className="my-4">
       {questionType === 'multiple_choice' && options && (
@@ -40,7 +42,12 @@ export default function AnswerInput({ questionType, options, value, onChange, di
                   name="answer"
                   value={val}
                   checked={selected}
-                  onChange={(e) => !isDisabled && onChange(e.target.value)}
+                  onChange={(e) => {
+                    if (!isDisabled) {
+                      onChange(e.target.value)
+                      onChoiceSelect?.(e.target.value)
+                    }
+                  }}
                   disabled={isDisabled}
                   className="mt-0.5 h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"
                 />
@@ -58,6 +65,7 @@ export default function AnswerInput({ questionType, options, value, onChange, di
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={() => onInputFocus?.()}
           disabled={disabled}
           placeholder="Type your answer…"
           className="block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-slate-100 disabled:cursor-not-allowed"

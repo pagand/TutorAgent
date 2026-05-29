@@ -5,9 +5,10 @@ import { useQuiz } from '@/context/QuizContext'
 interface ResultBannerProps {
   questionNumber: number
   onNext?: () => void
+  previousAnswer?: string
 }
 
-export default function ResultBanner({ questionNumber, onNext }: ResultBannerProps) {
+export default function ResultBanner({ questionNumber, onNext, previousAnswer }: ResultBannerProps) {
   const { state } = useQuiz()
   const status = state.questionStates[questionNumber]
 
@@ -22,7 +23,9 @@ export default function ResultBanner({ questionNumber, onNext }: ResultBannerPro
       style = 'bg-emerald-50 border-emerald-300 text-emerald-800'
       break
     case 'wrong_1':
-      message = '✗ Incorrect — 1 attempt remaining'
+      message = previousAnswer
+        ? `✗ Incorrect — your answer: "${previousAnswer}" — 1 attempt remaining`
+        : '✗ Incorrect — 1 attempt remaining'
       style = 'bg-amber-50 border-amber-300 text-amber-800'
       break
     case 'wrong_2':

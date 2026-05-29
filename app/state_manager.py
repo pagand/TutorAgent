@@ -2,7 +2,7 @@
 import random
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from app.models.user import User, SkillMastery, InteractionLog
+from app.models.user import User, SkillMastery, InteractionLog, Participant
 from app.utils.db import AsyncSessionLocal
 from app.utils.logger import logger
 from datetime import datetime
@@ -21,13 +21,25 @@ async def get_user_or_create(session: AsyncSession, user_id: str) -> User:
     result = await session.execute(select(User).filter_by(id=user_id))
     user = result.scalars().first()
     if not user:
-        ab_group = random.choice(["adaptive", "free_choice"])
-        logger.info(f"Adding new user '{user_id}' to session. A/B group: {ab_group}")
+        # Prefer manifest-assigned group/intervention; fall back to random for ad-hoc ids (dev/tests).
+        p_result = await session.execute(select(Participant).filter_by(token=user_id))
+        participant = p_result.scalars().first()
+        if participant:
+            ab_group = participant.group
+            intervention_pref = participant.intervention
+        else:
+            ab_group, intervention_pref = random.choice([
+                ("adaptive", "proactive"),
+                ("adaptive", "manual"),
+                ("free_choice", "proactive"),
+                ("free_choice", "manual"),
+            ])
+        logger.info(f"Adding new user '{user_id}'. A/B group: {ab_group}, intervention: {intervention_pref}")
         user = User(
             id=user_id,
             preferences={
                 "hint_style_preference": "adaptive",
-                "intervention_preference": "proactive",
+                "intervention_preference": intervention_pref,
                 "ab_group": ab_group,
             }
         )

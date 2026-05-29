@@ -1,7 +1,7 @@
 # Retrieval-Augmented Generation component; integrates local LLM (via Hugging Face Transformers and Langchain) to generate personalized hints
 # app/services/rag_agent.py
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings # LLM Imports
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.llms import Ollama
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -16,10 +16,9 @@ from app.utils.logger import logger
 import threading
 import os
 
-from operator import itemgetter # Import itemgetter
-from app.services.personalization_service import personalization_service
+from operator import itemgetter
 from app.services.prompt_library import PROMPT_LIBRARY
-from app.services.question_service import question_service # Import question_service
+from app.services.question_service import question_service
 
 # --- Global variables for initialized components (initialized lazily) ---
 _embedding_function = None
@@ -66,26 +65,26 @@ async def get_user_history_summary(session: AsyncSession, user_id: str, limit: i
         status = "Correct" if log.is_correct else "Incorrect"
         answer_text = log.user_answer
 
-        # --- NEW: Translate multiple-choice answer index to text ---
-        if question.question_type == 'multiple_choice':
+        # Translate multiple-choice answer index to human-readable text
+        if question.question_type == 'multiple_choice' and log.user_answer is not None:
             try:
-                # Convert 1-based answer string to 0-based index
                 answer_index = int(log.user_answer) - 1
                 if 0 <= answer_index < len(question.options):
                     answer_text = question.options[answer_index]
                 else:
-                    logger.warning(f"Invalid answer index '{log.user_answer}' for question {log.question_id}")
+                    logger.debug(f"Answer index '{log.user_answer}' out of range for question {log.question_id}")
             except (ValueError, TypeError):
-                # Handle cases where answer is not a valid number
-                logger.warning(f"Could not parse answer index '{log.user_answer}' for question {log.question_id}")
-        # --- END NEW ---
+                logger.debug(f"Could not parse answer index '{log.user_answer}' for question {log.question_id}")
 
-        # --- RESTRUCTURED SUMMARY ---
+        # Build summary entry
         summary_parts = [f"<q>{question_text}</q>"]
         if log.hint_shown and log.hint_style_used and log.hint_text:
             hint_content = log.hint_text.replace('\n', ' ').strip()
             summary_parts.append(f"<h>Hint Style Used: {log.hint_style_used}: {hint_content}</h>")
-        summary_parts.append(f"<a>{answer_text}</a> ({status})")
+        if answer_text is None:
+            summary_parts.append("(Skipped)")
+        else:
+            summary_parts.append(f"<a>{answer_text}</a> ({status})")
         
         summary_line = "- " + "; ".join(summary_parts)
         summary.append(summary_line)
@@ -116,12 +115,12 @@ def _initialize_rag_components():
         try:
             # 1. Initialize Embeddings
             if _embedding_function is None:
-                logger.info(f"Loading embedding model: {settings.embedding_model_name}")
-                _embedding_function = HuggingFaceEmbeddings(
-                    model_name=settings.embedding_model_name,
-                    cache_folder=settings.hf_cache_dir or None,
+                logger.info(f"Loading Google embedding model: {settings.google_embedding_model_name}")
+                _embedding_function = GoogleGenerativeAIEmbeddings(
+                    google_api_key=settings.google_api_key,
+                    model=settings.google_embedding_model_name,
                 )
-                logger.info("Embedding model loaded.")
+                logger.info("Google embedding model initialized.")
 
             # 2. Initialize Vector Store and Retriever
             if _vectorstore is None:
@@ -158,7 +157,15 @@ def _initialize_rag_components():
                 elif provider == "openai":
                     _llm_client = ChatOpenAI(openai_api_key=settings.openai_api_key, model_name=settings.openai_model_name, temperature=0)
                 elif provider == "google":
-                    _llm_client = ChatGoogleGenerativeAI(google_api_key=settings.google_api_key, model=settings.google_model_name, temperature=0, convert_system_message_to_human=True, max_output_tokens = settings.max_output_tokens)
+                    _llm_client = ChatGoogleGenerativeAI(
+                        google_api_key=settings.google_api_key,
+                        model=settings.google_model_name,
+                        temperature=0,
+                        convert_system_message_to_human=True,
+                        max_output_tokens=settings.max_output_tokens,
+                        timeout=60,
+                        max_retries=2,
+                    )
                 else:
                     raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
                 logger.info(f"Initialized LLM with provider {provider}")
@@ -204,10 +211,10 @@ def get_rag_chain(hint_style: str):
     return rag_chain
 
 # --- Hint Generation Function ---
-async def get_rag_hint(session: AsyncSession, question_id: int, user_answer: str | None, user_id: str, user_history: str) -> dict:
+async def get_rag_hint(question_id: int, user_answer: str | None, user_id: str, user_history: str, hint_style: str) -> dict:
     """
-    Retrieves context, gets adaptive hint style, and generates a personalized hint.
-    Returns a dictionary containing the hint, style, context, and final prompt.
+    Generates a personalized hint using RAG + LLM.
+    hint_style must be pre-fetched by the caller (allows DB session to be released first).
     """
     if not _llm_client:
         if not _initialize_rag_components():
@@ -219,8 +226,6 @@ async def get_rag_hint(session: AsyncSession, question_id: int, user_answer: str
         if not question_obj:
             return {"hint": "...", "hint_style": "error", "context": "", "final_prompt": ""}
 
-        hint_style = await personalization_service.get_adaptive_hint_style(session, user_id)
-        
         if "test_user" in user_id:
             return {"hint": "...", "hint_style": hint_style, "context": "Mock context", "final_prompt": "Mock prompt"}
 

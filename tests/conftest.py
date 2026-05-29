@@ -71,8 +71,6 @@ async def client(db_session):
         patch("app.services.question_service.question_service.get_all_skills", return_value=["Networking"]),
         patch("app.services.rag_agent._llm_client", mock_llm),
         patch("app.services.rag_agent._retriever", mock_retriever),
-        patch("app.endpoints.chat._llm_client", mock_llm),
-        patch("app.endpoints.chat._retriever", mock_retriever),
     ):
         from app.main import app
         app.dependency_overrides[get_db] = override_get_db

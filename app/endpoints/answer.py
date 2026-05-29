@@ -35,6 +35,7 @@ class AnswerResponse(BaseModel):
     correct_answer: str
     skill: str
     intervention_needed: bool
+    intervention_reason: str | None = None
     current_mastery: float
 
 @router.post("/", response_model=AnswerResponse)
@@ -94,7 +95,7 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
             bkt_change=bkt_change_value or 0,
             rating=request.feedback_rating
         )
-        logger.info(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value}, Rating: {request.feedback_rating}")
+        logger.debug(f"Recorded hybrid feedback for user {user_id} on skill {skill}. BKT change: {bkt_change_value}, Rating: {request.feedback_rating}")
 
     log_entry = InteractionLog(
         user_id=user_id,
@@ -122,9 +123,9 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         skill_mastery.consecutive_errors += 1
     db.add(skill_mastery)
 
-    intervention_needed = intervention.check_intervention(
-        user_id, 
-        skill, 
+    intervention_reason = intervention.check_intervention(
+        user_id,
+        skill,
         time_taken,
         current_mastery=updated_mastery_level,
         consecutive_errors=skill_mastery.consecutive_errors,
@@ -137,7 +138,8 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         correct=is_correct,
         correct_answer=str(question.correct_answer),
         skill=skill,
-        intervention_needed=intervention_needed,
+        intervention_needed=intervention_reason is not None,
+        intervention_reason=intervention_reason,
         current_mastery=updated_mastery_level
     )
 

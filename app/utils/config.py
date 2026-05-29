@@ -3,29 +3,34 @@ import os
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
-# Load .env file before defining settings
-load_dotenv(override=True)
+# Load .env file — shell env vars take precedence over .env values
+load_dotenv()
 
 class Settings(BaseSettings):
     # PDF and ChromaDB Settings
-    pdf_path: str = "evaluation/data/evaluation_source.pdf" 
-    QUESTION_CSV_FILE_PATH: str = "evaluation/data/server_ready_questions.csv" 
-
+    # for test
     # pdf_path: str = "data/source_material.pdf"
     # QUESTION_CSV_FILE_PATH: str =  "data/questions.csv"
 
+    # for eval
+    # pdf_path: str = "evaluation/data/evaluation_source.pdf" 
+    # QUESTION_CSV_FILE_PATH: str = "evaluation/data/server_ready_questions.csv" 
+    
+    # for Prod
+    pdf_path: str = "prod/data/source.pdf" 
+    QUESTION_CSV_FILE_PATH: str = "prod/data/server_ready_questions.csv" 
+
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection_name: str = "ai_tutor_collection"
-    embedding_model_name: str = 'all-MiniLM-L6-v2'
+    google_embedding_model_name: str = "models/gemini-embedding-001"
     chunk_size: int = 1000
     chunk_overlap: int = 200
     retrieval_k: int = 3
-    hf_cache_dir: str = "./chroma_db/hf_cache" # Directory for Hugging Face cache
     log_level: str = os.getenv("LOG_LEVEL", "DEBUG").upper()
 
     # general LLM config
-    max_output_tokens: int = 100 # for test
-    use_llm_cache: bool =  os.getenv("USE_HINT_CACHE", True)
+    max_output_tokens: int = 512
+    use_llm_cache: bool = True  # env var: USE_LLM_CACHE
 
     # --- LLM Provider Configuration ---
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama").lower()
@@ -56,9 +61,9 @@ class Settings(BaseSettings):
 
     # Intervention Controller Thresholds (Stage 3)
     intervention_mastery_threshold: float = 0.20 # was 0.15
-    intervention_max_consecutive_errors: int = 2
-    intervention_max_consecutive_skips: int = 1 # show hint if question was skipped
-    intervention_time_limit_ms: int = 10000 # 10 sec
+    intervention_max_consecutive_errors: int = 1
+    intervention_max_consecutive_skips: int = 2 # show hint if question was skipped
+    intervention_time_limit_ms: int = 30000 # 30 sec
 
     # Personalization Settings (Stage 4.5)
     exploration_rate: float = 0.2  # 20% chance to explore a random hint style (plus the adaptive count of available feedbacks)
@@ -66,7 +71,7 @@ class Settings(BaseSettings):
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
     # --- Exam Timer Settings ---
-    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 15 * 60 * 1000))  # 25 minutes default
+    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 20 * 60 * 1000))  # 20 minutes default
 
     # --- Database Settings (Stage 5) ---
     database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/aitutor_db")

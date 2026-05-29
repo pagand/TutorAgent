@@ -23,13 +23,12 @@ from app.endpoints import (
 from app.endpoints.session import router as session_router
 from app.endpoints.chat import router as chat_router
 from app.endpoints.action_log import router as action_log_router
+from app.endpoints.participants import router as participants_router
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized
 from app.services.question_service import question_service
 from app.utils.config import settings
 from app.utils.logger import logger
-from app.utils.db import engine
-from app.models.user import Base
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,11 +36,6 @@ async def lifespan(app: FastAPI):
     Manages application startup and shutdown events.
     """
     logger.info("AI Tutor API starting up...")
-    
-    # Create database tables if they don't exist
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        
     logger.info("Loading questions...")
     question_service.load_questions(settings.QUESTION_CSV_FILE_PATH)
     logger.info(f"Loaded {len(question_service.get_all_questions())} questions.")
@@ -61,7 +55,7 @@ async def lifespan(app: FastAPI):
         logger.critical(f"Fatal error during RAG initialization: {e}")
         sys.exit(1) # Exit if RAG fails, as the app is not functional
     
-    logger.info("Startup complete.")
+    logger.warning("Startup complete.")
     yield
     # On shutdown
     logger.info("AI Tutor API shutting down...")
@@ -75,13 +69,22 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
-# Set ALLOWED_ORIGIN env var to your CloudFront domain in production.
-# Falls back to wildcard only when explicitly set to "*" (local dev).
-_allowed_origins = os.getenv("ALLOWED_ORIGIN", "*")
+# Set ALLOWED_ORIGIN to your CloudFront domain in production.
+# If unset or "*", open CORS is used (dev-only) and credentials are disabled
+# because browsers reject allow_credentials=True with a wildcard origin.
+_allowed_origin = os.getenv("ALLOWED_ORIGIN", "*")
+if _allowed_origin == "*":
+    logger.warning("CORS: ALLOWED_ORIGIN='*' — open CORS without credentials (development only)")
+    _cors_origins = ["*"]
+    _cors_credentials = False
+else:
+    _cors_origins = [_allowed_origin]
+    _cors_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[_allowed_origins],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -97,6 +100,7 @@ app.include_router(proactive_hints_router.router)
 app.include_router(session_router)
 app.include_router(chat_router)
 app.include_router(action_log_router)
+app.include_router(participants_router)
 
 # --- Root Endpoint ---
 @app.get("/")

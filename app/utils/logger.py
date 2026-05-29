@@ -26,3 +26,7 @@ logger.addHandler(handler)
 
 # Prevent log messages from being passed to the root logger to avoid double printing.
 logger.propagate = False
+
+# Apply the same level to uvicorn loggers so LOG_LEVEL controls all output uniformly.
+for _uv_logger in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    logging.getLogger(_uv_logger).setLevel(log_level)

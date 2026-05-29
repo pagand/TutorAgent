@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getUserProfile, setUserPreference } from '@/services/apiClient'
+import { getUserProfile, setUserPreference, logAction, logoutSession } from '@/services/apiClient'
 
 // Values must match backend HintStyle enum exactly
 const HINT_STYLES = [
@@ -29,6 +29,9 @@ export default function ProfilePage() {
     if (!id) { router.replace('/login'); return }
     setUserId(id)
 
+    const sessionId = localStorage.getItem('sessionId') || ''
+    logAction({ user_id: id, session_id: sessionId, action_type: 'profile_view' })
+
     getUserProfile(id)
       .then((profile) => {
         const prefs = profile.preferences || {}
@@ -47,6 +50,11 @@ export default function ProfilePage() {
     setError(null)
     try {
       await setUserPreference(userId, hintStyle, interventionPref)
+      logAction({
+        user_id: userId, session_id: localStorage.getItem('sessionId') || '',
+        action_type: 'preference_update',
+        action_data: { hint_style: hintStyle, intervention_preference: interventionPref },
+      })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (e: unknown) {
@@ -58,6 +66,13 @@ export default function ProfilePage() {
   }
 
   const handleLogout = () => {
+    const confirmed = window.confirm(
+      'Logging out or closing this tab will NOT pause your timer — your exam keeps running.\n\nAre you sure you want to log out?'
+    )
+    if (!confirmed) return
+    // Release the session lock so the student can re-enter from any device immediately.
+    const uid = localStorage.getItem('userId')
+    if (uid) logoutSession(uid)
     localStorage.removeItem('userId')
     localStorage.removeItem('sessionId')
     localStorage.removeItem('examStartMs')

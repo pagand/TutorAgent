@@ -52,8 +52,8 @@ async def test_ab_group_set_on_first_create_not_overwritten(client):
     assert group1 == group2
 
 
-async def test_intervention_preference_defaults_to_proactive(client):
-    """New users should default to proactive intervention so timer polling is active."""
+async def test_intervention_preference_assigned_on_creation(client):
+    """New users should have an intervention_preference assigned (proactive or manual) from 4-group A/B."""
     response = await client.post("/users/", json={"user_id": "student_proa"})
     prefs = response.json()["preferences"]
-    assert prefs.get("intervention_preference") == "proactive"
+    assert prefs.get("intervention_preference") in ("proactive", "manual")

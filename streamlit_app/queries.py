@@ -1,4 +1,6 @@
 # streamlit_app/queries.py
+import json
+import time
 import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -63,7 +65,7 @@ def get_all_user_ids(db: Session) -> list:
 
 
 def get_all_users_summary(db: Session) -> pd.DataFrame:
-    """Returns all users with their A/B group, creation time, and basic stats."""
+    """Returns all users with their A/B group, creation time, basic stats, and timer info."""
     query = text("""
         SELECT
             u.id AS user_id,
@@ -74,16 +76,31 @@ def get_all_users_summary(db: Session) -> pd.DataFrame:
             COUNT(DISTINCT il.id) AS total_interactions,
             SUM(CASE WHEN il.is_correct THEN 1 ELSE 0 END) AS correct_answers,
             SUM(CASE WHEN il.hint_shown THEN 1 ELSE 0 END) AS hints_used,
-            COUNT(DISTINCT cl.id) AS chat_messages
+            COUNT(DISTINCT cl.id) AS chat_messages,
+            es.exam_start_ms,
+            es.exam_duration_ms,
+            es.submitted_at,
+            p.status AS participant_status
         FROM users u
         LEFT JOIN interaction_logs il ON il.user_id = u.id
         LEFT JOIN chat_logs cl ON cl.user_id = u.id
-        GROUP BY u.id, u.created_at
+        LEFT JOIN exam_sessions es ON es.user_id = u.id
+        LEFT JOIN participants p ON p.token = u.id
+        GROUP BY u.id, u.created_at, es.exam_start_ms, es.exam_duration_ms, es.submitted_at, p.status
         ORDER BY u.created_at DESC
     """)
     df = pd.read_sql(query, db.connection())
     if not df.empty:
         df['created_at'] = pd.to_datetime(df['created_at'])
+        now_ms = int(time.time() * 1000)
+        def _remaining_min(row):
+            if pd.isna(row['exam_start_ms']) or pd.isna(row['exam_duration_ms']):
+                return None
+            elapsed = now_ms - int(row['exam_start_ms'])
+            remaining = max(0, int(row['exam_duration_ms']) - elapsed)
+            return remaining // 60000
+        df['remaining_min'] = df.apply(_remaining_min, axis=1)
+        df['submitted'] = df['submitted_at'].notna()
     return df
 
 
@@ -172,7 +189,7 @@ def get_intervention_logs(db: Session, user_id: str | None = None) -> pd.DataFra
         SELECT il.timestamp, il.user_id,
                u.preferences->>'ab_group' AS ab_group,
                il.session_id, il.question_number, il.time_on_question_ms,
-               il.mastery_at_trigger, il.accepted
+               il.mastery_at_trigger, il.reason, il.accepted
         FROM intervention_logs il
         JOIN users u ON u.id = il.user_id
         {where}
@@ -275,6 +292,11 @@ def reset_user_progress(db: Session, user_id: str):
     db.execute(text("DELETE FROM intervention_logs WHERE user_id = :user_id"), {"user_id": user_id})
     db.execute(text("DELETE FROM interaction_logs WHERE user_id = :user_id"), {"user_id": user_id})
     db.execute(text("DELETE FROM skill_mastery WHERE user_id = :user_id"), {"user_id": user_id})
+    # Reset participant so they can re-enter as a fresh start
+    db.execute(
+        text("UPDATE participants SET status='unused', active_session_id=NULL WHERE token=:user_id"),
+        {"user_id": user_id},
+    )
     db.commit()
 
 
@@ -282,3 +304,80 @@ def delete_user(db: Session, user_id: str):
     reset_user_progress(db, user_id)
     db.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": user_id})
     db.commit()
+
+
+def update_user_preferences(db: Session, user_id: str, prefs_update: dict):
+    """Merges prefs_update into the user's existing preferences JSON column."""
+    db.execute(
+        text("UPDATE users SET preferences = CAST(preferences AS jsonb) || CAST(:prefs AS jsonb) WHERE id = :user_id"),
+        {"user_id": user_id, "prefs": json.dumps(prefs_update)},
+    )
+    db.commit()
+
+
+def reset_exam_timer(db: Session, user_id: str):
+    """Resets exam_start_ms to NOW and clears submitted_at. Clears participant lock so student can re-enter."""
+    now_ms = int(time.time() * 1000)
+    db.execute(
+        text("UPDATE exam_sessions SET exam_start_ms=:now_ms, submitted_at=NULL WHERE user_id=:user_id"),
+        {"now_ms": now_ms, "user_id": user_id},
+    )
+    db.execute(
+        text("UPDATE participants SET status='unused', active_session_id=NULL, last_seen_at=NULL WHERE token=:user_id"),
+        {"user_id": user_id},
+    )
+    db.commit()
+
+
+def extend_exam_timer(db: Session, user_id: str, extra_minutes: int):
+    """Adds extra_minutes to the user's remaining exam time."""
+    extra_ms = extra_minutes * 60 * 1000
+    db.execute(
+        text("UPDATE exam_sessions SET exam_duration_ms=exam_duration_ms+:extra WHERE user_id=:user_id"),
+        {"extra": extra_ms, "user_id": user_id},
+    )
+    db.commit()
+
+
+def clear_session_lock(db: Session, user_id: str):
+    """Clears active_session_id and last_seen_at so the student can re-enter from any device."""
+    db.execute(
+        text("UPDATE participants SET active_session_id=NULL, last_seen_at=NULL WHERE token=:user_id"),
+        {"user_id": user_id},
+    )
+    db.commit()
+
+
+def get_exam_session_info(db: Session, user_id: str) -> dict:
+    """Returns current timer info for a user."""
+    result = db.execute(
+        text("SELECT exam_start_ms, exam_duration_ms, submitted_at FROM exam_sessions WHERE user_id=:user_id"),
+        {"user_id": user_id},
+    ).first()
+    if not result:
+        return {}
+    now_ms = int(time.time() * 1000)
+    elapsed_ms = now_ms - result.exam_start_ms
+    remaining_ms = max(0, result.exam_duration_ms - elapsed_ms)
+    return {
+        "exam_start_ms": result.exam_start_ms,
+        "exam_duration_ms": result.exam_duration_ms,
+        "remaining_ms": remaining_ms,
+        "remaining_min": round(remaining_ms / 60000, 1),
+        "submitted": result.submitted_at is not None,
+    }
+
+
+def get_participant_info(db: Session, user_id: str) -> dict:
+    """Returns participant lock status."""
+    result = db.execute(
+        text("SELECT status, active_session_id, last_seen_at FROM participants WHERE token=:user_id"),
+        {"user_id": user_id},
+    ).first()
+    if not result:
+        return {}
+    return {
+        "status": result.status,
+        "active_session_id": result.active_session_id,
+        "last_seen_at": str(result.last_seen_at) if result.last_seen_at else None,
+    }

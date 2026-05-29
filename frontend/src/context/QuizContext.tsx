@@ -4,7 +4,7 @@ import React, { createContext, useContext, useReducer, ReactNode } from 'react'
 import type { QuizState, QuestionStatus, Question, ChatMessage, HintData } from '@/types'
 
 type QuizAction =
-  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number }
+  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number; cachedHints?: Record<number, HintData>; cachedChat?: ChatMessage[] }
   | { type: 'NAVIGATE_TO'; index: number }
   | { type: 'SUBMIT_RESULT'; questionNumber: number; isCorrect: boolean; correctAnswer: string; userAnswer: string }
   | { type: 'SKIP_QUESTION' }
@@ -55,8 +55,8 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
         highestReachedIndex: 0,
         examStartMs: action.examStartMs,
         examDurationMs: action.examDurationMs,
-        chatHistory: [],
-        hints: {},
+        chatHistory: action.cachedChat ?? [],
+        hints: action.cachedHints ?? {},
         pendingRatings: {},
         isComplete: false,
       }
@@ -180,7 +180,16 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
         return s === 'unanswered' || s === 'wrong_1' || s === 'skipped'
       })
       const resumeIndex = firstResumable === -1 ? state.questions.length - 1 : firstResumable
-      const highestReachedIndex = Math.min(resumeIndex, state.questions.length - 1)
+
+      // highestReachedIndex = highest index with any non-unanswered state + 1 (to unlock next)
+      // This ensures all previously visited questions stay accessible after refresh
+      let highestVisited = 0
+      for (let i = 0; i < state.questions.length; i++) {
+        const s = questionStates[state.questions[i].question_number] ?? 'unanswered'
+        if (s !== 'unanswered') highestVisited = i
+      }
+      const highestReachedIndex = Math.min(highestVisited + 1, state.questions.length - 1)
+
       return {
         ...state,
         questionStates,
@@ -207,6 +216,18 @@ const QuizContext = createContext<QuizContextValue | null>(null)
 
 export function QuizProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(quizReducer, initialState)
+
+  // Persist hints and chat to localStorage so they survive page refresh
+  React.useEffect(() => {
+    if (!state.userId) return
+    try {
+      localStorage.setItem(`quizCache_${state.userId}`, JSON.stringify({
+        hints: state.hints,
+        chatHistory: state.chatHistory,
+      }))
+    } catch { /* storage quota — non-fatal */ }
+  }, [state.hints, state.chatHistory, state.userId])
+
   return (
     <QuizContext.Provider value={{ state, dispatch }}>
       {children}

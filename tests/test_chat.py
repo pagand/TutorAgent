@@ -13,8 +13,8 @@ async def test_chat_returns_response(client):
     """POST /chat/ should return a tutor response."""
     await _create_user(client, "chat_user_01")
 
-    with patch("app.endpoints.chat._llm_client") as mock_llm, \
-         patch("app.endpoints.chat._retriever") as mock_retriever, \
+    with patch("app.services.rag_agent._llm_client") as mock_llm, \
+         patch("app.services.rag_agent._retriever") as mock_retriever, \
          patch("app.services.rag_agent.get_user_history_summary", return_value="No history"):
 
         mock_retriever.ainvoke = AsyncMock(return_value=[])

@@ -22,6 +22,7 @@ class InterventionCheckRequest(BaseModel):
 
 class InterventionCheckResponse(BaseModel):
     intervention_needed: bool
+    reason: str | None = None
 
 @router.post("/intervention-check", response_model=InterventionCheckResponse)
 async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSession = Depends(get_db)):
@@ -65,7 +66,7 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
         consecutive_skips = skill_mastery.consecutive_skips
 
     # 5. Call the enhanced intervention logic
-    is_needed = intervention.check_intervention(
+    reason = intervention.check_intervention(
         user_id=user_id,
         skill=skill,
         time_taken_ms=time_spent,
@@ -74,4 +75,4 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
         consecutive_skips=consecutive_skips
     )
 
-    return InterventionCheckResponse(intervention_needed=is_needed)
+    return InterventionCheckResponse(intervention_needed=reason is not None, reason=reason)

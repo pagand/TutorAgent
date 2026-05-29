@@ -2,6 +2,8 @@
 # Tests for exam session timer endpoints.
 import time
 import pytest
+from sqlalchemy import text
+from app.utils.config import settings
 
 
 async def test_session_start_creates_session(client):
@@ -16,9 +18,9 @@ async def test_session_start_creates_session(client):
     assert data["user_id"] == "timer_user_01"
     assert data["session_id"] == "uuid-abc-123"
     assert data["exam_start_ms"] > 0
-    assert data["exam_duration_ms"] == 25 * 60 * 1000
+    assert data["exam_duration_ms"] == settings.exam_duration_ms
     assert data["ms_remaining"] > 0
-    assert data["ms_remaining"] <= 25 * 60 * 1000
+    assert data["ms_remaining"] <= settings.exam_duration_ms
 
 
 async def test_session_start_idempotent(client):
@@ -67,3 +69,74 @@ async def test_session_start_unknown_user_returns_404(client):
         "session_id": "uuid-xyz"
     })
     assert response.status_code == 404
+
+
+async def test_session_expired_after_duration_reduced(client, db_session):
+    """Reducing exam_duration_ms below elapsed time marks the session expired.
+
+    This covers the admin 'Adjust Timer' with a negative value — e.g. subtracting
+    minutes when a student needs to be timed out early.
+    """
+    await client.post("/users/", json={"user_id": "timer_reduce_01"})
+    await client.post("/session/start", json={
+        "user_id": "timer_reduce_01",
+        "session_id": "uuid-reduce"
+    })
+
+    # Simulate the admin subtracting enough time to make the session already expired:
+    # set exam_duration_ms to 1 ms so elapsed >> duration.
+    await db_session.execute(
+        text("UPDATE exam_sessions SET exam_duration_ms=1 WHERE user_id='timer_reduce_01'")
+    )
+    await db_session.commit()
+
+    response = await client.get("/session/timer_reduce_01/remaining")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ms_remaining"] == 0
+    assert data["expired"] is True
+
+
+async def test_session_submit_blocks_login_as_completed(client, db_session):
+    """After /session/submit, participant state must be 'completed' so login gate rejects them.
+
+    This is the canonical exam-end flow: timer expires or student submits →
+    backend marks completed → any future login attempt returns state='completed'.
+    """
+    from app.models.user import Participant
+    p = Participant(token="ENDFLOW1", name="End User", identifier="e001",
+                    group="adaptive", intervention="proactive", status="unused")
+    db_session.add(p)
+    await db_session.commit()
+
+    await client.post("/users/", json={"user_id": "ENDFLOW1"})
+    await client.post("/session/start", json={"user_id": "ENDFLOW1", "session_id": "sess-end"})
+    await client.post("/session/submit", json={"user_id": "ENDFLOW1"})
+
+    res = await client.post("/participants/login", json={"token": "ENDFLOW1"})
+    assert res.status_code == 200
+    assert res.json()["state"] == "completed"
+
+
+async def test_heartbeat_expired_when_duration_reduced(client, db_session):
+    """Heartbeat must return expired=True when admin reduces duration below elapsed.
+
+    Frontend polls this every 25 s; when it returns expired=True it redirects
+    all active sessions to /results without waiting for the client-side timer.
+    """
+    await client.post("/users/", json={"user_id": "hb_expire_01"})
+    await client.post("/session/start", json={
+        "user_id": "hb_expire_01",
+        "session_id": "sess-hbexp"
+    })
+
+    await db_session.execute(
+        text("UPDATE exam_sessions SET exam_duration_ms=1 WHERE user_id='hb_expire_01'")
+    )
+    await db_session.commit()
+
+    res = await client.post("/session/heartbeat",
+                            json={"user_id": "hb_expire_01", "session_id": "sess-hbexp"})
+    assert res.status_code == 200
+    assert res.json()["expired"] is True
+    assert res.json()["ms_remaining"] == 0

@@ -1,5 +1,4 @@
 # app/endpoints/chat.py
-# AI tutor chat — context-aware, never reveals the answer directly.
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,13 +6,8 @@ from sqlalchemy.future import select
 
 from app.models.user import User, ChatLog
 from app.services.question_service import question_service
-from app.services.rag_agent import (
-    get_user_history_summary,
-    _retriever,
-    _llm_client,
-    format_docs,
-    _initialize_rag_components,
-)
+import app.services.rag_agent as rag_agent
+from app.services.rag_agent import get_user_history_summary, format_docs
 from app.utils.db import get_db
 from app.utils.logger import logger
 from langchain_core.prompts import PromptTemplate
@@ -75,7 +69,7 @@ class ChatRequest(BaseModel):
     question_number: int
     message: str
     chat_history: list[ChatMessage] = []
-    current_answer: str | None = None  # student's current answer attempt if any
+    current_answer: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -94,26 +88,24 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
     if not question_obj:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # Ensure RAG components are ready
-    global _retriever, _llm_client
-    if not _llm_client or not _retriever:
-        if not _initialize_rag_components():
+    if not rag_agent._llm_client or not rag_agent._retriever:
+        if not rag_agent._initialize_rag_components():
             raise HTTPException(status_code=503, detail="AI components not ready")
-        from app.services.rag_agent import _retriever as r, _llm_client as llm
-        _retriever = r
-        _llm_client = llm
+
+    user_history = await get_user_history_summary(db, request.user_id)
+
+    # Release the DB connection before the slow LLM/retriever calls
+    await db.commit()
 
     try:
-        # Retrieve relevant context from ChromaDB
         query = f"Question: {question_obj.question}\nStudent message: {request.message}"
-        docs = await _retriever.ainvoke(query)
+        docs = await rag_agent._retriever.ainvoke(query)
         context = format_docs(docs)
 
-        user_history = await get_user_history_summary(db, request.user_id)
         options_text = "\n".join(f"- {opt}" for opt in question_obj.options) if question_obj.options else "Open-ended question"
         chat_history_text = _format_chat_history([m.model_dump() for m in request.chat_history])
 
-        chain = CHAT_PROMPT_TEMPLATE | _llm_client | StrOutputParser()
+        chain = CHAT_PROMPT_TEMPLATE | rag_agent._llm_client | StrOutputParser()
         response_text = await chain.ainvoke({
             "question": question_obj.question,
             "options": options_text,
@@ -124,7 +116,7 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
             "user_message": request.message,
         })
 
-        # Log the exchange
+        # Re-acquire a connection only for the write
         log_entry = ChatLog(
             user_id=request.user_id,
             session_id=request.session_id,

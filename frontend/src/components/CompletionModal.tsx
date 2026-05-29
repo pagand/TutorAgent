@@ -8,20 +8,57 @@ interface CompletionModalProps {
 
 export default function CompletionModal({ triggeredByTimer }: CompletionModalProps) {
   const { state } = useQuiz()
-  const { questions, questionStates, correctAnswers, userAnswers } = state
+  const { questions, questionStates, correctAnswers, userAnswers, retryCount } = state
 
-  // Classify each question for scoring
   const totalQuestions = questions.length
-  const totalCorrect = questions.filter(q => questionStates[q.question_number] === 'correct').length
-  // Attempted = user submitted at least one answer (correct, wrong_1, wrong_2)
-  const totalAttempted = questions.filter(q => {
-    const s = questionStates[q.question_number]
-    return s === 'correct' || s === 'wrong_1' || s === 'wrong_2'
-  }).length
-  const engagementRate = totalQuestions > 0 ? totalAttempted / totalQuestions : 0
-  const accuracy = totalAttempted > 0 ? totalCorrect / totalAttempted : 0
 
-  // Skill scores (wrong_1 counts as wrong — not correct)
+  // Unique questions answered correctly (each question counted once)
+  const totalCorrect = questions.filter(q => questionStates[q.question_number] === 'correct').length
+
+  // Total answer submission events across all questions (each submit = 1 event, skips excluded)
+  // retryCount[q] tracks how many times the user submitted an answer for question q
+  const totalSubmissions = questions.reduce((sum, q) => sum + (retryCount[q.question_number] || 0), 0)
+
+  // Total skipped questions (active decision to defer — a distinct effort event)
+  const totalSkipped = questions.filter(q => questionStates[q.question_number] === 'skipped').length
+
+  // Questions the student actually saw (non-unanswered = reached in the exam flow)
+  const totalExposed = questions.filter(q => {
+    const s = questionStates[q.question_number]
+    return s !== undefined && s !== 'unanswered'
+  }).length
+
+  /**
+   * Grade = unique questions correct / total questions (official exam score)
+   * Counts every question — penalizes both wrong answers and unreached questions.
+   */
+  const grade = totalQuestions > 0 ? totalCorrect / totalQuestions : 0
+
+  /**
+   * Accuracy = correct answers / total submission events (skips excluded)
+   * Measures answer quality: a student who answered wrong twice before getting it right
+   * scores lower than one who answered correctly on the first try.
+   * Formula from spec: Correct Answers / Total Answer Events
+   */
+  const accuracy = totalSubmissions > 0 ? totalCorrect / totalSubmissions : 0
+
+  /**
+   * Efficiency = correct answers / total effort events (submissions + skips)
+   * Penalizes wasted effort — skips count as an effort unit alongside wrong answers.
+   * A system that guides students to correct answers with less wasted effort scores higher.
+   * Formula from spec: Total Correct / Total Attempt Events (ANSWER + SKIP)
+   */
+  const totalEffortEvents = totalSubmissions + totalSkipped
+  const efficiency = totalEffortEvents > 0 ? totalCorrect / totalEffortEvents : 0
+
+  /**
+   * Coverage = questions reached / total questions
+   * Measures exam progress — separates time-limited students from low performers.
+   * A student who ran out of time at Q15 may have high accuracy on Q1–Q15.
+   */
+  const coverage = totalQuestions > 0 ? totalExposed / totalQuestions : 0
+
+  // Skill scores (correct per skill out of total questions in that skill)
   const skillScores: Record<string, { correct: number; total: number }> = {}
   for (const q of questions) {
     const skill = q.skill
@@ -40,31 +77,38 @@ export default function CompletionModal({ triggeredByTimer }: CompletionModalPro
             {triggeredByTimer ? '⏱ Time\'s up!' : '✓ Quiz Complete!'}
           </h2>
           <p className="text-slate-500 text-sm mb-6">
-            You answered {totalCorrect} of {totalQuestions} questions correctly.
+            {totalCorrect}/{totalQuestions} correct · {totalSubmissions} answer events · {totalSkipped} skipped · {totalExposed}/{totalQuestions} reached
           </p>
 
-          {/* Summary metrics */}
-          <div className="grid grid-cols-3 gap-3 mb-6">
+          {/* 4 core metrics */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
             <div className="bg-slate-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-indigo-600">
-                {totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0}%
+                {Math.round(grade * 100)}%
               </p>
-              <p className="text-xs text-slate-500 mt-1">Final Score</p>
+              <p className="text-xs font-semibold text-slate-600 mt-1">Grade</p>
               <p className="text-xs text-slate-400">{totalCorrect}/{totalQuestions} correct</p>
             </div>
             <div className="bg-slate-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-emerald-600">
-                {Math.round(engagementRate * 100)}%
+                {Math.round(accuracy * 100)}%
               </p>
-              <p className="text-xs text-slate-500 mt-1">Engagement</p>
-              <p className="text-xs text-slate-400">{totalAttempted}/{totalQuestions} attempted</p>
+              <p className="text-xs font-semibold text-slate-600 mt-1">Accuracy</p>
+              <p className="text-xs text-slate-400">{totalCorrect}/{totalSubmissions} answer events</p>
             </div>
             <div className="bg-slate-50 rounded-lg p-3 text-center">
               <p className="text-2xl font-bold text-amber-600">
-                {Math.round(accuracy * 100)}%
+                {Math.round(efficiency * 100)}%
               </p>
-              <p className="text-xs text-slate-500 mt-1">Accuracy</p>
-              <p className="text-xs text-slate-400">of attempted Qs</p>
+              <p className="text-xs font-semibold text-slate-600 mt-1">Efficiency</p>
+              <p className="text-xs text-slate-400">{totalCorrect}/{totalEffortEvents} effort events</p>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3 text-center">
+              <p className="text-2xl font-bold text-slate-600">
+                {Math.round(coverage * 100)}%
+              </p>
+              <p className="text-xs font-semibold text-slate-600 mt-1">Coverage</p>
+              <p className="text-xs text-slate-400">{totalExposed}/{totalQuestions} questions reached</p>
             </div>
           </div>
 
@@ -101,11 +145,12 @@ export default function CompletionModal({ triggeredByTimer }: CompletionModalPro
                 const status = questionStates[q.question_number]
                 const correct = correctAnswers[q.question_number]
                 const userAns = userAnswers[q.question_number]
+                const attempts = retryCount[q.question_number] || 0
 
                 let statusBadge: string
                 let badgeStyle: string
                 if (status === 'correct') {
-                  statusBadge = 'Correct'
+                  statusBadge = attempts > 1 ? `Correct (${attempts} tries)` : 'Correct'
                   badgeStyle = 'bg-emerald-100 text-emerald-700'
                 } else if (status === 'wrong_2' || status === 'wrong_1') {
                   statusBadge = 'Incorrect'
@@ -114,8 +159,8 @@ export default function CompletionModal({ triggeredByTimer }: CompletionModalPro
                   statusBadge = 'Skipped'
                   badgeStyle = 'bg-amber-100 text-amber-700'
                 } else {
-                  statusBadge = 'Not attempted'
-                  badgeStyle = 'bg-slate-100 text-slate-500'
+                  statusBadge = 'Not reached'
+                  badgeStyle = 'bg-slate-100 text-slate-400'
                 }
 
                 return (

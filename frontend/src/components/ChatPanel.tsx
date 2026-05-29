@@ -2,12 +2,12 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuiz } from '@/context/QuizContext'
-import { sendChat } from '@/services/apiClient'
+import { sendChat, logAction } from '@/services/apiClient'
 
-export default function ChatPanel() {
+export default function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const { state, dispatch } = useQuiz()
   const { userId, sessionId, chatHistory, currentQuestionIndex, questions, userAnswers } = state
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,6 +36,12 @@ export default function ChatPanel() {
         current_answer: currentAnswer,
       })
       dispatch({ type: 'APPEND_CHAT', userMessage: message, tutorResponse: result.response })
+      logAction({
+        user_id: userId, session_id: sessionId,
+        action_type: 'chat_send',
+        question_number: currentQuestion.question_number,
+        action_data: { message_length: message.length },
+      })
     } catch {
       setError('Failed to send message. Try again.')
     } finally {

@@ -2,10 +2,11 @@
 
 import { useState } from 'react'
 import { useQuiz } from '@/context/QuizContext'
+import { logAction } from '@/services/apiClient'
 
 export default function FeedbackBar() {
   const { state, dispatch } = useQuiz()
-  const { hints, pendingRatings, questions, currentQuestionIndex } = state
+  const { userId, sessionId, hints, pendingRatings, questions, currentQuestionIndex } = state
   const currentQNum = questions[currentQuestionIndex]?.question_number
   const activeHint = currentQNum !== undefined ? (hints[currentQNum] ?? null) : null
   const pendingRating = currentQNum !== undefined ? (pendingRatings[currentQNum] ?? null) : null
@@ -22,7 +23,16 @@ export default function FeedbackBar() {
         {[1, 2, 3, 4, 5].map((star) => (
           <button
             key={star}
-            onClick={() => currentQNum !== undefined && dispatch({ type: 'SET_RATING', questionNumber: currentQNum, rating: star })}
+            onClick={() => {
+              if (currentQNum === undefined) return
+              dispatch({ type: 'SET_RATING', questionNumber: currentQNum, rating: star })
+              logAction({
+                user_id: userId, session_id: sessionId,
+                action_type: 'hint_feedback',
+                question_number: currentQNum,
+                action_data: { rating: star },
+              })
+            }}
             onMouseEnter={() => setHoverRating(star)}
             onMouseLeave={() => setHoverRating(0)}
             className={`text-2xl transition-colors leading-none ${

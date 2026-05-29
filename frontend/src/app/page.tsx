@@ -7,8 +7,7 @@ export default function Home() {
   const router = useRouter()
 
   useEffect(() => {
-    const userId = localStorage.getItem('userId')
-    router.replace(userId ? '/quiz' : '/login')
+    router.replace('/login')
   }, [router])
 
   return null

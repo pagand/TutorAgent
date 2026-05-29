@@ -12,26 +12,42 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/log", tags=["Logging"])
 
-# Valid action types — documented for frontend reference
+# Valid action types — canonical {entity}_{verb} naming
 ACTION_TYPES = {
+    # Session lifecycle
     "session_start",
-    "session_complete",
-    "timer_expired",
+    "session_complete",   # auto-complete (all done)
+    "session_submit",     # student submits early
+    "session_expire",     # timer hits zero
+    "timer_warning",      # 3-minute warning fired
+    # Question navigation
     "question_view",
     "question_navigate",
-    "choice_select",
+    # Answer interactions
+    "choice_select",      # MC option clicked (before submit)
+    "answer_focus",       # fill-in-blank input focused
     "answer_submit",
     "answer_skip",
+    # Hint interactions
     "hint_request",
     "hint_display",
-    "hint_feedback",
+    "hint_feedback",      # star rating clicked
+    # Intervention interactions
+    "intervention_offer",
+    "intervention_accept",
+    "intervention_reject",
+    # Chat interactions
+    "chat_send",
+    # Profile interactions
+    "profile_view",
+    "preference_update",
+    # Legacy names kept for backward compatibility
+    "timer_expired",
     "intervention_offered",
     "intervention_accepted",
     "intervention_rejected",
     "chat_message_sent",
     "chat_response_received",
-    "profile_view",
-    "preference_update",
 }
 
 
@@ -53,6 +69,7 @@ class InterventionLogRequest(BaseModel):
     question_number: int
     time_on_question_ms: int
     mastery_at_trigger: float | None = None
+    reason: str | None = None  # time_spent | low_mastery | consecutive_errors | consecutive_skips
     accepted: bool | None = None  # None = just offered, True/False = response
 
 
@@ -111,6 +128,7 @@ async def log_intervention(request: InterventionLogRequest, db: AsyncSession = D
             question_number=request.question_number,
             time_on_question_ms=request.time_on_question_ms,
             mastery_at_trigger=request.mastery_at_trigger,
+            reason=request.reason,
             accepted=request.accepted,
         )
         db.add(entry)
@@ -118,6 +136,6 @@ async def log_intervention(request: InterventionLogRequest, db: AsyncSession = D
     await db.commit()
     logger.debug(
         f"Logged intervention for user {request.user_id} q={request.question_number} "
-        f"accepted={request.accepted}"
+        f"reason={request.reason} accepted={request.accepted}"
     )
     return ActionLogResponse(logged=True)

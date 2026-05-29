@@ -4,6 +4,7 @@ import type { ChatMessage } from '@/types'
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000',
   headers: { 'Content-Type': 'application/json' },
+  timeout: 90000, // 90s — covers slow Gemini calls (120s nginx timeout)
 })
 
 export default apiClient
@@ -81,9 +82,23 @@ export const startSession = async (userId: string, sessionId: string) => {
   return res.data as { user_id: string; session_id: string; exam_start_ms: number; exam_duration_ms: number; ms_remaining: number }
 }
 
-export const getSessionRemaining = async (userId: string) => {
-  const res = await apiClient.get(`/session/${userId}/remaining`)
-  return res.data as { exam_start_ms: number; exam_duration_ms: number; ms_remaining: number; expired: boolean }
+export const participantLogin = async (token: string, sessionId?: string) => {
+  const res = await apiClient.post('/participants/login', { token, session_id: sessionId ?? null })
+  return res.data as { state: string; name: string | null; group: string | null }
+}
+
+export const logoutSession = async (userId: string) => {
+  apiClient.post('/session/logout', { user_id: userId }).catch(() => {})
+}
+
+export const sessionHeartbeat = async (userId: string, sessionId: string) => {
+  const res = await apiClient.post('/session/heartbeat', { user_id: userId, session_id: sessionId })
+  return res.data as { ms_remaining: number; expired: boolean; submitted: boolean; active: boolean }
+}
+
+export const submitSession = async (userId: string) => {
+  const res = await apiClient.post('/session/submit', { user_id: userId })
+  return res.data as { submitted: boolean; submitted_at: number }
 }
 
 export const sendChat = async (payload: {
@@ -104,7 +119,7 @@ export const checkIntervention = async (userId: string, questionNumber: number, 
     question_number: questionNumber,
     time_spent_ms: timeSpentMs,
   })
-  return res.data as { intervention_needed: boolean }
+  return res.data as { intervention_needed: boolean; reason: string | null }
 }
 
 export const logAction = async (payload: {
@@ -124,6 +139,7 @@ export const logIntervention = async (payload: {
   question_number: number
   time_on_question_ms: number
   mastery_at_trigger?: number
+  reason?: string | null
   accepted?: boolean
 }) => {
   apiClient.post('/log/intervention', payload).catch(() => {})

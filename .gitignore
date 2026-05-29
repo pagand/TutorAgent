@@ -24,7 +24,11 @@ chroma_db*
 .pytest_cache*
 alembic*
 results*
+!frontend/src/app/results/
 plots*
+
+# Production data — contains exam questions and participant tokens (never commit)
+prod/data/
 
 # # LLM plannar
 DEVELOPMENT_PLAN.md

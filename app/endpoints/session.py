@@ -1,18 +1,20 @@
 # app/endpoints/session.py
-# Manages exam session timer — start time stored server-side, client reconciles on reconnect.
 import time
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.models.user import ExamSession, User
+from app.models.user import ExamSession, Participant, User
 from app.utils.config import settings
 from app.utils.db import get_db
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/session", tags=["Session"])
+
+STALE_SECONDS = 60  # heartbeat older than this → session considered abandoned
 
 
 class SessionStartRequest(BaseModel):
@@ -36,21 +38,52 @@ class SessionRemainingResponse(BaseModel):
     expired: bool
 
 
+class HeartbeatRequest(BaseModel):
+    user_id: str
+    session_id: str
+
+
+class HeartbeatResponse(BaseModel):
+    ms_remaining: int
+    expired: bool
+    submitted: bool
+    active: bool  # False = another device has taken over this token
+
+
+class SubmitRequest(BaseModel):
+    user_id: str
+
+
+class LogoutRequest(BaseModel):
+    user_id: str
+
+
 @router.post("/start", response_model=SessionStartResponse)
 async def start_session(request: SessionStartRequest, db: AsyncSession = Depends(get_db)):
     """
     Idempotent — if session already exists for this user, returns the existing start time.
-    This ensures page reloads don't reset the timer.
+    Also claims/re-claims the Participant lock when the token matches a manifest entry.
     """
     user_result = await db.execute(select(User).filter_by(id=request.user_id))
     user = user_result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Concurrent-device enforcement for token-based participants
+    p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
+    participant = p_result.scalars().first()
+
+    if participant:
+        if participant.status == "active" and participant.last_seen_at and participant.active_session_id:
+            age_seconds = (datetime.now(timezone.utc).replace(tzinfo=None) - participant.last_seen_at).total_seconds()
+            if age_seconds < STALE_SECONDS and participant.active_session_id != request.session_id:
+                raise HTTPException(status_code=409, detail="Token is already active on another device")
+
     existing = await db.execute(select(ExamSession).filter_by(user_id=request.user_id))
     exam_session = existing.scalars().first()
 
     now_ms = int(time.time() * 1000)
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if exam_session is None:
         try:
@@ -61,17 +94,26 @@ async def start_session(request: SessionStartRequest, db: AsyncSession = Depends
                 exam_duration_ms=settings.exam_duration_ms,
             )
             db.add(exam_session)
-            await db.commit()
-            await db.refresh(exam_session)
-            logger.info(f"New exam session started for user {request.user_id}, session_id={request.session_id}")
+            await db.flush()
         except IntegrityError:
-            # Concurrent request already created the session (e.g. React StrictMode double-invoke)
             await db.rollback()
             result = await db.execute(select(ExamSession).filter_by(user_id=request.user_id))
             exam_session = result.scalars().first()
+            if exam_session is None:
+                raise HTTPException(status_code=503, detail="Session could not be created. Please retry.")
             logger.info(f"Race condition resolved — returning existing session for user {request.user_id}")
-    else:
-        logger.info(f"Returning existing exam session for user {request.user_id}")
+
+    # Claim / refresh participant lock
+    if participant:
+        participant.status = "active"
+        participant.active_session_id = request.session_id
+        participant.last_seen_at = now_dt
+        if participant.started_at is None:
+            participant.started_at = now_dt
+
+    await db.commit()
+    await db.refresh(exam_session)
+    logger.info(f"Session start for user {request.user_id}, session_id={request.session_id}")
 
     elapsed = now_ms - exam_session.exam_start_ms
     ms_remaining = max(0, exam_session.exam_duration_ms - elapsed)
@@ -83,6 +125,85 @@ async def start_session(request: SessionStartRequest, db: AsyncSession = Depends
         exam_duration_ms=exam_session.exam_duration_ms,
         ms_remaining=ms_remaining,
     )
+
+
+@router.post("/heartbeat", response_model=HeartbeatResponse)
+async def session_heartbeat(request: HeartbeatRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Called every ~25 s by the frontend to:
+    - Refresh last_seen_at (keeps the concurrent-device lock alive).
+    - Return whether the exam was submitted, expired, or taken over by another device.
+    """
+    result = await db.execute(select(ExamSession).filter_by(user_id=request.user_id))
+    exam_session = result.scalars().first()
+    if not exam_session:
+        raise HTTPException(status_code=404, detail="No active session for this user")
+
+    now_ms = int(time.time() * 1000)
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+    elapsed = now_ms - exam_session.exam_start_ms
+    ms_remaining = max(0, exam_session.exam_duration_ms - elapsed)
+    expired = ms_remaining == 0
+    submitted = exam_session.submitted_at is not None
+
+    # Update last_seen_at and check for device takeover
+    p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
+    participant = p_result.scalars().first()
+
+    active = True
+    if participant:
+        if participant.active_session_id == request.session_id:
+            participant.last_seen_at = now_dt
+            await db.commit()
+        else:
+            # Another device has claimed this token
+            active = False
+
+    return HeartbeatResponse(
+        ms_remaining=ms_remaining,
+        expired=expired,
+        submitted=submitted,
+        active=active,
+    )
+
+
+@router.post("/submit")
+async def submit_session(request: SubmitRequest, db: AsyncSession = Depends(get_db)):
+    """Idempotent exam submission — persists submitted_at and marks the participant completed."""
+    result = await db.execute(select(ExamSession).filter_by(user_id=request.user_id))
+    exam_session = result.scalars().first()
+    if not exam_session:
+        raise HTTPException(status_code=404, detail="No active session for this user")
+
+    now_ms = int(time.time() * 1000)
+
+    if exam_session.submitted_at is None:
+        exam_session.submitted_at = now_ms
+
+    p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
+    participant = p_result.scalars().first()
+    if participant:
+        participant.status = "completed"
+        participant.active_session_id = None
+        participant.last_seen_at = None
+
+    await db.commit()
+    logger.info(f"Exam submitted for user {request.user_id}")
+    return {"submitted": True, "submitted_at": exam_session.submitted_at}
+
+
+@router.post("/logout")
+async def logout_session(request: LogoutRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Clears the active session lock so the student can re-enter from any device immediately.
+    The timer keeps running — logout does not pause or reset the exam.
+    """
+    p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
+    participant = p_result.scalars().first()
+    if participant:
+        participant.active_session_id = None
+        await db.commit()
+    return {"logged_out": True}
 
 
 @router.get("/{user_id}/remaining", response_model=SessionRemainingResponse)

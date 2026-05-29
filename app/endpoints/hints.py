@@ -1,4 +1,3 @@
-# Endpoints to trigger hint generation (proactive/reactive) via the RAG agent
 # app/endpoints/hints.py
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -9,11 +8,12 @@ from sqlalchemy import select
 
 from app.services import rag_agent
 from app.services.question_service import question_service
+from app.services.personalization_service import personalization_service
 from app.state_manager import get_bkt_mastery
 from app.utils.logger import logger
 from app.utils.config import settings
 from app.utils.db import get_db
-from app.services.rag_agent import get_user_history_summary # Import the history function
+from app.services.rag_agent import get_user_history_summary
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ class HintResponse(BaseModel):
 
 @router.post("/", response_model=HintResponse)
 async def generate_hint(request: HintRequest, db: AsyncSession = Depends(get_db)):
-    logger.info(f"Hint requested by user '{request.user_id}' for question {request.question_number}")
+    logger.debug(f"Hint requested by user '{request.user_id}' for question {request.question_number}")
 
     user_result = await db.execute(select(User).filter_by(id=request.user_id))
     user = user_result.scalars().first()
@@ -48,17 +48,19 @@ async def generate_hint(request: HintRequest, db: AsyncSession = Depends(get_db)
 
     skill = question_obj.skill
     pre_hint_mastery = await get_bkt_mastery(db, request.user_id, skill, settings.bkt_p_l0)
-    logger.debug(f"Storing pre-hint mastery for user {request.user_id}, skill '{skill}': {pre_hint_mastery:.4f}")
+    user_history = await get_user_history_summary(db, request.user_id)
+    hint_style = await personalization_service.get_adaptive_hint_style(db, request.user_id)
+
+    # Release the DB connection before the slow LLM call so the pool isn't exhausted
+    await db.commit()
 
     try:
-        user_history = await get_user_history_summary(db, request.user_id)
-        
         hint_data = await rag_agent.get_rag_hint(
-            session=db,
             question_id=question_obj.question_number,
-            user_answer=request.user_answer, 
+            user_answer=request.user_answer,
             user_id=request.user_id,
-            user_history=user_history
+            user_history=user_history,
+            hint_style=hint_style,
         )
 
         if "Sorry," in hint_data["hint"]:

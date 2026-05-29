@@ -13,10 +13,12 @@ from streamlit_app.queries import (
     get_user_profile, get_skill_mastery, get_interaction_history,
     get_raw_interaction_history, get_skill_mastery_trajectory, get_user_kpis,
     get_all_interaction_logs, get_chat_logs, get_intervention_logs, get_action_logs,
-    reset_user_progress, delete_user, QUESTIONS_DF,
+    reset_user_progress, delete_user, update_user_preferences, QUESTIONS_DF,
+    reset_exam_timer, extend_exam_timer, clear_session_lock,
+    get_exam_session_info, get_participant_info,
 )
 
-st.set_page_config(layout="wide", page_title="AI Tutor Admin Dashboard")
+st.set_page_config(layout="wide", page_title="DaTu AIR Admin Dashboard")
 
 @st.cache_resource
 def get_db_engine():
@@ -27,7 +29,7 @@ def get_db_engine():
 engine = get_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-st.title("AI Tutor Admin Dashboard")
+st.title("DaTu AIR Admin Dashboard")
 
 if 'success_message' in st.session_state:
     st.success(st.session_state.success_message, icon="✅")
@@ -100,10 +102,11 @@ if selected_view == VIEW_SYSTEM:
                 if r['total_interactions'] > 0 else "—", axis=1
             )
         )
-        cols_show = ['user_id', 'ab_group', 'hint_style_pref', 'created_at',
-                     'total_interactions', 'correctness', 'hints_used', 'chat_messages']
+        cols_show = ['user_id', 'ab_group', 'participant_status', 'hint_style_pref', 'created_at',
+                     'total_interactions', 'correctness', 'hints_used', 'chat_messages',
+                     'remaining_min', 'submitted']
         st.dataframe(display_df[[c for c in cols_show if c in display_df.columns]],
-                     use_container_width=True)
+                     width='stretch')
 
 
 # ─────────────────────────────────────────────
@@ -135,11 +138,24 @@ elif selected_view == VIEW_EXPORT:
         action_type_filter = None
         if log_type == "Action Logs":
             action_types = [
-                "— all —", "session_start", "session_complete", "timer_expired",
-                "question_view", "question_navigate", "hint_request", "hint_display",
-                "intervention_offered", "intervention_accepted", "intervention_rejected",
-                "chat_message_sent", "answer_submit", "answer_skip",
+                "— all —",
+                # Session lifecycle
+                "session_start", "session_complete", "session_submit", "session_expire", "timer_warning",
+                # Question navigation
+                "question_view", "question_navigate",
+                # Answer interactions
+                "choice_select", "answer_focus", "answer_submit", "answer_skip",
+                # Hint interactions
+                "hint_request", "hint_display", "hint_feedback",
+                # Intervention interactions
+                "intervention_offer", "intervention_accept", "intervention_reject",
+                # Chat interactions
+                "chat_send",
+                # Profile interactions
                 "profile_view", "preference_update",
+                # Legacy names (pre-April 2026 sessions)
+                "timer_expired", "intervention_offered", "intervention_accepted",
+                "intervention_rejected", "chat_message_sent",
             ]
             selected_action = st.selectbox("Action type filter", options=action_types)
             if selected_action != "— all —":
@@ -193,7 +209,7 @@ elif selected_view == VIEW_EXPORT:
             )
             if selected_cols:
                 export_df = df[selected_cols]
-                st.dataframe(export_df.head(100), use_container_width=True)
+                st.dataframe(export_df.head(100))
                 if len(df) > 100:
                     st.caption(f"Preview shows first 100 of {len(df):,} rows. Full data in CSV.")
 
@@ -263,7 +279,7 @@ elif selected_view and selected_view in all_user_ids:
         st.subheader("Interaction History")
         history_df = get_interaction_history(db, selected_user_id)
         if not history_df.empty:
-            st.dataframe(history_df, use_container_width=True)
+            st.dataframe(history_df)
             st.download_button(
                 "⬇️ Download CSV",
                 data=history_df.to_csv(index=False).encode('utf-8'),
@@ -302,7 +318,7 @@ elif selected_view and selected_view in all_user_ids:
         if not iv_df.empty:
             iv_df['accepted_label'] = iv_df['accepted'].map({True: '✓ Accepted', False: '✗ Rejected', None: '— Offered'})
             st.dataframe(iv_df[['timestamp', 'question_number', 'time_on_question_ms',
-                                 'mastery_at_trigger', 'accepted_label']], use_container_width=True)
+                                 'mastery_at_trigger', 'accepted_label']])
         else:
             st.info("No intervention events logged.")
 
@@ -337,19 +353,114 @@ elif selected_view and selected_view in all_user_ids:
             )
             display_df = act_df[act_df['action_type'].isin(action_filter)] if action_filter else act_df
             st.dataframe(display_df[['timestamp', 'action_type', 'question_number', 'action_data']],
-                         use_container_width=True)
+                         width='stretch')
         else:
             st.info("No action events logged yet.")
 
     with admin_tab:
+        st.subheader("Edit Profile")
+        with st.form("edit_profile_form"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_ab_group = st.selectbox(
+                    "A/B Group",
+                    options=["adaptive", "free_choice"],
+                    index=0 if ab_group == "adaptive" else 1,
+                )
+            with col2:
+                new_hint_style = st.selectbox(
+                    "Hint Style",
+                    options=["adaptive", "Conceptual", "Analogy", "Socratic Question", "Worked Example"],
+                    index=["adaptive", "Conceptual", "Analogy", "Socratic Question", "Worked Example"].index(
+                        prefs.get('hint_style_preference', 'adaptive')
+                        if prefs.get('hint_style_preference', 'adaptive') in
+                        ["adaptive", "Conceptual", "Analogy", "Socratic Question", "Worked Example"]
+                        else "adaptive"
+                    ),
+                )
+            with col3:
+                new_intervention = st.selectbox(
+                    "Intervention Preference",
+                    options=["proactive", "manual"],
+                    index=0 if prefs.get('intervention_preference', 'proactive') == 'proactive' else 1,
+                )
+            save_prefs = st.form_submit_button("Save Profile Changes")
+
+        if save_prefs:
+            try:
+                update_user_preferences(db, selected_user_id, {
+                    "ab_group": new_ab_group,
+                    "hint_style_preference": new_hint_style,
+                    "intervention_preference": new_intervention,
+                })
+                st.session_state.success_message = f"Updated profile for `{selected_user_id}`."
+                db.close()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        st.markdown("---")
+        st.subheader("Timer Management")
+
+        session_info = get_exam_session_info(db, selected_user_id)
+        participant_info = get_participant_info(db, selected_user_id)
+
+        if session_info:
+            col_t1, col_t2, col_t3 = st.columns(3)
+            col_t1.metric("Remaining", f"{session_info['remaining_min']} min")
+            col_t2.metric("Duration", f"{session_info['exam_duration_ms'] // 60000} min")
+            col_t3.metric("Submitted", "Yes" if session_info['submitted'] else "No")
+        else:
+            st.info("No exam session started yet.")
+
+        if participant_info:
+            lock_label = participant_info.get('active_session_id') or "—"
+            st.caption(f"Participant status: **{participant_info.get('status', '?')}** | Lock: `{lock_label}` | Last seen: {participant_info.get('last_seen_at') or '—'}")
+
+        col_a, col_b, col_c = st.columns(3)
+
+        with col_a:
+            if st.button("Reset Timer to NOW", help="Restarts the exam clock from this moment. Clears submitted flag."):
+                try:
+                    reset_exam_timer(db, selected_user_id)
+                    st.session_state.success_message = f"Timer reset for `{selected_user_id}`."
+                    db.close()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        with col_b:
+            extra_min = st.number_input("Adjust minutes (negative to reduce)", min_value=-120, max_value=120, value=10, step=5, key="extend_min")
+            if st.button("Adjust Timer", help="Adds or subtracts the specified minutes from the exam duration. Use negative values to reduce time."):
+                try:
+                    extend_exam_timer(db, selected_user_id, int(extra_min))
+                    action_word = "Added" if extra_min >= 0 else "Removed"
+                    st.session_state.success_message = f"{action_word} {abs(extra_min)} min for `{selected_user_id}`."
+                    db.close()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        with col_c:
+            if st.button("Clear Session Lock", help="Clears the active device lock so the student can re-enter from any device."):
+                try:
+                    clear_session_lock(db, selected_user_id)
+                    st.session_state.success_message = f"Session lock cleared for `{selected_user_id}`."
+                    db.close()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        st.markdown("---")
         st.subheader("Danger Zone")
         st.warning("These actions are irreversible.", icon="⚠️")
         st.markdown("### Reset User Progress")
-        st.markdown("Deletes all interaction history and skill mastery; keeps the user account.")
+        st.markdown("Deletes all interaction history and skill mastery; resets participant to unused.")
         if st.button("Reset Progress", type="secondary"):
             try:
                 reset_user_progress(db, selected_user_id)
                 st.session_state.success_message = f"Reset progress for `{selected_user_id}`."
+                db.close()
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -360,6 +471,7 @@ elif selected_view and selected_view in all_user_ids:
             try:
                 delete_user(db, selected_user_id)
                 st.session_state.success_message = f"Deleted user `{selected_user_id}`."
+                db.close()
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")

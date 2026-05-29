@@ -47,9 +47,10 @@ This project is a proof-of-concept AI-powered tutoring system designed to provid
     * Edit the `.env` file to configure your desired `LLM_PROVIDER` (`ollama`, `openai`, `google`) and add the corresponding API keys if necessary.
 
 5.  **Run the Application:**
+update log from .env file. 
 Back end:
     ```bash
-    uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload (--log-level debug)
+    uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
     ```
 front end:
 ```bash

@@ -84,3 +84,17 @@ if changing the database:
 alembic revision --autogenerate -m "the revision message"
 alembic upgrade head 
 ```
+
+## Docker Deployment
+
+`prod/data/` (exam questions, answer key, participant tokens, source PDF) is intentionally excluded from git.
+Copy it onto the target host out-of-band before the first build.
+
+```bash
+git clone <repository_url> AITutorApp && cd AITutorApp
+scp -r /path/to/prod/data ec2-user@<host>:~/AITutorApp/prod/data   # or equivalent for your host
+cp .env.docker.example .env        # fill in POSTGRES_PASSWORD, GOOGLE_API_KEY, ALLOWED_ORIGIN
+docker compose up -d --build       # first build ~10-15 min
+docker compose logs -f api         # watch alembic migrate + uvicorn startup
+curl http://localhost/             # should return {"message":"Welcome to the AI Tutor API"}
+```

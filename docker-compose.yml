@@ -21,7 +21,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aitutor_db}
     volumes:
-      - ./chroma_db:/app/chroma_db
+      - chroma_data:/app/chroma_db
       - ./prod/data:/app/prod/data:ro
     depends_on:
       db:
@@ -49,3 +49,4 @@ services:
 
 volumes:
   postgres_data:
+  chroma_data:

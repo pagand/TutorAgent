@@ -43,6 +43,9 @@ frontend/out/
 docs/
 evaluation/
 
+# Production data — answer key and participant tokens; arrives via bind mount only
+prod/data/
+
 # OS
 .DS_Store
 Thumbs.db

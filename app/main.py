@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     logger.info("AI Tutor API starting up...")
     logger.info("Loading questions...")
     question_service.load_questions(settings.QUESTION_CSV_FILE_PATH)
+    if not question_service.get_all_questions():
+        raise RuntimeError(
+            f"No questions loaded from '{settings.QUESTION_CSV_FILE_PATH}'. "
+            "Check the file exists and is readable inside the container."
+        )
     logger.info(f"Loaded {len(question_service.get_all_questions())} questions.")
     logger.info(f"Found {len(question_service.get_all_skills())} unique skills: {question_service.get_all_skills()}")
 

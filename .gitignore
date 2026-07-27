@@ -22,7 +22,6 @@ chroma_db*
 *_cache.json
 
 .pytest_cache*
-alembic*
 results*
 !frontend/src/app/results/
 plots*

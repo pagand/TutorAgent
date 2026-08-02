@@ -23,20 +23,30 @@ class UserCreate(BaseModel):
 async def create_user(user_create: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     Creates a new user with default profile settings. If user already exists,
-    it returns the existing user's profile.
+    returns a minimal confirmation, not the existing user's exam data.
     """
     logger.debug(f"Attempting to create or fetch user: {user_create.user_id}")
     user = await get_user_or_create(db, user_create.user_id)
-    
+
     # We need to flush to get the user's ID and default values before reading the profile
     await db.flush()
     await db.refresh(user)
-    
+
     # Now, commit the transaction to permanently save the new user
     await db.commit()
-    
-    # Use the same session to get the full profile
-    return await get_user_profile_with_session(db, user_create.user_id)
+
+    # This runs before POST /session/start claims the device lock, so it
+    # can't be gated by verify_session_owner the way the other endpoints
+    # are without 403ing every legitimate login. Instead it simply never
+    # returns another participant's exam data — only what the frontend's
+    # fire-and-forget call at login time actually needs (preferences, for
+    # the free_choice hint-style UI). interaction_history/completed_answers/
+    # skill_mastery stay behind GET /users/{id}/profile, which IS gated.
+    return {
+        "user_id": user.id,
+        "created_at": user.created_at.isoformat(),
+        "preferences": user.preferences,
+    }
 
 @router.get("/{user_id}/bkt", response_model=Dict[str, float])
 async def get_user_bkt_state(user_id: str, session_id: str | None = None, db: AsyncSession = Depends(get_db)):

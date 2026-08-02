@@ -111,6 +111,36 @@ async def test_bkt_endpoint_returns_200_not_500(client):
 
 
 @pytest.mark.asyncio
+async def test_create_user_does_not_leak_another_participants_exam_data(client, db_session):
+    """POST /users/ ran before the device lock exists (POST /session/start
+    hasn't fired yet), so it can't be gated by verify_session_owner without
+    breaking every legitimate login — it must instead simply never return
+    interaction_history/completed_answers/skill_mastery for an EXISTING
+    user_id, since (pre-fix) any token holder could call this with someone
+    else's token and get back their full in-progress exam state."""
+    await _create_participant(db_session, token="RLSLEAK1", active_session_id="sess-real")
+    await client.post("/users/", json={"user_id": "RLSLEAK1"})
+
+    # A wrong-attempt answer, submitted as the legitimate device, so this
+    # user_id has real interaction_history/completed_answers to leak.
+    await client.post("/answer/", json={
+        "user_id": "RLSLEAK1", "session_id": "sess-real",
+        "question_number": 1, "attempt_key": "k1", "user_answer": "1",
+    })
+
+    # Attacker only knows the token, not sess-real — the exact scenario
+    # POST /users/ used to be reachable through with no check at all.
+    res = await client.post("/users/", json={"user_id": "RLSLEAK1"})
+    assert res.status_code == 200
+    body = res.json()
+    assert "interaction_history" not in body
+    assert "completed_answers" not in body
+    assert "skill_mastery" not in body
+    assert body["user_id"] == "RLSLEAK1"
+    assert "preferences" in body
+
+
+@pytest.mark.asyncio
 async def test_delete_user_endpoint_removed(client):
     """DELETE /users/{id} was removed — zero consumers, and it was an
     unauthenticated destructive IDOR against any participant."""

@@ -117,7 +117,7 @@ def _initialize_rag_components():
             if _embedding_function is None:
                 logger.info(f"Loading Google embedding model: {settings.google_embedding_model_name}")
                 _embedding_function = GoogleGenerativeAIEmbeddings(
-                    google_api_key=settings.google_api_key,
+                    google_api_key=settings.google_api_key.get_secret_value() if settings.google_api_key else None,
                     model=settings.google_embedding_model_name,
                 )
                 logger.info("Google embedding model initialized.")
@@ -155,16 +155,21 @@ def _initialize_rag_components():
                 if provider == "ollama":
                     _llm_client = Ollama(base_url=settings.ollama_base_url, model=settings.ollama_model)
                 elif provider == "openai":
-                    _llm_client = ChatOpenAI(openai_api_key=settings.openai_api_key, model_name=settings.openai_model_name, temperature=0)
+                    _llm_client = ChatOpenAI(openai_api_key=settings.openai_api_key.get_secret_value() if settings.openai_api_key else None, model_name=settings.openai_model_name, temperature=0)
                 elif provider == "google":
                     _llm_client = ChatGoogleGenerativeAI(
-                        google_api_key=settings.google_api_key,
+                        google_api_key=settings.google_api_key.get_secret_value() if settings.google_api_key else None,
                         model=settings.google_model_name,
                         temperature=0,
                         convert_system_message_to_human=True,
                         max_output_tokens=settings.max_output_tokens,
-                        timeout=60,
-                        max_retries=2,
+                        # Timeout ladder: this worst-case (~60s: 30s x 2 attempts)
+                        # must stay under axios's 90s client timeout and nginx's
+                        # 120s proxy_read_timeout, or the client gives up while
+                        # the backend (and the billed Gemini call) keep running.
+                        # Previously 60s x 3 attempts (~180s) exceeded both.
+                        timeout=30,
+                        max_retries=1,
                     )
                 else:
                     raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
@@ -226,9 +231,6 @@ async def get_rag_hint(question_id: int, user_answer: str | None, user_id: str, 
         if not question_obj:
             return {"hint": "...", "hint_style": "error", "context": "", "final_prompt": ""}
 
-        if "test_user" in user_id:
-            return {"hint": "...", "hint_style": hint_style, "context": "Mock context", "final_prompt": "Mock prompt"}
-
         logger.info(f"Generating RAG hint for user {user_id} with style: '{hint_style}'...")
         rag_chain = get_rag_chain(hint_style)
 
@@ -244,7 +246,9 @@ async def get_rag_hint(question_id: int, user_answer: str | None, user_id: str, 
         result = await rag_chain.ainvoke(input_data)
         
         final_prompt_str = result['final_prompt'].to_string()
-        logger.debug(f"--- FINAL PROMPT FOR LLM ---\n{final_prompt_str}\n---------------------------")
+        # Length only, not the full text — the prompt embeds per-user history
+        # and BKT mastery, and LOG_LEVEL=DEBUG should be verbose, not a leak.
+        logger.debug(f"Final prompt for LLM: {len(final_prompt_str)} chars")
 
         return {
             "hint": result['generated_hint'], 

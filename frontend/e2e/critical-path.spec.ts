@@ -56,9 +56,13 @@ test('critical path: correct, locked wrong, skip, hint+rating, chat, results —
   await expect(page.getByText('✗ Locked — Move on to the next question')).toBeVisible()
 
   // Server-side cap must reject a 3rd submission independently of the UI —
-  // even a genuinely correct answer, once locked.
+  // even a genuinely correct answer, once locked. Uses the page's own
+  // session_id so this exercises the attempt-cap 409, not the RLS 403
+  // (a mismatched session_id is covered separately in second-device-lock.spec.ts).
+  const ownSessionId = await page.evaluate(() => localStorage.getItem('sessionId'))
   const thirdAttempt = await submitAnswerDirect(page.request, {
     user_id: 'E2ECRITPATH',
+    session_id: ownSessionId ?? undefined,
     question_number: 2,
     attempt_key: `e2e-extra-${Date.now()}`,
     user_answer: q2Correct,

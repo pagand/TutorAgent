@@ -210,7 +210,7 @@ class SimulatedStudent:
         
         if not settings.google_api_key:
             raise ValueError("GOOGLE_API_KEY is not set in the environment.")
-        genai.configure(api_key=settings.google_api_key)
+        genai.configure(api_key=settings.google_api_key.get_secret_value())
         self.llm_client = genai.GenerativeModel(settings.google_model_name)
         
         print(f"Initialized student: {self.user_id} with persona '{self.persona['name']}' in experiment '{self.experiment_name}'")

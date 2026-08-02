@@ -186,11 +186,11 @@ async def test_session_start_second_device_blocked(client, db_session):
 @pytest.mark.asyncio
 async def test_session_submit_persists_submitted_at(client, db_session):
     from sqlalchemy.future import select
-    await _create_participant(db_session, token="SUBMITX1", status="active")
+    await _create_participant(db_session, token="SUBMITX1", status="active", active_session_id="sess_submitx1")
     await _create_user(db_session, user_id="SUBMITX1")
-    await _create_exam_session(db_session, user_id="SUBMITX1")
+    await _create_exam_session(db_session, user_id="SUBMITX1", session_id="sess_submitx1")
 
-    res = await client.post("/session/submit", json={"user_id": "SUBMITX1"})
+    res = await client.post("/session/submit", json={"user_id": "SUBMITX1", "session_id": "sess_submitx1"})
     assert res.status_code == 200
     assert res.json()["submitted"] is True
 
@@ -202,18 +202,22 @@ async def test_session_submit_persists_submitted_at(client, db_session):
     result = await db_session.execute(select(Participant).filter_by(token="SUBMITX1"))
     p = result.scalars().first()
     assert p.status == "completed"
-    assert p.active_session_id is None
+    # active_session_id is deliberately left set after submit — GET
+    # /users/{id}/profile is gated on it, and a student must still be able
+    # to fetch their own profile (e.g. the /results page) right after
+    # submitting, from the same device.
+    assert p.active_session_id == "sess_submitx1"
 
 
 @pytest.mark.asyncio
 async def test_session_submit_idempotent(client, db_session):
     """Calling /session/submit twice should not raise an error."""
-    await _create_participant(db_session, token="IDEM0001", status="active")
+    await _create_participant(db_session, token="IDEM0001", status="active", active_session_id="sess_idem1")
     await _create_user(db_session, user_id="IDEM0001")
-    await _create_exam_session(db_session, user_id="IDEM0001")
+    await _create_exam_session(db_session, user_id="IDEM0001", session_id="sess_idem1")
 
-    r1 = await client.post("/session/submit", json={"user_id": "IDEM0001"})
-    r2 = await client.post("/session/submit", json={"user_id": "IDEM0001"})
+    r1 = await client.post("/session/submit", json={"user_id": "IDEM0001", "session_id": "sess_idem1"})
+    r2 = await client.post("/session/submit", json={"user_id": "IDEM0001", "session_id": "sess_idem1"})
     assert r1.status_code == 200
     assert r2.status_code == 200
 

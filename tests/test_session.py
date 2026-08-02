@@ -111,7 +111,7 @@ async def test_session_submit_blocks_login_as_completed(client, db_session):
 
     await client.post("/users/", json={"user_id": "ENDFLOW1"})
     await client.post("/session/start", json={"user_id": "ENDFLOW1", "session_id": "sess-end"})
-    await client.post("/session/submit", json={"user_id": "ENDFLOW1"})
+    await client.post("/session/submit", json={"user_id": "ENDFLOW1", "session_id": "sess-end"})
 
     res = await client.post("/participants/login", json={"token": "ENDFLOW1"})
     assert res.status_code == 200

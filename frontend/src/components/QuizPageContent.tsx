@@ -40,6 +40,16 @@ function submitErrorMessage(err: unknown, verb: 'submit' | 'skip'): string {
   return `Failed to ${verb}. Please try again.`
 }
 
+/** A 429 or 5xx from an LLM-backed endpoint (hint/chat) means Gemini itself is
+ * rate-limited or unavailable, not that anything is wrong with the request —
+ * distinct enough from a generic network failure to say so. */
+function llmErrorMessage(err: unknown, what: 'hint' | 'tutor'): string {
+  if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {
+    return `The ${what} is temporarily unavailable. Please try again in a moment.`
+  }
+  return `Failed to load ${what === 'hint' ? 'hint' : 'a response'}. Please try again.`
+}
+
 /**
  * Resolves a stable attempt_key for (question, answerValue): reusing the same
  * key across retries of the SAME submission (so a lost-response retry is
@@ -80,6 +90,7 @@ export default function QuizPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSkipping, setIsSkipping] = useState(false)
   const [isHintLoading, setIsHintLoading] = useState(false)
+  const [hintError, setHintError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [timerExpired, setTimerExpired] = useState(false)
 
@@ -90,6 +101,7 @@ export default function QuizPageContent() {
   const [showTimerWarning, setShowTimerWarning] = useState(false)
   const [showProfileBanner, setShowProfileBanner] = useState(false)
   const [takenOver, setTakenOver] = useState(false)
+  const [connectionLost, setConnectionLost] = useState(false)
   const questionStartTimeRef = useRef<Record<number, number>>({})
   const attemptKeyRef = useRef<Record<number, { key: string; answer: string }>>({})
   const interventionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -160,12 +172,19 @@ export default function QuizPageContent() {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), 30000)
         )
-        const [sessionData, qs, profile] = await Promise.race([
-          Promise.all([
-            startSession(storedUserId!, storedSessionId),
-            getQuestions(storedUserId!),
-            getUserProfile(storedUserId!),
-          ]),
+        // startSession must resolve first — it's what claims the device lock
+        // (Participant.active_session_id) that getUserProfile is gated on below.
+        // Firing all three in one Promise.all races the lock write against the
+        // profile read and can 403 intermittently.
+        const [sessionData, [qs, profile]] = await Promise.race([
+          (async () => {
+            const sd = await startSession(storedUserId!, storedSessionId)
+            const rest = await Promise.all([
+              getQuestions(storedUserId!),
+              getUserProfile(storedUserId!, storedSessionId),
+            ])
+            return [sd, rest] as const
+          })(),
           timeout,
         ])
         if (!isMounted) return
@@ -269,6 +288,7 @@ export default function QuizPageContent() {
           try {
             const hb = await sessionHeartbeat(uid, sid)
             if (!isMounted) return
+            setConnectionLost(false)
             // Reconcile the local countdown with the server's timer before acting on
             // expired/submitted below, so a bulk admin extension (which only changes
             // the DB) reaches this already-open tab instead of it hitting a stale zero.
@@ -278,7 +298,13 @@ export default function QuizPageContent() {
             if (hb.submitted) { saveAndRedirect(false) }
             if (hb.expired) { timerExpiredRef.current = true; saveAndRedirect(true) }
             if (!hb.active) { setTakenOver(true) }
-          } catch { /* ignore heartbeat errors silently */ }
+          } catch {
+            // Passive indicator only — the timer keeps running client-side and
+            // answer/skip submissions already surface their own errors, so a
+            // student isn't left wondering why nothing seems to work until a
+            // submit fails out of nowhere.
+            if (isMounted) setConnectionLost(true)
+          }
         }, 25000)
 
         // Show profile banner for free_choice users who haven't customized their hint style
@@ -294,7 +320,7 @@ export default function QuizPageContent() {
         let deviceConflict = false
         if (err instanceof Error && err.message === 'timeout') {
           msg = 'Loading timed out. Please check your connection and try again.'
-        } else if (axios.isAxiosError(err) && err.response?.status === 409) {
+        } else if (axios.isAxiosError(err) && (err.response?.status === 409 || err.response?.status === 403)) {
           deviceConflict = true
           msg = 'This exam token is now active on another device.'
         }
@@ -319,6 +345,7 @@ export default function QuizPageContent() {
     const draft = draftAnswers[currentQ.question_number] ?? ''
     setUserAnswerLocal(draft)
     setSubmitError(null)
+    setHintError(null)
     setShowIntervention(false)
     setInterventionDismissed(false)
     setInterventionReason(null)
@@ -351,7 +378,7 @@ export default function QuizPageContent() {
       const startTime = questionStartTimeRef.current[currentQ.question_number] || Date.now()
       const timeSpentMs = Date.now() - startTime
       try {
-        const result = await checkIntervention(userId, currentQ.question_number, timeSpentMs)
+        const result = await checkIntervention(userId, currentQ.question_number, timeSpentMs, sessionId)
         if (result.intervention_needed) {
           setShowIntervention(true)
           setInterventionReason(result.reason)
@@ -378,6 +405,7 @@ export default function QuizPageContent() {
     if (!userId || !questions.length) return
     const currentQ = questions[currentQuestionIndex]
     setIsHintLoading(true)
+    setHintError(null)
     setShowIntervention(false)
     logAction({
       user_id: userId, session_id: sessionId, action_type: 'hint_request',
@@ -385,15 +413,18 @@ export default function QuizPageContent() {
       action_data: { current_answer: userAnswer || null },
     })
     try {
-      const hint = await getHint(userId, currentQ.question_number, userAnswer || undefined)
+      const hint = await getHint(userId, currentQ.question_number, userAnswer || undefined, sessionId)
       dispatch({ type: 'SET_HINT', questionNumber: currentQ.question_number, hint: { hint: hint.hint, hint_style: hint.hint_style, pre_hint_mastery: hint.pre_hint_mastery } })
       logAction({
         user_id: userId, session_id: sessionId, action_type: 'hint_display',
         question_number: currentQ.question_number,
         action_data: { hint_style: hint.hint_style, pre_hint_mastery: hint.pre_hint_mastery },
       })
-    } catch { /* non-fatal */ }
-    finally { setIsHintLoading(false) }
+    } catch (err) {
+      setHintError(llmErrorMessage(err, 'hint'))
+    } finally {
+      setIsHintLoading(false)
+    }
   }, [userId, sessionId, questions, currentQuestionIndex, userAnswer, dispatch])
 
   const handleSubmit = async () => {
@@ -409,7 +440,7 @@ export default function QuizPageContent() {
 
     try {
       const payload: Parameters<typeof submitAnswer>[0] = {
-        user_id: userId, question_number: qNum, attempt_key: attemptKey,
+        user_id: userId, session_id: sessionId, question_number: qNum, attempt_key: attemptKey,
         user_answer: userAnswer, time_taken_ms: timeTakenMs,
       }
       if (activeHint) {
@@ -453,7 +484,7 @@ export default function QuizPageContent() {
 
     try {
       const payload: Parameters<typeof submitAnswer>[0] = {
-        user_id: userId, question_number: qNum, attempt_key: attemptKey,
+        user_id: userId, session_id: sessionId, question_number: qNum, attempt_key: attemptKey,
         skipped: true, time_taken_ms: timeTakenMs,
       }
       if (activeHint) {
@@ -507,7 +538,7 @@ export default function QuizPageContent() {
     setTimerExpired(true)
     timerExpiredRef.current = true
     if (userId) {
-      submitSession(userId).catch(() => {})
+      submitSession(userId, sessionId).catch(() => {})
       if (sessionId) logAction({ user_id: userId, session_id: sessionId, action_type: 'session_expire' })
     }
     saveAndRedirect(true)
@@ -541,7 +572,7 @@ export default function QuizPageContent() {
   const handleEarlySubmit = useCallback(() => {
     setShowSubmitConfirm(false)
     if (userId) {
-      submitSession(userId).catch(() => {})
+      submitSession(userId, sessionId).catch(() => {})
       if (sessionId) logAction({ user_id: userId, session_id: sessionId, action_type: 'session_submit' })
     }
     saveAndRedirect(false)
@@ -612,6 +643,11 @@ export default function QuizPageContent() {
             <span className="text-sm font-bold text-slate-900">DaTu AIR</span>
             {examStartMs > 0 && !isComplete && !timerExpired && (
               <TimerBar examStartMs={examStartMs} examDurationMs={examDurationMs} onExpire={handleTimerExpire} onWarning={handleTimerWarning} />
+            )}
+            {connectionLost && !isComplete && !timerExpired && (
+              <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                Reconnecting…
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -759,6 +795,7 @@ export default function QuizPageContent() {
               {!isReadOnly ? (
                 <>
                   <HintDisplay isLoading={isHintLoading} onRequestHint={handleRequestHint} disabled={isSubmitting} />
+                  {hintError && <p className="mt-2 text-xs text-rose-600">{hintError}</p>}
                   <FeedbackBar />
                 </>
               ) : (

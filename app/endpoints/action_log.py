@@ -1,12 +1,15 @@
 # app/endpoints/action_log.py
 # Receives fine-grained user interaction events from the frontend.
 # Every click, navigation, selection, and system event is logged here for analysis.
+import json
+
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import UserActionLog, InterventionLog
+from app.utils.authz import verify_session_owner
 from app.utils.db import get_db
 from app.utils.logger import logger
 
@@ -54,9 +57,16 @@ ACTION_TYPES = {
 class ActionLogRequest(BaseModel):
     user_id: str
     session_id: str
-    action_type: str
+    action_type: str = Field(max_length=100)
     question_number: int | None = None
     action_data: dict[str, Any] = {}
+
+    @field_validator("action_data")
+    @classmethod
+    def bound_action_data_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(v)) > 5000:
+            raise ValueError("action_data is too large")
+        return v
 
 
 class ActionLogResponse(BaseModel):
@@ -79,6 +89,7 @@ async def log_action(request: ActionLogRequest, db: AsyncSession = Depends(get_d
     Logs any user action. Called by the frontend for every meaningful interaction.
     Unknown action_types are still logged (with a warning) to avoid data loss.
     """
+    await verify_session_owner(db, request.user_id, request.session_id)
     if request.action_type not in ACTION_TYPES:
         logger.warning(f"Unknown action_type '{request.action_type}' from user {request.user_id}")
 
@@ -107,6 +118,7 @@ async def log_intervention(request: InterventionLogRequest, db: AsyncSession = D
     Uses upsert-like logic: if a record exists for (user_id, question_number) with
     accepted=None, update it; otherwise insert a new row.
     """
+    await verify_session_owner(db, request.user_id, request.session_id)
     from sqlalchemy.future import select
 
     result = await db.execute(

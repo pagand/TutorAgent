@@ -107,7 +107,7 @@ export default function LoginPage() {
   const handleUseNewToken = () => {
     // Clear saved session and show token input
     if (savedUserId) {
-      logoutSession(savedUserId)
+      logoutSession(savedUserId, localStorage.getItem('sessionId') || undefined)
     }
     localStorage.removeItem('userId')
     localStorage.removeItem('sessionId')

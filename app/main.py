@@ -68,11 +68,20 @@ async def lifespan(app: FastAPI):
     logger.info("AI Tutor API shutting down...")
 
 # --- FastAPI App Initialization ---
+# /docs, /redoc and /openapi.json are still gated by the X-API-Key middleware
+# below like any other route once API_KEY is set, but that key is only
+# obscurity (it ships in the public frontend bundle) — disabling the schema
+# outright in that configuration is one less thing a scanner holding the key
+# can trivially enumerate (every route, every field, DELETE included).
+_docs_enabled = not settings.api_key
 app = FastAPI(
     title="AI Tutor API",
     description="API for a personalized AI-powered tutor.",
     version="0.7.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 # --- API Key Middleware ---
@@ -94,7 +103,7 @@ async def api_key_middleware(request: Request, call_next):
     # Compare as bytes — hmac.compare_digest raises TypeError on a str containing
     # non-ASCII characters, which would otherwise turn a scanner probing with a
     # UTF-8 header into an unhandled 500 instead of a clean 401.
-    if not hmac.compare_digest(provided.encode("utf-8", "replace"), settings.api_key.encode("utf-8")):
+    if not hmac.compare_digest(provided.encode("utf-8", "replace"), settings.api_key.get_secret_value().encode("utf-8")):
         return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
     return await call_next(request)
 

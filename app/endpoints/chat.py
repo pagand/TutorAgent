@@ -1,6 +1,6 @@
 # app/endpoints/chat.py
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -8,6 +8,7 @@ from app.models.user import User, ChatLog
 from app.services.question_service import question_service
 import app.services.rag_agent as rag_agent
 from app.services.rag_agent import get_user_history_summary, format_docs
+from app.utils.authz import verify_session_owner
 from app.utils.db import get_db
 from app.utils.logger import logger
 from langchain_core.prompts import PromptTemplate
@@ -48,6 +49,9 @@ Tutor response (guide, don't reveal):"""
 )
 
 
+CHAT_HISTORY_TURNS = 6  # how many recent exchanges to feed back into the prompt
+
+
 def _format_chat_history(history: list[dict]) -> str:
     if not history:
         return "No prior messages in this conversation."
@@ -58,18 +62,37 @@ def _format_chat_history(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _recent_chat_history_text(db: AsyncSession, user_id: str, limit: int = CHAT_HISTORY_TURNS) -> str:
+    """Reads the conversation from ChatLog rather than trusting the client's
+    own chat_history — a client-fabricated transcript (e.g. a fake tutor turn
+    that already "reveals" the answer) would otherwise be rendered into the
+    prompt as authoritative prior context, defeating the CRITICAL RULES above
+    it. Global across questions, matching the frontend's persistent ChatPanel."""
+    result = await db.execute(
+        select(ChatLog).filter_by(user_id=user_id).order_by(ChatLog.timestamp.desc()).limit(limit)
+    )
+    logs = list(reversed(result.scalars().all()))
+    history: list[dict] = []
+    for log in logs:
+        history.append({"role": "user", "content": log.user_message})
+        history.append({"role": "tutor", "content": log.tutor_response})
+    return _format_chat_history(history)
+
+
 class ChatMessage(BaseModel):
     role: str   # "user" or "tutor"
-    content: str
+    content: str = Field(max_length=2000)
 
 
 class ChatRequest(BaseModel):
     user_id: str
     session_id: str
     question_number: int
-    message: str
-    chat_history: list[ChatMessage] = []
-    current_answer: str | None = None
+    message: str = Field(max_length=2000)
+    # Accepted for wire compatibility with the documented contract, but no
+    # longer used to build the prompt — see _recent_chat_history_text.
+    chat_history: list[ChatMessage] = Field(default=[], max_length=100)
+    current_answer: str | None = Field(None, max_length=2000)
 
 
 class ChatResponse(BaseModel):
@@ -79,6 +102,7 @@ class ChatResponse(BaseModel):
 
 @router.post("/", response_model=ChatResponse)
 async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_db)):
+    await verify_session_owner(db, request.user_id, request.session_id)
     user_result = await db.execute(select(User).filter_by(id=request.user_id))
     user = user_result.scalars().first()
     if not user:
@@ -93,6 +117,7 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
             raise HTTPException(status_code=503, detail="AI components not ready")
 
     user_history = await get_user_history_summary(db, request.user_id)
+    chat_history_text = await _recent_chat_history_text(db, request.user_id)
 
     # Release the DB connection before the slow LLM/retriever calls
     await db.commit()
@@ -103,7 +128,6 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
         context = format_docs(docs)
 
         options_text = "\n".join(f"- {opt}" for opt in question_obj.options) if question_obj.options else "Open-ended question"
-        chat_history_text = _format_chat_history([m.model_dump() for m in request.chat_history])
 
         chain = CHAT_PROMPT_TEMPLATE | rag_agent._llm_client | StrOutputParser()
         response_text = await chain.ainvoke({

@@ -26,10 +26,14 @@ aitutor.db
 chroma_db/
 chroma_db_old/
 
-# Frontend build artifacts
-frontend/.next/
-frontend/node_modules/
-frontend/out/
+# Frontend — the backend image never needs any of it, and frontend/e2e/fixtures/
+# includes a direct answer-key oracle (answer_key.py) that must never end up
+# baked into a shippable image layer.
+frontend/
+
+# Dev/eval question sets — carry a correct_answer column in the clear.
+# Production reads only prod/data/ (mounted read-only, see below).
+data/
 
 # Git
 .git/

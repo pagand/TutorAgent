@@ -14,16 +14,16 @@ interface ExamResults {
   triggeredByTimer: boolean
 }
 
-async function fetchCorrectAnswers(userId: string): Promise<Record<number, string>> {
-  const profile = await getUserProfile(userId)
+async function fetchCorrectAnswers(userId: string, sessionId?: string): Promise<Record<number, string>> {
+  const profile = await getUserProfile(userId, sessionId)
   const correctAnswers: Record<number, string> = {}
   for (const [k, v] of Object.entries(profile.completed_answers)) correctAnswers[Number(k)] = v
   return correctAnswers
 }
 
-async function fetchResultsFromBackend(userId: string): Promise<ExamResults | null> {
+async function fetchResultsFromBackend(userId: string, sessionId?: string): Promise<ExamResults | null> {
   try {
-    const [qs, profile] = await Promise.all([getQuestions(userId), getUserProfile(userId)])
+    const [qs, profile] = await Promise.all([getQuestions(userId), getUserProfile(userId, sessionId)])
     const questionStates: Record<number, QuestionStatus> = {}
     const retryCount: Record<number, number> = {}
     const userAnswers: Record<number, string> = {}
@@ -87,7 +87,7 @@ export default function ResultsPage() {
             const userId = localStorage.getItem('userId')
             if (userId) {
               try {
-                const correctAnswers = await fetchCorrectAnswers(userId)
+                const correctAnswers = await fetchCorrectAnswers(userId, localStorage.getItem('sessionId') || undefined)
                 setResults((prev) => (prev ? { ...prev, correctAnswers } : prev))
               } catch { /* leave the answer key blank rather than block the page */ }
             }
@@ -99,7 +99,7 @@ export default function ResultsPage() {
       // Slow path: arriving from login with a completed token
       const userId = localStorage.getItem('userId')
       if (!userId) { router.replace('/login'); return }
-      const fetched = await fetchResultsFromBackend(userId)
+      const fetched = await fetchResultsFromBackend(userId, localStorage.getItem('sessionId') || undefined)
       if (fetched) {
         setResults(fetched)
       } else {

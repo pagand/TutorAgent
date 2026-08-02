@@ -52,7 +52,8 @@ test('outage-and-resume: lost response is deduped, draft survives reload', async
 
   // Confirm the precondition is real: the server already committed the log
   // row despite the browser having received nothing.
-  const profileAfterLoss = await getProfile(page.request, 'E2EOUTAGE');
+  const ownSessionId = await page.evaluate(() => localStorage.getItem('sessionId'))
+  const profileAfterLoss = await getProfile(page.request, 'E2EOUTAGE', ownSessionId ?? undefined);
   const q2LogsAfterLoss = profileAfterLoss.interaction_history.filter((l: { question_id: number }) => l.question_id === 2)
   expect(q2LogsAfterLoss.length).toBe(1)
 
@@ -61,7 +62,7 @@ test('outage-and-resume: lost response is deduped, draft survives reload', async
   await page.getByRole('button', { name: 'Submit Answer' }).click()
   await expect(page.getByText('1 attempt remaining')).toBeVisible()
 
-  const profileAfterRetry = await getProfile(page.request, 'E2EOUTAGE')
+  const profileAfterRetry = await getProfile(page.request, 'E2EOUTAGE', ownSessionId ?? undefined)
   const q2LogsAfterRetry = profileAfterRetry.interaction_history.filter((l: { question_id: number }) => l.question_id === 2)
   expect(q2LogsAfterRetry.length).toBe(1) // still exactly one row — no duplicate from the retry
 

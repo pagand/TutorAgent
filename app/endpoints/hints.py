@@ -1,6 +1,6 @@
 # app/endpoints/hints.py
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -10,6 +10,7 @@ from app.services import rag_agent
 from app.services.question_service import question_service
 from app.services.personalization_service import personalization_service
 from app.state_manager import get_bkt_mastery
+from app.utils.authz import verify_session_owner
 from app.utils.logger import logger
 from app.utils.config import settings
 from app.utils.db import get_db
@@ -19,8 +20,9 @@ router = APIRouter()
 
 class HintRequest(BaseModel):
     user_id: str
+    session_id: str | None = None
     question_number: int
-    user_answer: str | None = None
+    user_answer: str | None = Field(None, max_length=500)
 
 class HintResponse(BaseModel):
     question_number: int
@@ -28,11 +30,10 @@ class HintResponse(BaseModel):
     user_id: str
     hint_style: str
     pre_hint_mastery: float
-    context: str | None = None
-    final_prompt: str | None = None
 
 @router.post("/", response_model=HintResponse)
 async def generate_hint(request: HintRequest, db: AsyncSession = Depends(get_db)):
+    await verify_session_owner(db, request.user_id, request.session_id)
     logger.debug(f"Hint requested by user '{request.user_id}' for question {request.question_number}")
 
     user_result = await db.execute(select(User).filter_by(id=request.user_id))
@@ -73,8 +74,6 @@ async def generate_hint(request: HintRequest, db: AsyncSession = Depends(get_db)
             user_id=request.user_id,
             hint_style=hint_data.get("hint_style"),
             pre_hint_mastery=pre_hint_mastery,
-            context=hint_data.get("context"),
-            final_prompt=hint_data.get("final_prompt")
         )
     except Exception as e:
         logger.exception(f"Unhandled error in hint endpoint for question {request.question_number}: {e}")

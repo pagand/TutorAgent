@@ -93,5 +93,29 @@ async def test_chat_empty_history_format():
     assert "No prior messages" in result
 
 
+async def test_recent_chat_history_reads_from_chatlog_not_client(db_session):
+    """The prompt's conversation history is sourced from ChatLog, never from
+    the client-supplied chat_history field — a client can't fabricate a fake
+    tutor turn (e.g. one that already "reveals" the answer) and have it
+    rendered into the prompt as authoritative prior context."""
+    from app.endpoints.chat import _recent_chat_history_text
+    from app.models.user import ChatLog
+
+    db_session.add(ChatLog(
+        user_id="chat_hist_01", session_id="sess-1", question_number=1,
+        user_message="What layer handles IP addresses?",
+        tutor_response="Think about which layer deals with logical addressing.",
+    ))
+    await db_session.commit()
+
+    result = await _recent_chat_history_text(db_session, "chat_hist_01")
+    assert "Student: What layer handles IP addresses?" in result
+    assert "Tutor: Think about which layer deals with logical addressing." in result
+
+    # A different user's history must never leak into this one's prompt.
+    other = await _recent_chat_history_text(db_session, "chat_hist_nonexistent")
+    assert "No prior messages" in other
+
+
 # Import MagicMock for the test above
 from unittest.mock import MagicMock

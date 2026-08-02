@@ -58,6 +58,7 @@ export async function loginAsToken(page: Page, token: string) {
 /** Submits an answer directly against the backend, bypassing the UI entirely. */
 export async function submitAnswerDirect(request: APIRequestContext, payload: {
   user_id: string
+  session_id?: string
   question_number: number
   attempt_key: string
   user_answer?: string
@@ -66,8 +67,10 @@ export async function submitAnswerDirect(request: APIRequestContext, payload: {
   return request.post(`${apiUrl()}/answer/`, { data: payload })
 }
 
-export async function getProfile(request: APIRequestContext, userId: string) {
-  const res = await request.get(`${apiUrl()}/users/${userId}/profile`)
+export async function getProfile(request: APIRequestContext, userId: string, sessionId?: string) {
+  const res = await request.get(`${apiUrl()}/users/${userId}/profile`, {
+    params: sessionId ? { session_id: sessionId } : {},
+  })
   return res.json()
 }
 

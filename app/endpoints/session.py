@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.models.user import ExamSession, Participant, User
+from app.utils.authz import verify_session_owner
 from app.utils.config import settings
 from app.utils.db import get_db
 from app.utils.logger import logger
@@ -54,10 +55,12 @@ class HeartbeatResponse(BaseModel):
 
 class SubmitRequest(BaseModel):
     user_id: str
+    session_id: str | None = None
 
 
 class LogoutRequest(BaseModel):
     user_id: str
+    session_id: str | None = None
 
 
 @router.post("/start", response_model=SessionStartResponse)
@@ -180,6 +183,8 @@ async def session_heartbeat(request: HeartbeatRequest, db: AsyncSession = Depend
 @router.post("/submit")
 async def submit_session(request: SubmitRequest, db: AsyncSession = Depends(get_db)):
     """Idempotent exam submission — persists submitted_at and marks the participant completed."""
+    await verify_session_owner(db, request.user_id, request.session_id)
+
     result = await db.execute(select(ExamSession).filter_by(user_id=request.user_id))
     exam_session = result.scalars().first()
     if not exam_session:
@@ -194,7 +199,11 @@ async def submit_session(request: SubmitRequest, db: AsyncSession = Depends(get_
     participant = p_result.scalars().first()
     if participant:
         participant.status = "completed"
-        participant.active_session_id = None
+        # active_session_id is deliberately left set (not nulled) — GET
+        # /users/{id}/profile is gated by verify_session_owner too, and a
+        # returning student viewing /results (same device or, once
+        # completed, any device — see allow_if_completed) must still be
+        # able to fetch their own profile after submitting.
         participant.last_seen_at = None
 
     await db.commit()
@@ -208,6 +217,8 @@ async def logout_session(request: LogoutRequest, db: AsyncSession = Depends(get_
     Clears the active session lock so the student can re-enter from any device immediately.
     The timer keeps running — logout does not pause or reset the exam.
     """
+    await verify_session_owner(db, request.user_id, request.session_id)
+
     p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
     participant = p_result.scalars().first()
     if participant:
@@ -217,8 +228,10 @@ async def logout_session(request: LogoutRequest, db: AsyncSession = Depends(get_
 
 
 @router.get("/{user_id}/remaining", response_model=SessionRemainingResponse)
-async def get_remaining(user_id: str, db: AsyncSession = Depends(get_db)):
+async def get_remaining(user_id: str, session_id: str | None = None, db: AsyncSession = Depends(get_db)):
     """Returns time remaining for the user's exam session."""
+    await verify_session_owner(db, user_id, session_id, allow_if_completed=True)
+
     result = await db.execute(select(ExamSession).filter_by(user_id=user_id))
     exam_session = result.scalars().first()
     if not exam_session:

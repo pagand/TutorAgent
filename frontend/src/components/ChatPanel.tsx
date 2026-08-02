@@ -1,8 +1,19 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import axios from 'axios'
 import { useQuiz } from '@/context/QuizContext'
 import { sendChat, logAction } from '@/services/apiClient'
+
+/** A 429 or 5xx means Gemini itself is rate-limited or unavailable, not that
+ * anything is wrong with the message — distinct enough from a generic
+ * network failure to say so. */
+function chatErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {
+    return 'The tutor is temporarily unavailable. Please try again in a moment.'
+  }
+  return 'Failed to send message. Try again.'
+}
 
 export default function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const { state, dispatch } = useQuiz()
@@ -42,8 +53,8 @@ export default function ChatPanel({ defaultOpen = false }: { defaultOpen?: boole
         question_number: currentQuestion.question_number,
         action_data: { message_length: message.length },
       })
-    } catch {
-      setError('Failed to send message. Try again.')
+    } catch (err) {
+      setError(chatErrorMessage(err))
     } finally {
       setSending(false)
     }

@@ -1,6 +1,14 @@
 import axios from 'axios'
 import type { ChatMessage } from '@/types'
 
+// The localhost fallback is a dev convenience only. A production build
+// (`npm run build`, output: 'export') that omits NEXT_PUBLIC_API_URL would
+// otherwise silently ship a static bundle pointing at localhost — fail the
+// build instead of deploying that.
+if (process.env.NODE_ENV === 'production' && !process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error('NEXT_PUBLIC_API_URL must be set for a production build.')
+}
+
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000',
   headers: {
@@ -37,16 +45,16 @@ export interface UserProfile {
   completed_answers: Record<number, string>
 }
 
-export const getUserProfile = async (userId: string): Promise<UserProfile> => {
-  const res = await apiClient.get(`/users/${userId}/profile`)
+export const getUserProfile = async (userId: string, sessionId?: string): Promise<UserProfile> => {
+  const res = await apiClient.get(`/users/${userId}/profile`, { params: sessionId ? { session_id: sessionId } : {} })
   return res.data
 }
 
-export const setUserPreference = async (userId: string, hintStyle: string, interventionPreference = 'proactive') => {
+export const setUserPreference = async (userId: string, hintStyle: string, interventionPreference = 'proactive', sessionId?: string) => {
   const res = await apiClient.put(`/users/${userId}/preferences/`, {
     hint_style_preference: hintStyle,
     intervention_preference: interventionPreference,
-  })
+  }, { params: sessionId ? { session_id: sessionId } : {} })
   return res.data
 }
 
@@ -57,6 +65,7 @@ export const getQuestions = async (userId: string) => {
 
 export const submitAnswer = async (payload: {
   user_id: string
+  session_id?: string
   question_number: number
   attempt_key: string
   user_answer?: string
@@ -72,9 +81,10 @@ export const submitAnswer = async (payload: {
   return res.data
 }
 
-export const getHint = async (userId: string, questionNumber: number, userAnswer?: string) => {
+export const getHint = async (userId: string, questionNumber: number, userAnswer?: string, sessionId?: string) => {
   const res = await apiClient.post('/hints/', {
     user_id: userId,
+    session_id: sessionId,
     question_number: questionNumber,
     user_answer: userAnswer,
   })
@@ -91,8 +101,8 @@ export const participantLogin = async (token: string, sessionId?: string) => {
   return res.data as { state: string; name: string | null; group: string | null }
 }
 
-export const logoutSession = async (userId: string) => {
-  apiClient.post('/session/logout', { user_id: userId }).catch(() => {})
+export const logoutSession = async (userId: string, sessionId?: string) => {
+  apiClient.post('/session/logout', { user_id: userId, session_id: sessionId }).catch(() => {})
 }
 
 export const sessionHeartbeat = async (userId: string, sessionId: string) => {
@@ -107,8 +117,8 @@ export const sessionHeartbeat = async (userId: string, sessionId: string) => {
   }
 }
 
-export const submitSession = async (userId: string) => {
-  const res = await apiClient.post('/session/submit', { user_id: userId })
+export const submitSession = async (userId: string, sessionId?: string) => {
+  const res = await apiClient.post('/session/submit', { user_id: userId, session_id: sessionId })
   return res.data as { submitted: boolean; submitted_at: number }
 }
 
@@ -124,9 +134,10 @@ export const sendChat = async (payload: {
   return res.data as { response: string; question_number: number }
 }
 
-export const checkIntervention = async (userId: string, questionNumber: number, timeSpentMs: number) => {
+export const checkIntervention = async (userId: string, questionNumber: number, timeSpentMs: number, sessionId?: string) => {
   const res = await apiClient.post('/intervention-check', {
     user_id: userId,
+    session_id: sessionId,
     question_number: questionNumber,
     time_spent_ms: timeSpentMs,
   })

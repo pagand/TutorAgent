@@ -32,7 +32,7 @@ export default function ProfilePage() {
     const sessionId = localStorage.getItem('sessionId') || ''
     logAction({ user_id: id, session_id: sessionId, action_type: 'profile_view' })
 
-    getUserProfile(id)
+    getUserProfile(id, sessionId)
       .then((profile) => {
         const prefs = profile.preferences || {}
         setAbGroup(prefs.ab_group || null)
@@ -49,7 +49,7 @@ export default function ProfilePage() {
     setSaved(false)
     setError(null)
     try {
-      await setUserPreference(userId, hintStyle, interventionPref)
+      await setUserPreference(userId, hintStyle, interventionPref, localStorage.getItem('sessionId') || undefined)
       logAction({
         user_id: userId, session_id: localStorage.getItem('sessionId') || '',
         action_type: 'preference_update',
@@ -72,7 +72,7 @@ export default function ProfilePage() {
     if (!confirmed) return
     // Release the session lock so the student can re-enter from any device immediately.
     const uid = localStorage.getItem('userId')
-    if (uid) logoutSession(uid)
+    if (uid) logoutSession(uid, localStorage.getItem('sessionId') || undefined)
     localStorage.removeItem('userId')
     localStorage.removeItem('sessionId')
     localStorage.removeItem('examStartMs')

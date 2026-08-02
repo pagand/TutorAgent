@@ -1,3 +1,11 @@
+# All three services cap logs at 30MB total (json-file is unbounded by
+# default, which can fill the disk over a long exam window).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
@@ -13,6 +21,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 512m
+    logging: *default-logging
 
   api:
     build: .
@@ -29,6 +39,7 @@ services:
     expose:
       - "8000"
     mem_limit: 2g
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 30s
@@ -41,11 +52,39 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot:/etc/letsencrypt
     depends_on:
       - api
     mem_limit: 128m
+    logging: *default-logging
+
+  # Admin dashboard. Bound to the host's loopback only (127.0.0.1:8501,
+  # not 0.0.0.0) — reached via `ssh -L 8501:localhost:8501`, never exposed
+  # to the internet. Same image as `api`, overriding entrypoint.sh's
+  # migrate-then-uvicorn default with the Streamlit command instead. Talks
+  # to Postgres directly (see streamlit_app/app.py), not through the API,
+  # so none of the API's own auth/RLS applies here — that's expected, this
+  # is the trusted admin path, not a second student-facing surface.
+  streamlit:
+    build: .
+    restart: unless-stopped
+    entrypoint: []
+    command: ["streamlit", "run", "streamlit_app/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aitutor_db}
+    volumes:
+      - ./prod/data:/app/prod/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8501:8501"
+    mem_limit: 512m
+    logging: *default-logging
 
 volumes:
   postgres_data:

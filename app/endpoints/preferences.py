@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.personalization_service import personalization_service
+from app.utils.authz import verify_session_owner
 from app.utils.db import get_db
 from app.models.enums import HintStyle, InterventionPreference
 
@@ -43,8 +44,9 @@ class Preferences(BaseModel):
 
 
 @router.put("/", response_model=Preferences)
-async def update_preferences(user_id: str, preferences: Preferences, db: AsyncSession = Depends(get_db)):
+async def update_preferences(user_id: str, preferences: Preferences, session_id: str | None = None, db: AsyncSession = Depends(get_db)):
     """Updates a user's preferences."""
+    await verify_session_owner(db, user_id, session_id)
     # Get the raw string value from the enum or the string itself
     hint_style_pref = preferences.hint_style_preference
     hint_style_value = hint_style_pref.value if isinstance(hint_style_pref, HintStyle) else hint_style_pref

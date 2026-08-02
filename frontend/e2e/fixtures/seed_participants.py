@@ -31,6 +31,7 @@ FIXTURE_PARTICIPANTS = [
     {"token": "E2EOUTAGE", "name": "E2E Outage Resume", "identifier": "e2e-outage", "group": "free_choice", "intervention": "manual"},
     {"token": "E2ELOCK", "name": "E2E Second Device Lock", "identifier": "e2e-lock", "group": "free_choice", "intervention": "manual"},
     {"token": "E2ETIMER", "name": "E2E Timer Expiry", "identifier": "e2e-timer", "group": "free_choice", "intervention": "manual"},
+    {"token": "E2EXDEVICE", "name": "E2E Cross Device Results", "identifier": "e2e-xdevice", "group": "free_choice", "intervention": "manual"},
 ]
 
 

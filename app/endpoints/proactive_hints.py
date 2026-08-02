@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.models.user import SkillMastery, User
 from app.services.question_service import question_service
 from app.services import intervention
+from app.utils.authz import verify_session_owner
 from app.utils.logger import logger
 from app.utils.config import settings
 from app.utils.db import get_db
@@ -17,6 +18,7 @@ router = APIRouter(
 
 class InterventionCheckRequest(BaseModel):
     user_id: str
+    session_id: str | None = None
     question_number: int
     time_spent_ms: int
 
@@ -33,6 +35,8 @@ async def check_for_intervention(request: InterventionCheckRequest, db: AsyncSes
     user_id = request.user_id
     q_id = request.question_number
     time_spent = request.time_spent_ms
+
+    await verify_session_owner(db, user_id, request.session_id)
 
     # 1. Fetch the user to check their preferences
     user_result = await db.execute(select(User).filter_by(id=user_id))

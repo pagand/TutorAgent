@@ -11,6 +11,7 @@ from app.services.bkt import bkt_service
 from app.services import intervention
 from app.services.personalization_service import personalization_service
 from app.state_manager import get_bkt_mastery
+from app.utils.authz import verify_session_owner
 from app.utils.logger import logger
 from app.utils.config import settings
 from app.utils.db import get_db
@@ -19,16 +20,17 @@ router = APIRouter()
 
 class AnswerRequest(BaseModel):
     user_id: str
+    session_id: str | None = None
     question_number: int
-    attempt_key: str
-    user_answer: str | None = None
+    attempt_key: str = Field(max_length=200)
+    user_answer: str | None = Field(None, max_length=500)
     skipped: bool = False
     time_taken_ms: int | None = None
 
     # Hint-related fields, only present if a hint was shown
     hint_shown: bool = False
     hint_style_used: str | None = None
-    hint_text: str | None = None
+    hint_text: str | None = Field(None, max_length=2000)
     pre_hint_mastery: float | None = None
     feedback_rating: int | None = Field(None, ge=1, le=5)
 
@@ -70,6 +72,7 @@ async def _replay_response(db: AsyncSession, existing_log: InteractionLog) -> An
 
 @router.post("/", response_model=AnswerResponse)
 async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_db)):
+    await verify_session_owner(db, request.user_id, request.session_id)
     user_id = request.user_id
     q_id = request.question_number
     user_ans = request.user_answer

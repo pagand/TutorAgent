@@ -1,9 +1,10 @@
-# E2E test suite (Stage 1b)
+# E2E test suite (Stage 1b, extended Stage 3)
 
 Playwright specs covering the critical path, outage-and-resume, second-device
-lock, reload recovery, and timer expiry. Runs against a real static-export
-build (`npm run build` + `serve`, not `next dev`) and a dedicated local
-Postgres database, isolated from your normal dev DB.
+lock, reload recovery, timer expiry, and (Stage 3) a completed exam's results
+being viewable from a device that never held the session lock. Runs against
+a real static-export build (`npm run build` + `serve`, not `next dev`) and a
+dedicated local Postgres database, isolated from your normal dev DB.
 
 ## One-time setup
 
@@ -46,6 +47,6 @@ before `playwright test` runs, so start it yourself first.
 
 ## Gate
 
-All 5 specs green locally, no AWS spend. If hint/chat specs are flaky, it's
+All 6 specs green locally, no AWS spend. If hint/chat specs are flaky, it's
 almost always real Gemini latency (RAG cold start) — see
 `PRELAUNCH_CHECKLIST.md` section B — not a real failure.

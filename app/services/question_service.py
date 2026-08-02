@@ -86,7 +86,8 @@ class QuestionService:
 
     def check_answer(self, question: Question, user_answer: str) -> bool:
         """Validates a user's answer against the correct answer."""
-        logger.debug(f"Checking answer for Q{question.question_number}. User answer: '{user_answer}', Correct answer: '{question.correct_answer}'")
+        # Never log question.correct_answer, even at DEBUG — this is the answer key.
+        logger.debug(f"Checking answer for Q{question.question_number}. User answer: '{user_answer}'")
 
         user_answer_clean = user_answer.strip().lower()
         correct_answer_clean = question.correct_answer.lower()

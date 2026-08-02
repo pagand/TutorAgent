@@ -1,5 +1,6 @@
 # app/utils/config.py
 import os
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -40,16 +41,16 @@ class Settings(BaseSettings):
     ollama_model: str = os.getenv("OLLAMA_MODEL", "mistral") # Default if not in .env
 
     # OpenAI specific
-    openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
+    openai_api_key: SecretStr | None = SecretStr(os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
     openai_model_name: str = os.getenv("OPENAI_MODEL_NAME", "gpt-3.5-turbo")
 
     # Google Gemini specific
-    google_api_key: str | None = os.getenv("GOOGLE_API_KEY")
+    google_api_key: SecretStr | None = SecretStr(os.getenv("GOOGLE_API_KEY")) if os.getenv("GOOGLE_API_KEY") else None
     google_model_name: str = os.getenv("GOOGLE_MODEL_NAME", "gemini-2.5-flash-lite")
 
     # AWS Bedrock specific
-    aws_access_key_id: str | None = os.getenv("AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_access_key_id: SecretStr | None = SecretStr(os.getenv("AWS_ACCESS_KEY_ID")) if os.getenv("AWS_ACCESS_KEY_ID") else None
+    aws_secret_access_key: SecretStr | None = SecretStr(os.getenv("AWS_SECRET_ACCESS_KEY")) if os.getenv("AWS_SECRET_ACCESS_KEY") else None
     aws_region_name: str | None = os.getenv("AWS_REGION_NAME")
     bedrock_model_id: str | None = os.getenv("BEDROCK_MODEL_ID")
 
@@ -57,7 +58,9 @@ class Settings(BaseSettings):
     # Obscurity, not secrecy: the frontend is a public static bundle, so
     # NEXT_PUBLIC_API_KEY is readable by anyone who opens devtools. This raises
     # the bar against drive-by scanning of the API during the exam window.
-    api_key: str | None = os.getenv("API_KEY")
+    # SecretStr so an accidental `logger.info(settings)` or unhandled traceback
+    # can't print it in plain text.
+    api_key: SecretStr | None = SecretStr(os.getenv("API_KEY")) if os.getenv("API_KEY") else None
 
     # BKT Parameters (Stage 3)
     bkt_p_l0: float = 0.2  # Prior prob of knowing skill

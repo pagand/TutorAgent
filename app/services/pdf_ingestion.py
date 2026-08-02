@@ -10,7 +10,7 @@ from app.utils.logger import logger
 
 def _make_embedding_function():
     return GoogleGenerativeAIEmbeddings(
-        google_api_key=settings.google_api_key,
+        google_api_key=settings.google_api_key.get_secret_value() if settings.google_api_key else None,
         model=settings.google_embedding_model_name,
     )
 

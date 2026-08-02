@@ -1,7 +1,9 @@
 # FastAPI entry point; includes API orchestration and async event loop
 # app/main.py
-from fastapi import FastAPI
+import hmac
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
 import sys
@@ -72,6 +74,29 @@ app = FastAPI(
     version="0.7.0",
     lifespan=lifespan
 )
+
+# --- API Key Middleware ---
+# Registered before CORSMiddleware below: Starlette applies the last-added
+# middleware outermost, so CORS must end up outermost to attach CORS headers
+# even to the 401s this middleware returns — otherwise a rejected request
+# looks like a CORS failure in the browser instead of the real 401.
+# settings.api_key is read per-request (not captured here) so tests can
+# monkeypatch it without reloading the module.
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    if not settings.api_key:
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if request.url.path == "/":
+        return await call_next(request)
+    provided = request.headers.get("X-API-Key", "")
+    # Compare as bytes — hmac.compare_digest raises TypeError on a str containing
+    # non-ASCII characters, which would otherwise turn a scanner probing with a
+    # UTF-8 header into an unhandled 500 instead of a clean 401.
+    if not hmac.compare_digest(provided.encode("utf-8", "replace"), settings.api_key.encode("utf-8")):
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
 
 # --- CORS Middleware ---
 # Set ALLOWED_ORIGIN to your CloudFront domain in production.

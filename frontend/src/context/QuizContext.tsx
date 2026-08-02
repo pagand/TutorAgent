@@ -4,9 +4,9 @@ import React, { createContext, useContext, useReducer, ReactNode } from 'react'
 import type { QuizState, QuestionStatus, Question, ChatMessage, HintData } from '@/types'
 
 type QuizAction =
-  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number; cachedHints?: Record<number, HintData>; cachedChat?: ChatMessage[] }
+  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number; cachedHints?: Record<number, HintData>; cachedChat?: ChatMessage[]; cachedDrafts?: Record<number, string> }
   | { type: 'NAVIGATE_TO'; index: number }
-  | { type: 'SUBMIT_RESULT'; questionNumber: number; isCorrect: boolean; correctAnswer: string; userAnswer: string }
+  | { type: 'SUBMIT_RESULT'; questionNumber: number; isCorrect: boolean; userAnswer: string }
   | { type: 'SKIP_QUESTION' }
   | { type: 'SET_HINT'; questionNumber: number; hint: HintData }
   | { type: 'SET_RATING'; questionNumber: number; rating: number }
@@ -14,6 +14,7 @@ type QuizAction =
   | { type: 'APPEND_CHAT'; userMessage: string; tutorResponse: string }
   | { type: 'COMPLETE' }
   | { type: 'RESTORE_STATE'; questionStates: Record<number, QuestionStatus>; retryCount: Record<number, number>; userAnswers: Record<number, string>; correctAnswers: Record<number, string> }
+  | { type: 'SYNC_TIMER'; examStartMs: number; examDurationMs: number }
 
 const initialState: QuizState = {
   userId: '',
@@ -50,7 +51,7 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
         retryCount: {},
         userAnswers: {},
         correctAnswers: {},
-        draftAnswers: {},
+        draftAnswers: action.cachedDrafts ?? {},
         currentQuestionIndex: 0,
         highestReachedIndex: 0,
         examStartMs: action.examStartMs,
@@ -67,7 +68,7 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
     }
 
     case 'SUBMIT_RESULT': {
-      const { questionNumber, isCorrect, correctAnswer, userAnswer } = action
+      const { questionNumber, isCorrect, userAnswer } = action
       const currentStatus = state.questionStates[questionNumber] || 'unanswered'
 
       let newStatus: QuestionStatus
@@ -79,7 +80,6 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
 
       const newStates = { ...state.questionStates, [questionNumber]: newStatus }
       const newRetryCount = { ...state.retryCount, [questionNumber]: (state.retryCount[questionNumber] || 0) + 1 }
-      const newCorrectAnswers = { ...state.correctAnswers, [questionNumber]: correctAnswer }
       const newUserAnswers = { ...state.userAnswers, [questionNumber]: userAnswer }
       // Clear draft for this question after submission
       const newDrafts = { ...state.draftAnswers, [questionNumber]: '' }
@@ -98,7 +98,6 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
         ...state,
         questionStates: newStates,
         retryCount: newRetryCount,
-        correctAnswers: newCorrectAnswers,
         userAnswers: newUserAnswers,
         draftAnswers: newDrafts,
         highestReachedIndex: newHighest,
@@ -202,6 +201,10 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
       }
     }
 
+    case 'SYNC_TIMER': {
+      return { ...state, examStartMs: action.examStartMs, examDurationMs: action.examDurationMs }
+    }
+
     default:
       return state
   }
@@ -217,16 +220,17 @@ const QuizContext = createContext<QuizContextValue | null>(null)
 export function QuizProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(quizReducer, initialState)
 
-  // Persist hints and chat to localStorage so they survive page refresh
+  // Persist hints, chat and drafts to localStorage so they survive page refresh
   React.useEffect(() => {
     if (!state.userId) return
     try {
       localStorage.setItem(`quizCache_${state.userId}`, JSON.stringify({
         hints: state.hints,
         chatHistory: state.chatHistory,
+        draftAnswers: state.draftAnswers,
       }))
     } catch { /* storage quota — non-fatal */ }
-  }, [state.hints, state.chatHistory, state.userId])
+  }, [state.hints, state.chatHistory, state.draftAnswers, state.userId])
 
   return (
     <QuizContext.Provider value={{ state, dispatch }}>

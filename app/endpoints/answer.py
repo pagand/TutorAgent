@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.models.user import InteractionLog, SkillMastery
 
 from app.services.question_service import question_service
@@ -19,10 +20,11 @@ router = APIRouter()
 class AnswerRequest(BaseModel):
     user_id: str
     question_number: int
+    attempt_key: str
     user_answer: str | None = None
     skipped: bool = False
     time_taken_ms: int | None = None
-    
+
     # Hint-related fields, only present if a hint was shown
     hint_shown: bool = False
     hint_style_used: str | None = None
@@ -32,11 +34,39 @@ class AnswerRequest(BaseModel):
 
 class AnswerResponse(BaseModel):
     correct: bool
-    correct_answer: str
     skill: str
     intervention_needed: bool
     intervention_reason: str | None = None
     current_mastery: float
+
+
+async def _replay_response(db: AsyncSession, existing_log: InteractionLog) -> AnswerResponse:
+    """Builds a response for a duplicate (already-committed) attempt_key with no mutation."""
+    result = await db.execute(
+        select(SkillMastery).filter_by(user_id=existing_log.user_id, skill_id=existing_log.skill)
+    )
+    skill_mastery = result.scalars().first()
+    current_mastery = skill_mastery.mastery_level if skill_mastery else settings.bkt_p_l0
+    consecutive_errors = skill_mastery.consecutive_errors if skill_mastery else 0
+    consecutive_skips = skill_mastery.consecutive_skips if skill_mastery else 0
+
+    intervention_reason = intervention.check_intervention(
+        existing_log.user_id,
+        existing_log.skill,
+        existing_log.time_taken_ms,
+        current_mastery=current_mastery,
+        consecutive_errors=consecutive_errors,
+        consecutive_skips=consecutive_skips
+    )
+
+    return AnswerResponse(
+        correct=bool(existing_log.is_correct),
+        skill=existing_log.skill,
+        intervention_needed=intervention_reason is not None,
+        intervention_reason=intervention_reason,
+        current_mastery=current_mastery
+    )
+
 
 @router.post("/", response_model=AnswerResponse)
 async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_db)):
@@ -45,12 +75,39 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
     user_ans = request.user_answer
     time_taken = request.time_taken_ms
 
+    # Idempotency: a retried submission carrying the same attempt_key (e.g. after
+    # a lost response) returns the already-committed outcome instead of being
+    # processed a second time, so it can never be miscounted as a second real attempt.
+    replay_result = await db.execute(
+        select(InteractionLog).filter_by(user_id=user_id, question_id=q_id, attempt_key=request.attempt_key)
+    )
+    existing_log = replay_result.scalars().first()
+    if existing_log is not None:
+        return await _replay_response(db, existing_log)
+
     question = question_service.get_question_by_id(q_id)
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
     skill = question.skill
-    
+
+    # Server-side attempt cap, scoped per-question (not per-skill — SkillMastery's
+    # consecutive_errors spans every question sharing a skill, so it cannot be used
+    # here without incorrectly locking unrelated questions). Once answered
+    # correctly, or once 2 real (non-skip) attempts exist with none correct,
+    # the question is locked read-only and no further submission is accepted.
+    prior_attempts_result = await db.execute(
+        select(InteractionLog)
+        .filter_by(user_id=user_id, question_id=q_id)
+        .where(InteractionLog.user_answer.isnot(None))
+    )
+    prior_attempts = prior_attempts_result.scalars().all()
+    already_correct = any(log.is_correct for log in prior_attempts)
+    if already_correct:
+        raise HTTPException(status_code=409, detail="This question is already answered correctly and is locked.")
+    if len(prior_attempts) >= 2:
+        raise HTTPException(status_code=409, detail="This question is locked after 2 incorrect attempts.")
+
     if request.skipped:
         is_correct = False
     else:
@@ -63,9 +120,9 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
 
     if not skill_mastery:
         skill_mastery = SkillMastery(
-            user_id=user_id, 
-            skill_id=skill, 
-            mastery_level=settings.bkt_p_l0, 
+            user_id=user_id,
+            skill_id=skill,
+            mastery_level=settings.bkt_p_l0,
             consecutive_errors=0,
             consecutive_skips=0
         )
@@ -76,15 +133,15 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         updated_mastery_level = await bkt_service.update_mastery(user_id, skill, is_correct, existing_skill_mastery=skill_mastery)
     else:
         updated_mastery_level = skill_mastery.mastery_level
-    
+
     bkt_change_value = None
     if request.hint_shown:
         if request.pre_hint_mastery is None or request.hint_style_used is None:
             raise HTTPException(
-                status_code=422, 
+                status_code=422,
                 detail="If hint_shown is true, pre_hint_mastery and hint_style_used must be provided."
             )
-        
+
         if not request.skipped:
             bkt_change_value = updated_mastery_level - request.pre_hint_mastery
 
@@ -101,6 +158,7 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         user_id=user_id,
         question_id=q_id,
         skill=skill,
+        attempt_key=request.attempt_key,
         user_answer=user_ans,
         is_correct=is_correct,
         time_taken_ms=time_taken,
@@ -132,14 +190,24 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         consecutive_skips=skill_mastery.consecutive_skips
     )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Two requests with the same attempt_key raced each other; the loser
+        # rolls back and returns the winner's already-committed outcome.
+        await db.rollback()
+        replay_result = await db.execute(
+            select(InteractionLog).filter_by(user_id=user_id, question_id=q_id, attempt_key=request.attempt_key)
+        )
+        existing_log = replay_result.scalars().first()
+        if existing_log is not None:
+            return await _replay_response(db, existing_log)
+        raise HTTPException(status_code=503, detail="Answer could not be recorded. Please retry.")
 
     return AnswerResponse(
         correct=is_correct,
-        correct_answer=str(question.correct_answer),
         skill=skill,
         intervention_needed=intervention_reason is not None,
         intervention_reason=intervention_reason,
         current_mastery=updated_mastery_level
     )
-

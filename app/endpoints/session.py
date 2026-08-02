@@ -48,6 +48,8 @@ class HeartbeatResponse(BaseModel):
     expired: bool
     submitted: bool
     active: bool  # False = another device has taken over this token
+    exam_start_ms: int
+    exam_duration_ms: int
 
 
 class SubmitRequest(BaseModel):
@@ -102,6 +104,12 @@ async def start_session(request: SessionStartRequest, db: AsyncSession = Depends
             if exam_session is None:
                 raise HTTPException(status_code=503, detail="Session could not be created. Please retry.")
             logger.info(f"Race condition resolved — returning existing session for user {request.user_id}")
+            # participant was loaded before the rollback, so it's now a stale/expired
+            # object — re-fetch it before mutating it below, or committing raises
+            # sqlalchemy.exc.MissingGreenlet on the implicit refresh.
+            if participant:
+                p_result = await db.execute(select(Participant).filter_by(token=request.user_id))
+                participant = p_result.scalars().first()
 
     # Claim / refresh participant lock
     if participant:
@@ -164,6 +172,8 @@ async def session_heartbeat(request: HeartbeatRequest, db: AsyncSession = Depend
         expired=expired,
         submitted=submitted,
         active=active,
+        exam_start_ms=exam_session.exam_start_ms,
+        exam_duration_ms=exam_session.exam_duration_ms,
     )
 
 

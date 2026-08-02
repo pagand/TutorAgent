@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import axios from 'axios'
 import { useQuiz } from '@/context/QuizContext'
 import {
   getQuestions, startSession, getHint, submitAnswer,
@@ -22,6 +23,42 @@ function generateSessionId(): string {
   return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 }
 
+function generateAttemptKey(): string {
+  return `attempt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+const SKIP_ATTEMPT_SENTINEL = '__skip__'
+
+/** A 409 from /answer/ means the question is locked server-side but the local
+ * view hasn't caught up (e.g. a stale second tab) — retrying the same action
+ * will only 409 again, so this tells the student to resync via reload instead
+ * of the generic retry-oriented message. */
+function submitErrorMessage(err: unknown, verb: 'submit' | 'skip'): string {
+  if (axios.isAxiosError(err) && err.response?.status === 409) {
+    return 'This question is already locked. Reload the page to sync.'
+  }
+  return `Failed to ${verb}. Please try again.`
+}
+
+/**
+ * Resolves a stable attempt_key for (question, answerValue): reusing the same
+ * key across retries of the SAME submission (so a lost-response retry is
+ * deduped server-side), but minting a fresh one if the answer content itself
+ * changed since the key was generated — otherwise a retry after editing the
+ * answer would replay the ORIGINAL (stale) grade against the NEW answer text.
+ */
+function resolveAttemptKey(
+  ref: { current: Record<number, { key: string; answer: string }> },
+  questionNumber: number,
+  answerValue: string
+): string {
+  const existing = ref.current[questionNumber]
+  if (existing && existing.answer === answerValue) return existing.key
+  const key = generateAttemptKey()
+  ref.current[questionNumber] = { key, answer: answerValue }
+  return key
+}
+
 export default function QuizPageContent() {
   const router = useRouter()
   const { state, dispatch } = useQuiz()
@@ -36,6 +73,7 @@ export default function QuizPageContent() {
   const pendingRating = currentQNum !== undefined ? (pendingRatings[currentQNum] ?? null) : null
 
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [isDeviceConflict, setIsDeviceConflict] = useState(false)
   const [initializing, setInitializing] = useState(true)
 
   const [userAnswer, setUserAnswerLocal] = useState('')
@@ -53,6 +91,7 @@ export default function QuizPageContent() {
   const [showProfileBanner, setShowProfileBanner] = useState(false)
   const [takenOver, setTakenOver] = useState(false)
   const questionStartTimeRef = useRef<Record<number, number>>({})
+  const attemptKeyRef = useRef<Record<number, { key: string; answer: string }>>({})
   const interventionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const initCalledRef = useRef(false)
@@ -65,10 +104,15 @@ export default function QuizPageContent() {
     if (hasRedirectedRef.current) return
     hasRedirectedRef.current = true
     const s = stateRef.current
+    // correctAnswers is intentionally left empty here — /answer/ no longer
+    // returns it (Stage 1a leak fix), and fetching it from GET /users/{id}/profile
+    // is a network call that must never block this redirect: at 0:00 the quiz
+    // must stop being reachable immediately, not up to 90s later. The results
+    // page notices the gap and fetches the answer key itself.
     const results = {
       questions: s.questions,
       questionStates: s.questionStates,
-      correctAnswers: s.correctAnswers,
+      correctAnswers: {},
       userAnswers: s.userAnswers,
       retryCount: s.retryCount,
       triggeredByTimer: byTimer,
@@ -192,19 +236,25 @@ export default function QuizPageContent() {
           return
         }
 
-        // Read cached hints/chat from localStorage to survive refresh
+        // Read cached hints/chat/drafts from localStorage to survive refresh
         let cachedHints: Record<number, HintData> = {}
         let cachedChat: ChatMessage[] = []
+        let cachedDrafts: Record<number, string> = {}
         try {
           const cached = localStorage.getItem(`quizCache_${storedUserId}`)
-          if (cached) { const d = JSON.parse(cached); cachedHints = d.hints || {}; cachedChat = d.chatHistory || [] }
+          if (cached) {
+            const d = JSON.parse(cached)
+            cachedHints = d.hints || {}
+            cachedChat = d.chatHistory || []
+            cachedDrafts = d.draftAnswers || {}
+          }
         } catch { /* ignore */ }
 
         dispatch({
           type: 'LOAD_QUIZ',
           userId: storedUserId!, sessionId: storedSessionId, questions: qs,
           examStartMs: sessionData.exam_start_ms, examDurationMs: sessionData.exam_duration_ms,
-          cachedHints, cachedChat,
+          cachedHints, cachedChat, cachedDrafts,
         })
 
         if (Object.keys(questionStates).length > 0) {
@@ -219,6 +269,12 @@ export default function QuizPageContent() {
           try {
             const hb = await sessionHeartbeat(uid, sid)
             if (!isMounted) return
+            // Reconcile the local countdown with the server's timer before acting on
+            // expired/submitted below, so a bulk admin extension (which only changes
+            // the DB) reaches this already-open tab instead of it hitting a stale zero.
+            if (hb.exam_start_ms !== stateRef.current.examStartMs || hb.exam_duration_ms !== stateRef.current.examDurationMs) {
+              dispatch({ type: 'SYNC_TIMER', examStartMs: hb.exam_start_ms, examDurationMs: hb.exam_duration_ms })
+            }
             if (hb.submitted) { saveAndRedirect(false) }
             if (hb.expired) { timerExpiredRef.current = true; saveAndRedirect(true) }
             if (!hb.active) { setTakenOver(true) }
@@ -234,10 +290,16 @@ export default function QuizPageContent() {
         logAction({ user_id: storedUserId!, session_id: storedSessionId, action_type: 'session_start' })
       } catch (err) {
         if (!isMounted) return
-        const msg = err instanceof Error && err.message === 'timeout'
-          ? 'Loading timed out. Please check your connection and try again.'
-          : 'Failed to load quiz. Please try again.'
+        let msg = 'Failed to load quiz. Please try again.'
+        let deviceConflict = false
+        if (err instanceof Error && err.message === 'timeout') {
+          msg = 'Loading timed out. Please check your connection and try again.'
+        } else if (axios.isAxiosError(err) && err.response?.status === 409) {
+          deviceConflict = true
+          msg = 'This exam token is now active on another device.'
+        }
         setLoadError(msg)
+        setIsDeviceConflict(deviceConflict)
       } finally {
         if (isMounted) setInitializing(false)
       }
@@ -337,14 +399,17 @@ export default function QuizPageContent() {
   const handleSubmit = async () => {
     if (!userId || !questions.length || !userAnswer) return
     const currentQ = questions[currentQuestionIndex]
-    const startTime = questionStartTimeRef.current[currentQ.question_number] || Date.now()
+    const qNum = currentQ.question_number
+    const startTime = questionStartTimeRef.current[qNum] || Date.now()
     const timeTakenMs = Date.now() - startTime
     setIsSubmitting(true)
     setSubmitError(null)
 
+    const attemptKey = resolveAttemptKey(attemptKeyRef, qNum, userAnswer)
+
     try {
       const payload: Parameters<typeof submitAnswer>[0] = {
-        user_id: userId, question_number: currentQ.question_number,
+        user_id: userId, question_number: qNum, attempt_key: attemptKey,
         user_answer: userAnswer, time_taken_ms: timeTakenMs,
       }
       if (activeHint) {
@@ -356,21 +421,21 @@ export default function QuizPageContent() {
       }
 
       const result = await submitAnswer(payload)
+      delete attemptKeyRef.current[qNum]
       dispatch({
         type: 'SUBMIT_RESULT',
-        questionNumber: currentQ.question_number,
+        questionNumber: qNum,
         isCorrect: result.correct,
-        correctAnswer: result.correct_answer,
         userAnswer,
       })
       logAction({
         user_id: userId, session_id: sessionId, action_type: 'answer_submit',
-        question_number: currentQ.question_number,
+        question_number: qNum,
         action_data: { is_correct: result.correct },
       })
       setUserAnswerLocal('')
-    } catch {
-      setSubmitError('Failed to submit. Please try again.')
+    } catch (err) {
+      setSubmitError(submitErrorMessage(err, 'submit'))
     } finally {
       setIsSubmitting(false)
     }
@@ -379,12 +444,16 @@ export default function QuizPageContent() {
   const handleSkip = async () => {
     if (!userId || !questions.length) return
     const currentQ = questions[currentQuestionIndex]
-    const startTime = questionStartTimeRef.current[currentQ.question_number] || Date.now()
+    const qNum = currentQ.question_number
+    const startTime = questionStartTimeRef.current[qNum] || Date.now()
     const timeTakenMs = Date.now() - startTime
     setIsSkipping(true)
+
+    const attemptKey = resolveAttemptKey(attemptKeyRef, qNum, SKIP_ATTEMPT_SENTINEL)
+
     try {
       const payload: Parameters<typeof submitAnswer>[0] = {
-        user_id: userId, question_number: currentQ.question_number,
+        user_id: userId, question_number: qNum, attempt_key: attemptKey,
         skipped: true, time_taken_ms: timeTakenMs,
       }
       if (activeHint) {
@@ -395,13 +464,14 @@ export default function QuizPageContent() {
         if (pendingRating !== null) payload.feedback_rating = pendingRating
       }
       await submitAnswer(payload)
+      delete attemptKeyRef.current[qNum]
       dispatch({ type: 'SKIP_QUESTION' })
       logAction({
         user_id: userId, session_id: sessionId, action_type: 'answer_skip',
-        question_number: currentQ.question_number,
+        question_number: qNum,
       })
-    } catch {
-      setSubmitError('Failed to skip. Please try again.')
+    } catch (err) {
+      setSubmitError(submitErrorMessage(err, 'skip'))
     } finally {
       setIsSkipping(false)
     }
@@ -506,12 +576,21 @@ export default function QuizPageContent() {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
         <p className="text-rose-600 text-sm font-medium">{loadError}</p>
-        <button
-          onClick={() => { initCalledRef.current = false; window.location.reload() }}
-          className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-        >
-          Retry
-        </button>
+        {isDeviceConflict ? (
+          <Link
+            href="/login"
+            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+          >
+            Back to login
+          </Link>
+        ) : (
+          <button
+            onClick={() => { initCalledRef.current = false; window.location.reload() }}
+            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+          >
+            Retry
+          </button>
+        )}
       </div>
     )
   }

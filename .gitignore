@@ -29,6 +29,9 @@ plots*
 # Production data — contains exam questions and participant tokens (never commit)
 prod/data/
 
+# DB backups (scripts/backup.sh) — full data dumps, same sensitivity as prod/data/
+backups/
+
 # # LLM plannar
 DEVELOPMENT_PLAN.md
 ARCHITECTURE.md

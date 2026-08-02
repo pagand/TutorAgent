@@ -98,3 +98,27 @@ docker compose up -d --build       # first build ~10-15 min
 docker compose logs -f api         # watch alembic migrate + uvicorn startup
 curl http://localhost/             # should return {"message":"Welcome to the AI Tutor API"}
 ```
+
+## Backup and Restore
+
+`scripts/backup.sh` dumps Postgres to a timestamped `pg_dump -Fc` file, prunes dumps past the retention window, and optionally uploads to S3. `scripts/restore.sh` restores a dump into an explicit target (no default target, so it can't silently overwrite production). `scripts/restore_drill.sh` proves a backup is actually restorable: it restores into a scratch database, compares every table's row count against the source, and reports any mismatch — a backup that has never been restored is not a backup.
+
+**Local dev** (`DATABASE_URL` from `.env`, already exported by `.venv`):
+```bash
+./scripts/backup.sh                                    # writes ./backups/aitutor_<timestamp>.dump
+./scripts/restore_drill.sh                              # restores the newest dump into a scratch DB, drops it after
+./scripts/restore.sh ./backups/aitutor_<ts>.dump postgresql+asyncpg://user@localhost:5432/some_target_db
+```
+
+**EC2 / Docker Compose** — Postgres's `5432` is intentionally not exposed to the host, so these scripts run `pg_dump`/`pg_restore` inside the `db` service instead:
+```bash
+DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/backup.sh
+DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh ./backups/aitutor_<ts>.dump
+```
+
+Cron, run nightly and before/after each exam (`crontab -e` on the EC2 host, with the vars above exported or set inline):
+```
+0 2 * * * cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://<bucket>/aitutor-backups ./scripts/backup.sh >> ~/AITutorApp/backups/cron.log 2>&1
+```
+
+`BACKUP_S3_URI` is optional — set it once the Stage 4 Terraform creates the bucket; until then dumps stay local under `BACKUP_DIR` (default `./backups`).

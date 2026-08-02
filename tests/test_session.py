@@ -118,6 +118,53 @@ async def test_session_submit_blocks_login_as_completed(client, db_session):
     assert res.json()["state"] == "completed"
 
 
+async def test_heartbeat_returns_timer_fields(client):
+    """Heartbeat must include exam_start_ms/exam_duration_ms so the frontend can reconcile
+    its local countdown (Stage 2 — needed for bulk timer extension to reach an open tab)."""
+    await client.post("/users/", json={"user_id": "hb_fields_01"})
+    start_res = await client.post("/session/start", json={
+        "user_id": "hb_fields_01",
+        "session_id": "sess-hbfields"
+    })
+    start_data = start_res.json()
+
+    res = await client.post("/session/heartbeat",
+                            json={"user_id": "hb_fields_01", "session_id": "sess-hbfields"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["exam_start_ms"] == start_data["exam_start_ms"]
+    assert data["exam_duration_ms"] == start_data["exam_duration_ms"]
+
+
+async def test_heartbeat_reflects_bulk_timer_extension(client, db_session):
+    """After a bulk extension (admin_ops.extend_all_exam_timers-shaped UPDATE) widens
+    exam_duration_ms, the next heartbeat must report the larger ms_remaining and the new
+    exam_duration_ms — this is the server half of the frontend's reconciliation chain."""
+    await client.post("/users/", json={"user_id": "hb_extend_01"})
+    await client.post("/session/start", json={
+        "user_id": "hb_extend_01",
+        "session_id": "sess-hbextend"
+    })
+
+    before = await client.post("/session/heartbeat",
+                               json={"user_id": "hb_extend_01", "session_id": "sess-hbextend"})
+    ms_before = before.json()["ms_remaining"]
+
+    extra_ms = 10 * 60 * 1000
+    await db_session.execute(
+        text("UPDATE exam_sessions SET exam_duration_ms = exam_duration_ms + :extra "
+             "WHERE user_id = 'hb_extend_01' AND submitted_at IS NULL"),
+        {"extra": extra_ms},
+    )
+    await db_session.commit()
+
+    after = await client.post("/session/heartbeat",
+                              json={"user_id": "hb_extend_01", "session_id": "sess-hbextend"})
+    after_data = after.json()
+    assert after_data["ms_remaining"] > ms_before
+    assert after_data["exam_duration_ms"] == settings.exam_duration_ms + extra_ms
+
+
 async def test_heartbeat_expired_when_duration_reduced(client, db_session):
     """Heartbeat must return expired=True when admin reduces duration below elapsed.
 

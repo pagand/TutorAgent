@@ -2,6 +2,7 @@
 from sqlalchemy import (
     BigInteger,
     Column,
+    Index,
     Integer,
     String,
     Float,
@@ -59,7 +60,8 @@ class InteractionLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     question_id = Column(Integer)
     skill = Column(String)
-    
+    attempt_key = Column(String, nullable=True)
+
     # Answer details
     user_answer = Column(Text, nullable=True)
     is_correct = Column(Boolean, nullable=True)
@@ -76,6 +78,14 @@ class InteractionLog(Base):
 
     # Relationship
     user = relationship("User", back_populates="interaction_logs")
+
+    __table_args__ = (
+        Index(
+            "ux_interaction_logs_user_question_attemptkey",
+            "user_id", "question_id", "attempt_key",
+            unique=True,
+        ),
+    )
 
 
 class ExamSession(Base):

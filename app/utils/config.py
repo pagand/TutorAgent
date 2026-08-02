@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     retrieval_k: int = 3
-    log_level: str = os.getenv("LOG_LEVEL", "DEBUG").upper()
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     # general LLM config
     max_output_tokens: int = 512
@@ -45,13 +45,19 @@ class Settings(BaseSettings):
 
     # Google Gemini specific
     google_api_key: str | None = os.getenv("GOOGLE_API_KEY")
-    google_model_name: str = os.getenv("GOOGLE_MODEL_NAME", "gemini-1.5-flash-latest")
+    google_model_name: str = os.getenv("GOOGLE_MODEL_NAME", "gemini-2.5-flash-lite")
 
-    # AWS Bedrock specific 
+    # AWS Bedrock specific
     aws_access_key_id: str | None = os.getenv("AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
     aws_region_name: str | None = os.getenv("AWS_REGION_NAME")
     bedrock_model_id: str | None = os.getenv("BEDROCK_MODEL_ID")
+
+    # --- API Key (Phase 3, Stage 2) ---
+    # Obscurity, not secrecy: the frontend is a public static bundle, so
+    # NEXT_PUBLIC_API_KEY is readable by anyone who opens devtools. This raises
+    # the bar against drive-by scanning of the API during the exam window.
+    api_key: str | None = os.getenv("API_KEY")
 
     # BKT Parameters (Stage 3)
     bkt_p_l0: float = 0.2  # Prior prob of knowing skill
@@ -71,7 +77,7 @@ class Settings(BaseSettings):
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
     # --- Exam Timer Settings ---
-    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 20 * 60 * 1000))  # 20 minutes default
+    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 25 * 60 * 1000))  # 25 minutes default
 
     # --- Database Settings (Stage 5) ---
     database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/aitutor_db")

@@ -7,8 +7,8 @@ from app.utils.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    pool_size=10,       # persistent connections kept warm
-    max_overflow=15,    # extra connections allowed under burst (25 total)
+    pool_size=20,       # persistent connections kept warm
+    max_overflow=30,    # extra connections allowed under burst (50 total)
     pool_timeout=30,    # seconds to wait for a free connection
     pool_pre_ping=True, # test connections on checkout (handles EC2 stop/start drops)
 )

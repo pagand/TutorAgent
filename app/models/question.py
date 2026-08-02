@@ -9,3 +9,12 @@ class Question(BaseModel):
     options: Optional[List[str]] = None  # For multiple_choice
     correct_answer: str
     skill: str
+
+
+class PublicQuestion(BaseModel):
+    """Question shape exposed to the frontend — omits correct_answer."""
+    question_number: int
+    question: str
+    question_type: str
+    options: Optional[List[str]] = None
+    skill: str

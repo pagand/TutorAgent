@@ -17,6 +17,7 @@ from streamlit_app.queries import (
     reset_exam_timer, extend_exam_timer, clear_session_lock,
     get_exam_session_info, get_participant_info,
 )
+from streamlit_app.admin_ops import count_active_sessions, extend_all_exam_timers
 
 st.set_page_config(layout="wide", page_title="DaTu AIR Admin Dashboard")
 
@@ -107,6 +108,32 @@ if selected_view == VIEW_SYSTEM:
                      'remaining_min', 'submitted']
         st.dataframe(display_df[[c for c in cols_show if c in display_df.columns]],
                      width='stretch')
+
+    # Independent of users_df: an ExamSession can exist without interaction data
+    # yet, so this must stay reachable even when the "No users yet" branch above fires.
+    st.markdown("---")
+    st.subheader("Exam Control")
+    st.caption("Bulk timer extension for unsubmitted sessions — the remedy for a mid-exam outage. "
+               "Students already submitted are untouched; use their per-student Admin tab instead.")
+    active_count = count_active_sessions(db)
+    st.metric("Unsubmitted sessions (affected by extension)", active_count)
+    with st.form("bulk_extend_form"):
+        bulk_extra_min = st.number_input(
+            "Minutes to add to every unsubmitted session (negative to reduce)",
+            min_value=-120, max_value=120, value=10, step=5, key="bulk_extend_min",
+        )
+        bulk_submit = st.form_submit_button("Apply to All Unsubmitted Sessions")
+    if bulk_submit:
+        try:
+            affected = extend_all_exam_timers(db, int(bulk_extra_min))
+            action_word = "Added" if bulk_extra_min >= 0 else "Removed"
+            st.session_state.success_message = (
+                f"{action_word} {abs(bulk_extra_min)} min for {affected} unsubmitted session(s)."
+            )
+            db.close()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 
 # ─────────────────────────────────────────────

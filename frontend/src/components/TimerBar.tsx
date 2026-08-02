@@ -44,7 +44,7 @@ export default function TimerBar({ examStartMs, examDurationMs, onExpire, onWarn
   return (
     <div className="flex items-center gap-1.5">
       <span className={`text-xs ${isWarning ? 'text-rose-400' : 'text-slate-400'}`}>⏱</span>
-      <span className={`font-mono text-sm tabular-nums ${
+      <span data-testid="timer-remaining" className={`font-mono text-sm tabular-nums ${
         isCritical ? 'text-rose-500 font-bold animate-pulse' :
         isWarning  ? 'text-rose-500 font-bold' :
                      'text-slate-500 font-semibold'

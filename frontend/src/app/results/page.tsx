@@ -14,6 +14,13 @@ interface ExamResults {
   triggeredByTimer: boolean
 }
 
+async function fetchCorrectAnswers(userId: string): Promise<Record<number, string>> {
+  const profile = await getUserProfile(userId)
+  const correctAnswers: Record<number, string> = {}
+  for (const [k, v] of Object.entries(profile.completed_answers)) correctAnswers[Number(k)] = v
+  return correctAnswers
+}
+
 async function fetchResultsFromBackend(userId: string): Promise<ExamResults | null> {
   try {
     const [qs, profile] = await Promise.all([getQuestions(userId), getUserProfile(userId)])
@@ -66,7 +73,27 @@ export default function ResultsPage() {
       // Fast path: fresh from quiz session
       try {
         const raw = localStorage.getItem('examResults')
-        if (raw) { setResults(JSON.parse(raw)); return }
+        if (raw) {
+          const parsed: ExamResults = JSON.parse(raw)
+          setResults(parsed)
+
+          // correctAnswers is never populated by the quiz session itself
+          // (POST /answer/ deliberately never returns it) — backfill it here
+          // from GET /users/{id}/profile without blocking the initial render.
+          const hasGraded = Object.values(parsed.questionStates).some(
+            (s) => s === 'correct' || s === 'wrong_2'
+          )
+          if (hasGraded && Object.keys(parsed.correctAnswers).length === 0) {
+            const userId = localStorage.getItem('userId')
+            if (userId) {
+              try {
+                const correctAnswers = await fetchCorrectAnswers(userId)
+                setResults((prev) => (prev ? { ...prev, correctAnswers } : prev))
+              } catch { /* leave the answer key blank rather than block the page */ }
+            }
+          }
+          return
+        }
       } catch { /* ignore parse error, fall through */ }
 
       // Slow path: arriving from login with a completed token

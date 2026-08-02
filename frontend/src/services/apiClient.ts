@@ -3,7 +3,10 @@ import type { ChatMessage } from '@/types'
 
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...(process.env.NEXT_PUBLIC_API_KEY ? { 'X-API-Key': process.env.NEXT_PUBLIC_API_KEY } : {}),
+  },
   timeout: 90000, // 90s — covers slow Gemini calls (120s nginx timeout)
 })
 
@@ -55,6 +58,7 @@ export const getQuestions = async (userId: string) => {
 export const submitAnswer = async (payload: {
   user_id: string
   question_number: number
+  attempt_key: string
   user_answer?: string
   skipped?: boolean
   time_taken_ms?: number
@@ -93,7 +97,14 @@ export const logoutSession = async (userId: string) => {
 
 export const sessionHeartbeat = async (userId: string, sessionId: string) => {
   const res = await apiClient.post('/session/heartbeat', { user_id: userId, session_id: sessionId })
-  return res.data as { ms_remaining: number; expired: boolean; submitted: boolean; active: boolean }
+  return res.data as {
+    ms_remaining: number
+    expired: boolean
+    submitted: boolean
+    active: boolean
+    exam_start_ms: number
+    exam_duration_ms: number
+  }
 }
 
 export const submitSession = async (userId: string) => {

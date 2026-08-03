@@ -10,8 +10,13 @@ domain_api      = "api.air.da-tu.ca"
 repo_url = "git@github.com:pagand/TutorAgent.git"
 repo_ref = "main"
 
-instance_type  = "t3.medium"
-root_volume_gb = 20
+instance_type = "t3.medium"
+# 30GB: the current al2023 AMI (most_recent) has a 30GB root snapshot, and a
+# volume can't be created smaller than its source snapshot. The Stage 4 plan
+# had trimmed this to 20GB for -$0.80/mo; that's no longer possible as of the
+# Stage 5 apply (2026-08-03) - Amazon has since shipped an AL2023 AMI with a
+# larger base image.
+root_volume_gb = 30
 
 budget_limit_usd = 15
 alert_email      = "pedram.agand@gmail.com"

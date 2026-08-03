@@ -116,9 +116,9 @@ DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/back
 DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh ./backups/aitutor_<ts>.dump
 ```
 
-Cron, run nightly and before/after each exam (`crontab -e` on the EC2 host, with the vars above exported or set inline):
+On EC2, this cron line is installed automatically by `scripts/ec2-bootstrap.sh` on every boot, pointed at the Stage 4 Terraform-managed backup bucket:
 ```
-0 2 * * * cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://<bucket>/aitutor-backups ./scripts/backup.sh >> ~/AITutorApp/backups/cron.log 2>&1
+0 2 * * * cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://aitutor-backups-434195712367/backups ./scripts/backup.sh >> ~/AITutorApp/backups/cron.log 2>&1
 ```
 
-`BACKUP_S3_URI` is optional — set it once the Stage 4 Terraform creates the bucket; until then dumps stay local under `BACKUP_DIR` (default `./backups`).
+`BACKUP_S3_URI` is optional for manual/local runs — set it to target S3, or omit it to keep dumps local under `BACKUP_DIR` (default `./backups`).

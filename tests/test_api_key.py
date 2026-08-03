@@ -9,7 +9,7 @@ from pydantic import SecretStr
 async def test_no_api_key_configured_passes_through(client, monkeypatch):
     """Default state (unset API_KEY): requests succeed with no header — dev/E2E must be unaffected."""
     monkeypatch.setattr(settings, "api_key", None)
-    response = await client.get("/questions/")
+    response = await client.get("/questions/", params={"user_id": "apikey_test_user"})
     assert response.status_code == 200
 
 
@@ -47,7 +47,7 @@ async def test_401_still_carries_cors_headers(client, monkeypatch):
 
 async def test_correct_header_accepted_when_key_configured(client, monkeypatch):
     monkeypatch.setattr(settings, "api_key", SecretStr("stage2-secret"))
-    response = await client.get("/questions/", headers={"X-API-Key": "stage2-secret"})
+    response = await client.get("/questions/", headers={"X-API-Key": "stage2-secret"}, params={"user_id": "apikey_test_user"})
     assert response.status_code == 200
 
 

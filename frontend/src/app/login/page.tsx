@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { participantLogin, createUser, logoutSession } from '@/services/apiClient'
+import { participantLogin, createUser, logoutSession, apiHealth } from '@/services/apiClient'
 
 type LoginState = 'idle' | 'not_started' | 'resumable' | 'active_elsewhere' | 'completed' | 'invalid'
+type ProbeStatus = 'checking' | 'open' | 'closed'
 
 function generateSessionId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
@@ -19,12 +20,27 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [savedUserId, setSavedUserId] = useState<string | null>(null)
   const [showNewToken, setShowNewToken] = useState(false)
+  const [probeStatus, setProbeStatus] = useState<ProbeStatus>('checking')
 
   // Check if there's a saved session in localStorage
   useEffect(() => {
     const stored = localStorage.getItem('userId')
     if (stored) setSavedUserId(stored)
   }, [])
+
+  // Backend up/down probe (Stage 4.5): the exam server only runs during exam
+  // windows, but the static frontend is up 24/7. A failed probe IS the
+  // closed-exam state — no build flag or separate status file to keep in
+  // sync, the backend being unreachable is exactly what "closed" means.
+  const runHealthProbe = useCallback(async () => {
+    setProbeStatus('checking')
+    const ok = await apiHealth()
+    setProbeStatus(ok ? 'open' : 'closed')
+  }, [])
+
+  useEffect(() => {
+    runHealthProbe()
+  }, [runHealthProbe])
 
   const handleContinueSaved = async () => {
     if (!savedUserId) return
@@ -135,6 +151,30 @@ export default function LoginPage() {
         <p className="text-sm text-slate-500 text-center mb-8">Adaptive exam preparation</p>
 
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+
+          {probeStatus === 'checking' && (
+            <div className="text-center py-4">
+              <p className="text-sm text-slate-400">Checking exam status…</p>
+            </div>
+          )}
+
+          {probeStatus === 'closed' && (
+            <div className="text-center">
+              <p className="text-base font-medium text-slate-800 mb-2">The exam is not currently open</p>
+              <p className="text-sm text-slate-500 mb-5">
+                This page is working correctly, but the exam server is offline outside exam windows.
+                Contact your instructor if you believe the exam should be running right now.
+              </p>
+              <button
+                onClick={runHealthProbe}
+                className="w-full py-2 px-4 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+              >
+                Check again
+              </button>
+            </div>
+          )}
+
+          {probeStatus === 'open' && (<>
 
           {/* Saved session found — show continue option (only when no active state and not showing new token form) */}
           {savedUserId && loginState === 'idle' && !showNewToken && (
@@ -247,6 +287,8 @@ export default function LoginPage() {
               </button>
             </div>
           )}
+
+          </>)}
         </div>
       </div>
     </div>

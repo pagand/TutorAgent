@@ -20,6 +20,21 @@ const apiClient = axios.create({
 
 export default apiClient
 
+// Backend up/down probe for the closed-state screen (Stage 4.5): the EC2 box
+// only runs during exams, but CloudFront serves the frontend 24/7 at $0, so
+// /login needs to tell "exam closed" apart from "server broken". GET / is
+// exempt from both the API-key middleware and CORS credentials (app/main.py),
+// so this works with no configuration. Short timeout — this gates the whole
+// login screen, not a background check.
+export const apiHealth = async (): Promise<boolean> => {
+  try {
+    await apiClient.get('/', { timeout: 5000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const createUser = async (userId: string) => {
   const res = await apiClient.post('/users/', { user_id: userId })
   return res.data
@@ -58,8 +73,8 @@ export const setUserPreference = async (userId: string, hintStyle: string, inter
   return res.data
 }
 
-export const getQuestions = async (userId: string) => {
-  const res = await apiClient.get(`/questions/?user_id=${userId}`)
+export const getQuestions = async (userId: string, sessionId?: string) => {
+  const res = await apiClient.get('/questions/', { params: { user_id: userId, session_id: sessionId } })
   return res.data
 }
 

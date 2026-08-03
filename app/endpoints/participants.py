@@ -2,12 +2,13 @@
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.models.user import ExamSession, Participant
 from app.utils.db import get_db
+from app.utils.logger import logger
 
 router = APIRouter(prefix="/participants", tags=["Participants"])
 
@@ -15,8 +16,8 @@ STALE_SECONDS = 60  # heartbeat older than this → session considered abandoned
 
 
 class TokenLoginRequest(BaseModel):
-    token: str
-    session_id: str | None = None  # current device's sessionId from localStorage, if any
+    token: str = Field(max_length=64)
+    session_id: str | None = Field(None, max_length=64)  # current device's sessionId from localStorage, if any
 
 
 class TokenLoginResponse(BaseModel):
@@ -35,6 +36,9 @@ async def participant_login(request: TokenLoginRequest, db: AsyncSession = Depen
     result = await db.execute(select(Participant).filter_by(token=request.token))
     participant = result.scalars().first()
     if not participant:
+        # This endpoint deliberately writes no DB rows on any path, so this
+        # log line is the only trace an invalid-token probe leaves.
+        logger.warning(f"participant_login: invalid token probed: '{request.token}'")
         raise HTTPException(status_code=404, detail="Invalid token")
 
     # Check for backend-authoritative submission first

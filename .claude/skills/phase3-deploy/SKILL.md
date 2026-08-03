@@ -7,72 +7,89 @@ description: Step-by-step AWS deployment procedure for AITutorApp Phase 3 go-liv
 
 See `CLAUDE.md`'s "Phase 3 Goals" section for the objective and prerequisites, and `PRELAUNCH_CHECKLIST.md` for the authoritative execution order and recorded decisions. This file holds the detailed how-to steps referenced from there.
 
-**Prerequisites from you before starting Phase 3:**
-- Run `aws configure` (access key ID + secret + region) on your local machine — Claude handles everything after that
-- EC2 access: share the `.pem` key **or** enable AWS Systems Manager on the instance (SSM = no key needed, preferred)
-- Domain registrar access to add an A record for `air.da-tu.ca` → Elastic IP (one DNS click, ~2 min)
-- Secrets to put in `.env`: `POSTGRES_PASSWORD`, `GOOGLE_API_KEY`, `API_KEY`
+**Prerequisites, met as of Stage 4:**
+- Terraform 1.15.8 and AWS CLI 2.36.14 installed locally
+- `AdministratorAccess-434195712367` SSO profile authenticates (`aws sso login` if the session has expired)
+- GitHub deploy key (read-only) registered on the repo and stored at SSM `/github/deploy-key`
+- Ops bucket `aitutor-434195712367-ops` created out of band, holding Terraform state and the `artifacts/prod-data/` prefix
+- SSM `SecureString`s under `/aitutor/prod/`: `google_api_key`, `postgres_password`, `api_key`
 
-### 3.0 Security + Performance Review (before any deploy)
-- Run `/security-review` on the current branch — covers session lock, CORS, API key middleware, token exposure
-- Run `/code-review` ultra — full multi-agent review for correctness and regressions
-- Fix any blocking findings before proceeding to 3.1
+Two domains, not one: `air.da-tu.ca` serves the frontend via CloudFront, `api.air.da-tu.ca` serves the backend via the Elastic IP.
+
+### 3.0 Security Review (before any deploy)
+- Run `/security-review` on the current branch — done, twice (Stage 3)
+- Fix any blocking findings before proceeding
 
 ### 3.1 IaC — Provision AWS Resources
-Claude will write and apply Terraform (or CDK) to create:
-- S3 bucket (static website hosting, private + OAC)
-- CloudFront distribution (OAC → S3, HTTPS only, cache policy)
-- EC2 security group (ports 80, 443 inbound; 22 or SSM only)
-- Elastic IP association
-- IAM role for EC2 (SSM + CloudWatch if needed)
+`terraform/` (Stage 4) is the full root module — no manual resource creation. See the plan at `/Users/pedram/.claude/plans/complete-stage-5-of-snuggly-bear.md` for the full manifest and cost breakdown (36 resources, idle floor $5.66/mo).
 
-### 3.2 DNS + HTTPS
-- Allocate Elastic IP and associate with EC2 instance
-- Add A record: `air.da-tu.ca` → Elastic IP (you do this one DNS click)
-- SSH/SSM into EC2, run Certbot: `certbot --nginx -d air.da-tu.ca`
-- Nginx config: HTTP → HTTPS redirect + proxy `/` to uvicorn on port 8000
-
-### 3.3 EC2 Backend Setup
 ```bash
-git clone <repo> AITutorApp && cd AITutorApp
-scp -r /path/to/prod/data ec2-user@<host>:~/AITutorApp/prod/data   # prod/data/ is gitignored, copy out-of-band
-cp .env.docker.example .env   # fill secrets (Claude sets ALLOWED_ORIGIN from CloudFront domain)
-docker compose up -d --build  # first build ~10-15 min
-curl http://localhost/         # smoke test → {"message":"Welcome to the AI Tutor API"}
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # defaults match the signed-off plan; edit only to deviate
+terraform init
+terraform fmt -check && terraform validate
 ```
 
-Install the nightly backup cron (README.md's "Backup and Restore" section, Stage 2 tooling — fill in `BACKUP_S3_URI` once the S3 bucket exists from 3.1):
+DNS lives outside AWS, so the apply is two-phase:
+
 ```bash
-crontab -e
-# 0 2 * * * cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://<bucket>/aitutor-backups ./scripts/backup.sh >> ~/AITutorApp/backups/cron.log 2>&1
+# Phase 1: just the ACM cert + EIP, so their outputs exist to put in DNS
+terraform plan -target=aws_acm_certificate.frontend -target=aws_eip.api -out=phase1.tfplan
+terraform apply phase1.tfplan
+```
+
+Add the two DNS records the outputs print (ACM validation CNAME, `api.air.da-tu.ca` A record → the Elastic IP), then:
+
+```bash
+# Phase 2: the full stack. ACM validation completes and CloudFront builds (~10 min)
+terraform plan -out=full.tfplan   # review every line against the manifest before applying
+terraform apply full.tfplan
+```
+
+Add the third DNS record from the outputs (`air.da-tu.ca` CNAME → the CloudFront domain), then reboot the instance so `scripts/ec2-bootstrap.sh` re-runs with real DNS live and certbot succeeds.
+
+### 3.2 DNS + HTTPS
+Handled by Terraform + the bootstrap script, not manually:
+- Elastic IP is allocated and associated by `terraform/compute.tf`
+- The three DNS records above are the only manual step (registrar, not AWS)
+- `scripts/ec2-bootstrap.sh` runs certbot in webroot mode on every boot, issuing the cert on first successful boot with real DNS and renewing thereafter
+- nginx switches between `nginx/available/plain.conf` (no cert yet) and `nginx/available/tls.conf` (cert present) automatically
+
+### 3.3 EC2 Backend Setup
+Also automatic. `terraform/templates/user_data.sh.tftpl` runs once on first boot (docker install, swap file, deploy key, repo clone, systemd unit); `scripts/ec2-bootstrap.sh` then runs on every boot after that (git pull, render `.env` from SSM, sync `prod/data` from S3, `docker compose up -d --build`, certbot, install the backup cron). Nothing to run by hand beyond uploading the exam data once:
+
+```bash
+aws s3 sync prod/data/ s3://aitutor-434195712367-ops/artifacts/prod-data/
 ```
 
 ### 3.4 Frontend Build + S3 Deploy
 ```bash
 cd frontend
-NEXT_PUBLIC_API_URL=https://air.da-tu.ca NEXT_PUBLIC_API_KEY=<same secret as EC2's API_KEY> npm run build   # static export to out/
-aws s3 sync out/ s3://<bucket> --delete
-aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
+NEXT_PUBLIC_API_URL=https://api.air.da-tu.ca NEXT_PUBLIC_API_KEY=<same value as the api_key SSM param> npm run build
+aws s3 sync out/ s3://aitutor-frontend-434195712367 --delete
+aws cloudfront create-invalidation --distribution-id <id from terraform output> --paths "/*"
 ```
 
 ### 3.5 CORS + API Key Wire-Up
-- `ALLOWED_ORIGIN=https://<cloudfront-domain>` in EC2 `.env` — already wired in `app/main.py`
-- `API_KEY=<secret>` in EC2 `.env` — middleware implemented (Stage 2), unset = disabled
-- Frontend axios client already sends `X-API-Key` header from `NEXT_PUBLIC_API_KEY` build var (Stage 2)
+- `ALLOWED_ORIGIN=https://air.da-tu.ca` — rendered into `.env` by `scripts/ec2-bootstrap.sh`, already wired in `app/main.py`
+- `API_KEY` — read from SSM by the bootstrap script; must match the frontend's `NEXT_PUBLIC_API_KEY` build var above
+- Frontend axios client already sends `X-API-Key` from that build var (Stage 2)
 
 ### 3.6 Load / Smoke Test
 - Run `k6` or `locust` with 50 concurrent VUs against: `POST /session/start`, `GET /questions/`, `POST /answer/`
 - Pass criteria: p95 < 5 s non-LLM; LLM endpoints (hints, chat) < 90 s
+- Capture `docker stats` during the run — this is what turns Stage 4's memory estimate into a real number
 - Monitor: `docker compose logs -f api` during test
 
 ### 3.7 Exam Day Runbook
-1. `AWS Console → EC2 → Start` (~60 s boot)
-2. `docker compose logs -f api` — confirm alembic migrate + uvicorn healthy
-3. `curl https://air.da-tu.ca/` — confirm 200
-4. Upload participant manifest CSV via Streamlit admin
-5. Hand out tokens to students
-6. Monitor Streamlit dashboard during exam
-7. After exam: `AWS Console → EC2 → Stop` (EBS data safe)
+1. `aws ec2 start-instances --instance-ids <id>` (~60s boot; `scripts/ec2-bootstrap.sh` runs automatically). RAG cold start (PDF ingestion + embedding on a fresh EBS volume) measured at ~2s against the real source doc and Google embedding API — not a factor, no separate warming step needed.
+2. EBS snapshot immediately, before traffic starts
+3. `aws ssm start-session --target <id>`, then `docker compose logs -f api` — confirm alembic migrate + uvicorn healthy
+4. `curl https://api.air.da-tu.ca/` — confirm 200; verify cert expiry with `openssl s_client`
+5. Smoke test one real token end to end before handing tokens out
+6. Hand out tokens to students
+7. `aws ssm start-session --document-name AWS-StartPortForwardingSession --parameters portNumber=8501` for the Streamlit tunnel; monitor during exam
+8. After exam: EBS snapshot + `pg_dump`, then `aws ec2 stop-instances --instance-ids <id>` (EBS data safe)
 
 ## Docker Compose (EC2 deployment)
 
@@ -99,8 +116,10 @@ services:
     restart: unless-stopped
     ports: ["80:80", "443:443"]
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./certbot:/etc/letsencrypt
+      - ./certbot-www:/var/www/certbot
 
 volumes:
   postgres_data:
@@ -117,13 +136,14 @@ volumes:
 ```
 Students (browser)
     │
-CloudFront → S3 (Next.js static export, always on, ~free)
+CloudFront → S3 (Next.js static export, always on, ~free)  [air.da-tu.ca]
     │
-    NEXT_PUBLIC_API_URL = https://<domain or elastic IP>
+    NEXT_PUBLIC_API_URL = https://api.air.da-tu.ca
     │
-EC2 t3.small (start before exam, stop after)
-    └── Docker Compose: api + db + nginx
+EC2 t3.medium (start before exam, stop after)
+    └── Docker Compose: api + db + nginx + streamlit (127.0.0.1:8501 only)
     └── EBS 20GB gp3 (data persists across stop/start)
+    └── Elastic IP, no port 22 - SSM Session Manager only
 ```
 
 ### Frontend Deploy Steps
@@ -133,19 +153,11 @@ EC2 t3.small (start before exam, stop after)
 
 ### Backend Deploy Steps
 
-**First-time setup on EC2:**
-```bash
-git clone <repo-url> AITutorApp
-cd AITutorApp
-scp -r /path/to/prod/data ec2-user@<host>:~/AITutorApp/prod/data   # prod/data/ is gitignored, copy out-of-band
-cp .env.docker.example .env        # fill in POSTGRES_PASSWORD, GOOGLE_API_KEY, ALLOWED_ORIGIN, API_KEY (must match frontend's NEXT_PUBLIC_API_KEY)
-docker compose up -d --build       # first build ~10-15 min (ML packages ~2.5GB)
-docker compose logs -f api         # watch alembic migrate + uvicorn startup
-curl http://localhost/             # should return {"message":"Welcome to the AI Tutor API"}
-```
+First boot and every boot after that are both automatic — see 3.1-3.3 above. Manual steps only apply to a re-deploy of application code onto an already-provisioned box:
 
-**Subsequent deploys:**
 ```bash
+aws ssm start-session --target <id>
+cd AITutorApp
 git pull
 docker compose build api           # rebuild only api image
 docker compose up -d               # rolling restart
@@ -158,11 +170,15 @@ docker compose up -d               # rolling restart
 - `docker compose logs -f api` — tail logs
 
 ### Toggle Process
-- Before exam: AWS Console → EC2 → Start (60s)
-- After exam: AWS Console → EC2 → Stop (data safe on EBS)
+- Before exam: `aws ec2 start-instances` (~60s; bootstrap re-runs, picks up any `git pull`-able changes and renews the cert if due)
+- After exam: `aws ec2 stop-instances` (data safe on EBS)
+- Monthly, automatically: EventBridge starts the box for 30 minutes on the 1st so certbot can renew even with no exam scheduled
 
 ### Security
-- CORS restricted to CloudFront domain via `ALLOWED_ORIGIN` env var
-- Optional API key (`X-API-Key` header) for obscurity during exam
-- No auth system — user ID is the only identifier (acceptable for exam scope)
-- HTTPS via Nginx + Let's Encrypt on EC2
+- CORS restricted to `https://air.da-tu.ca` via `ALLOWED_ORIGIN` env var
+- `X-API-Key` header required once `API_KEY` is set (obscurity, not secrecy — the key ships in the public frontend bundle)
+- No auth system — user ID is the only identifier, but (Stage 4.5) `POST /users/` and every session-owner-gated endpoint reject any `user_id` with no manifest `Participant` row (`REQUIRE_PARTICIPANT_TOKEN=true`, the production default) — a token is required to use the API at all, not just to act as a specific student
+- In-app LLM spend cap (Stage 4.5): `LLM_MAX_CALLS_PER_USER_PER_DAY` / `LLM_MAX_CALLS_PER_DAY`, rolling 24h — nginx's rate limit is per source IP and can't see `user_id`, so it can't bound cost; these can
+- `APP_ENV=production` trips a boot-time assertion (`app/main.py`) refusing to start unless `API_KEY`, `ALLOWED_ORIGIN` and `REQUIRE_PARTICIPANT_TOKEN` are all set to their production posture
+- Real HTTPS via nginx + Let's Encrypt, auto-renewed monthly
+- No SSH; SSM Session Manager only

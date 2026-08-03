@@ -7,9 +7,16 @@ import { sendChat, logAction } from '@/services/apiClient'
 
 /** A 429 or 5xx means Gemini itself is rate-limited or unavailable, not that
  * anything is wrong with the message - distinct enough from a generic
- * network failure to say so. */
+ * network failure to say so. A 429 from the app's own per-user/global LLM
+ * cap (app/services/llm_quota.py) carries a specific detail message that's
+ * more useful than the generic fallback. */
 function chatErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {
+  if (axios.isAxiosError(err) && err.response?.status === 429) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string') return detail
+    return 'The tutor is temporarily unavailable. Please try again in a moment.'
+  }
+  if (axios.isAxiosError(err) && (err.response?.status ?? 0) >= 500) {
     return 'The tutor is temporarily unavailable. Please try again in a moment.'
   }
   return 'Failed to send message. Try again.'

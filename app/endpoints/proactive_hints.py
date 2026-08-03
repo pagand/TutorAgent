@@ -1,6 +1,6 @@
 # app/endpoints/proactive_hints.py
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -17,10 +17,10 @@ router = APIRouter(
 )
 
 class InterventionCheckRequest(BaseModel):
-    user_id: str
-    session_id: str | None = None
-    question_number: int
-    time_spent_ms: int
+    user_id: str = Field(max_length=64)
+    session_id: str | None = Field(None, max_length=64)
+    question_number: int = Field(ge=1)
+    time_spent_ms: int = Field(ge=0, le=86_400_000)
 
 class InterventionCheckResponse(BaseModel):
     intervention_needed: bool

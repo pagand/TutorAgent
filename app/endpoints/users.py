@@ -1,30 +1,41 @@
 # app/endpoints/users.py
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.question_service import question_service
 from app.state_manager import get_bkt_mastery, get_user_or_create, get_user_profile_with_session
-from app.utils.authz import verify_session_owner
+from app.utils.authz import verify_session_owner, NO_PARTICIPANT_DETAIL
 from app.utils.config import settings
 from app.utils.logger import logger
 from app.utils.db import get_db
-from app.models.user import User
+from app.models.user import User, Participant
 
 router = APIRouter(
     tags=["Users"]
 )
 
 class UserCreate(BaseModel):
-    user_id: str
+    user_id: str = Field(max_length=64)
 
 @router.post("/", response_model=dict)
 async def create_user(user_create: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     Creates a new user with default profile settings. If user already exists,
     returns a minimal confirmation, not the existing user's exam data.
+
+    Requires a manifest Participant row for user_id unless
+    settings.require_participant_token is off (tests/ad-hoc dev). Without this,
+    anyone on the internet could create an account and use the API with no
+    token at all - see PRELAUNCH_CHECKLIST.md section 0/Stage 4.5.
     """
+    if settings.require_participant_token:
+        p_result = await db.execute(select(Participant).filter_by(token=user_create.user_id))
+        if p_result.scalars().first() is None:
+            raise HTTPException(status_code=403, detail=NO_PARTICIPANT_DETAIL)
+
     logger.debug(f"Attempting to create or fetch user: {user_create.user_id}")
     user = await get_user_or_create(db, user_create.user_id)
 

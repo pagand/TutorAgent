@@ -19,13 +19,13 @@ from app.utils.db import get_db
 router = APIRouter()
 
 class AnswerRequest(BaseModel):
-    user_id: str
-    session_id: str | None = None
-    question_number: int
+    user_id: str = Field(max_length=64)
+    session_id: str | None = Field(None, max_length=64)
+    question_number: int = Field(ge=1)
     attempt_key: str = Field(max_length=200)
     user_answer: str | None = Field(None, max_length=500)
     skipped: bool = False
-    time_taken_ms: int | None = None
+    time_taken_ms: int | None = Field(None, ge=0, le=86_400_000)
 
     # Hint-related fields, only present if a hint was shown
     hint_shown: bool = False

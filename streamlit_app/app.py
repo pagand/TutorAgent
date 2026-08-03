@@ -17,7 +17,7 @@ from streamlit_app.queries import (
     reset_exam_timer, extend_exam_timer, clear_session_lock,
     get_exam_session_info, get_participant_info,
 )
-from streamlit_app.admin_ops import count_active_sessions, extend_all_exam_timers
+from streamlit_app.admin_ops import count_active_sessions, extend_all_exam_timers, get_llm_usage_last_24h
 
 st.set_page_config(layout="wide", page_title="DaTu AIR Admin Dashboard")
 
@@ -134,6 +134,20 @@ if selected_view == VIEW_SYSTEM:
             st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
+
+    st.markdown("---")
+    st.subheader("LLM Usage (last 24h)")
+    st.caption("Rolling 24h window — same window app/services/llm_quota.py caps against. "
+               f"Per-user cap: {settings.llm_max_calls_per_user_per_day}/day. "
+               f"Global cap: {settings.llm_max_calls_per_day}/day.")
+    usage = get_llm_usage_last_24h(db)
+    col1, col2 = st.columns(2)
+    col1.metric("Global calls (24h)", usage["global_count"])
+    headroom = settings.llm_max_calls_per_day - usage["global_count"]
+    col2.metric("Global headroom remaining", max(0, headroom))
+    if not usage["top_users"].empty:
+        st.caption("Top consumers (24h)")
+        st.dataframe(usage["top_users"], width='stretch')
 
 
 # ─────────────────────────────────────────────

@@ -38,6 +38,24 @@ async def lifespan(app: FastAPI):
     Manages application startup and shutdown events.
     """
     logger.info("AI Tutor API starting up...")
+
+    # Fail loud rather than silently serving a weaker posture. Only checked
+    # when APP_ENV=production (set by scripts/ec2-bootstrap.sh) so a plain
+    # `.venv` dev run, which never sets APP_ENV, is unaffected.
+    if settings.app_env == "production":
+        missing = []
+        if not settings.api_key:
+            missing.append("API_KEY")
+        if _allowed_origin == "*":
+            missing.append("ALLOWED_ORIGIN")
+        if not settings.require_participant_token:
+            missing.append("REQUIRE_PARTICIPANT_TOKEN")
+        if missing:
+            raise RuntimeError(
+                f"APP_ENV=production but the following are not set correctly: {', '.join(missing)}. "
+                "Refusing to boot with a weaker-than-production security posture."
+            )
+
     logger.info("Loading questions...")
     question_service.load_questions(settings.QUESTION_CSV_FILE_PATH)
     if not question_service.get_all_questions():

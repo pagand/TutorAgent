@@ -42,9 +42,18 @@ function submitErrorMessage(err: unknown, verb: 'submit' | 'skip'): string {
 
 /** A 429 or 5xx from an LLM-backed endpoint (hint/chat) means Gemini itself is
  * rate-limited or unavailable, not that anything is wrong with the request -
- * distinct enough from a generic network failure to say so. */
+ * distinct enough from a generic network failure to say so. A 429 from the
+ * app's own per-user/global LLM cap (app/services/llm_quota.py) carries a
+ * specific detail message that's more useful than the generic fallback -
+ * telling a capped student they hit their own limit, not that the tutor is
+ * broken. */
 function llmErrorMessage(err: unknown, what: 'hint' | 'tutor'): string {
-  if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {
+  if (axios.isAxiosError(err) && err.response?.status === 429) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string') return detail
+    return `The ${what} is temporarily unavailable. Please try again in a moment.`
+  }
+  if (axios.isAxiosError(err) && (err.response?.status ?? 0) >= 500) {
     return `The ${what} is temporarily unavailable. Please try again in a moment.`
   }
   return `Failed to load ${what === 'hint' ? 'hint' : 'a response'}. Please try again.`
@@ -180,7 +189,7 @@ export default function QuizPageContent() {
           (async () => {
             const sd = await startSession(storedUserId!, storedSessionId)
             const rest = await Promise.all([
-              getQuestions(storedUserId!),
+              getQuestions(storedUserId!, storedSessionId),
               getUserProfile(storedUserId!, storedSessionId),
             ])
             return [sd, rest] as const

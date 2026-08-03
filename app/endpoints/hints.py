@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.services import rag_agent
 from app.services.question_service import question_service
 from app.services.personalization_service import personalization_service
+from app.services.llm_quota import reserve_llm_call
 from app.state_manager import get_bkt_mastery
 from app.utils.authz import verify_session_owner
 from app.utils.logger import logger
@@ -19,9 +20,9 @@ from app.services.rag_agent import get_user_history_summary
 router = APIRouter()
 
 class HintRequest(BaseModel):
-    user_id: str
-    session_id: str | None = None
-    question_number: int
+    user_id: str = Field(max_length=64)
+    session_id: str | None = Field(None, max_length=64)
+    question_number: int = Field(ge=1)
     user_answer: str | None = Field(None, max_length=500)
 
 class HintResponse(BaseModel):
@@ -51,6 +52,10 @@ async def generate_hint(request: HintRequest, db: AsyncSession = Depends(get_db)
     pre_hint_mastery = await get_bkt_mastery(db, request.user_id, skill, settings.bkt_p_l0)
     user_history = await get_user_history_summary(db, request.user_id)
     hint_style = await personalization_service.get_adaptive_hint_style(db, request.user_id)
+
+    # Reserve the call against the per-user/global daily LLM cap before it
+    # runs - a call that then errors out on the Gemini side still counts.
+    await reserve_llm_call(db, request.user_id, "hint")
 
     # Release the DB connection before the slow LLM call so the pool isn't exhausted
     await db.commit()

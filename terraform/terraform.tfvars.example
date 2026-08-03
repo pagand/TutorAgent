@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (gitignored) and adjust if needed.
+# All values below are the recorded defaults - only override if you're
+# deliberately deviating from the signed-off plan.
+
+aws_profile = "AdministratorAccess-434195712367"
+
+domain_frontend = "air.da-tu.ca"
+domain_api      = "api.air.da-tu.ca"
+
+repo_url = "git@github.com:pagand/TutorAgent.git"
+repo_ref = "main"
+
+instance_type  = "t3.medium"
+root_volume_gb = 20
+
+budget_limit_usd = 15
+alert_email      = "pedram.agand@gmail.com"
+
+backup_retention_days = 90

@@ -55,10 +55,10 @@ ACTION_TYPES = {
 
 
 class ActionLogRequest(BaseModel):
-    user_id: str
-    session_id: str
+    user_id: str = Field(max_length=64)
+    session_id: str = Field(max_length=64)
     action_type: str = Field(max_length=100)
-    question_number: int | None = None
+    question_number: int | None = Field(None, ge=1)
     action_data: dict[str, Any] = {}
 
     @field_validator("action_data")
@@ -74,10 +74,10 @@ class ActionLogResponse(BaseModel):
 
 
 class InterventionLogRequest(BaseModel):
-    user_id: str
-    session_id: str
-    question_number: int
-    time_on_question_ms: int
+    user_id: str = Field(max_length=64)
+    session_id: str = Field(max_length=64)
+    question_number: int = Field(ge=1)
+    time_on_question_ms: int = Field(ge=0, le=86_400_000)
     mastery_at_trigger: float | None = None
     reason: str | None = None  # time_spent | low_mastery | consecutive_errors | consecutive_skips
     accepted: bool | None = None  # None = just offered, True/False = response

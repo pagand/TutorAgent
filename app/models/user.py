@@ -170,3 +170,20 @@ class InterventionLog(Base):
     accepted = Column(Boolean, nullable=True)  # None = offered, True = accepted, False = rejected
 
     user = relationship("User", back_populates="intervention_logs")
+
+
+class LlmUsageLog(Base):
+    """One row per accepted hint/chat call - what app/services/llm_quota.py
+    counts against the per-user and global rolling-24h LLM spend caps
+    (Stage 4.5). Reserved before the LLM call runs, so a call that then
+    errors out still counts - it can still bill."""
+    __tablename__ = "llm_usage_log"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint = Column(String, nullable=False)  # "hint" | "chat"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_llm_usage_log_user_created", "user_id", "created_at"),
+        Index("ix_llm_usage_log_created", "created_at"),
+    )

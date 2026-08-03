@@ -62,6 +62,24 @@ class Settings(BaseSettings):
     # can't print it in plain text.
     api_key: SecretStr | None = SecretStr(os.getenv("API_KEY")) if os.getenv("API_KEY") else None
 
+    # --- Access control (Stage 4.5) ---
+    # Default true: a non-manifest user_id cannot create a user or reach any
+    # gated endpoint (app/utils/authz.py). Production is safe by omission;
+    # only a deliberate opt-out (tests, ad-hoc dev) weakens it.
+    require_participant_token: bool = os.getenv("REQUIRE_PARTICIPANT_TOKEN", "true").lower() != "false"
+
+    # Gated on this rather than always-on, so a plain `.venv` dev run (which
+    # never sets APP_ENV) doesn't suddenly refuse to boot without an API_KEY.
+    app_env: str = os.getenv("APP_ENV", "development")
+
+    # --- LLM spend cap (Stage 4.5) ---
+    # nginx's rate limit is per source IP and can't see user_id, so it can't
+    # bound cost per account or globally. These two, checked in
+    # app/services/llm_quota.py, are the real ceiling. See PRELAUNCH_CHECKLIST.md
+    # section 0 for the $/call arithmetic behind these numbers.
+    llm_max_calls_per_user_per_day: int = int(os.getenv("LLM_MAX_CALLS_PER_USER_PER_DAY", "150"))
+    llm_max_calls_per_day: int = int(os.getenv("LLM_MAX_CALLS_PER_DAY", "10000"))
+
     # BKT Parameters (Stage 3)
     bkt_p_l0: float = 0.2  # Prior prob of knowing skill
     bkt_p_t: float = 0.15  # Prob of transitioning from not known to known

@@ -38,6 +38,20 @@ prod/data/
 # DB backups (scripts/backup.sh) — full data dumps, same sensitivity as prod/data/
 backups/
 
+# Terraform (Stage 4) — state and vars carry account IDs / resource ARNs.
+# terraform.lock.hcl is NOT ignored - it pins provider versions and should
+# be committed, per standard Terraform practice.
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/*.tfvars
+terraform/*.tfplan
+
+# EC2 runtime-selected nginx config and certbot state — never committed,
+# rendered/populated by scripts/ec2-bootstrap.sh
+nginx/conf.d/
+certbot/
+certbot-www/
+
 # # LLM plannar
 DEVELOPMENT_PLAN.md
 ARCHITECTURE.md

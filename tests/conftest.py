@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from httpx import AsyncClient, ASGITransport
 
 from app.models.user import Base
+from app.utils.config import settings
 from app.utils.db import get_db
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -62,6 +63,14 @@ async def client(db_session):
     mock_retriever = AsyncMock()
     mock_retriever.ainvoke = AsyncMock(return_value=[])
 
+    # Stage 4.5 defaults require_participant_token=True in production, but
+    # most of this suite predates the manifest gate and uses ad-hoc
+    # participant-less user_ids throughout. Rather than seed a Participant
+    # row for ~40 existing tests, the shared fixture opts back out — the
+    # gate itself is proven with the flag ON in test_participant_gate.py.
+    original_require_token = settings.require_participant_token
+    settings.require_participant_token = False
+
     with (
         patch("app.services.rag_agent.ensure_rag_components_initialized", return_value=None),
         patch("app.services.pdf_ingestion.ingest_pdf", return_value=None),
@@ -74,6 +83,9 @@ async def client(db_session):
     ):
         from app.main import app
         app.dependency_overrides[get_db] = override_get_db
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
-        app.dependency_overrides.clear()
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                yield ac
+        finally:
+            app.dependency_overrides.clear()
+            settings.require_participant_token = original_require_token

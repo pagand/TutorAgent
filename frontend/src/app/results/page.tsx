@@ -23,7 +23,7 @@ async function fetchCorrectAnswers(userId: string, sessionId?: string): Promise<
 
 async function fetchResultsFromBackend(userId: string, sessionId?: string): Promise<ExamResults | null> {
   try {
-    const [qs, profile] = await Promise.all([getQuestions(userId), getUserProfile(userId, sessionId)])
+    const [qs, profile] = await Promise.all([getQuestions(userId, sessionId), getUserProfile(userId, sessionId)])
     const questionStates: Record<number, QuestionStatus> = {}
     const retryCount: Record<number, number> = {}
     const userAnswers: Record<number, string> = {}

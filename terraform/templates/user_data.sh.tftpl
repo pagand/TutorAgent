@@ -1,0 +1,101 @@
+#!/bin/bash
+# First-boot only. Installs docker, creates swap, clones the repo, and
+# installs a systemd oneshot that runs scripts/ec2-bootstrap.sh (in-repo)
+# on every boot thereafter. Idempotent: a re-run of user_data itself is
+# harmless because every step here checks before acting.
+set -euo pipefail
+
+REPO_URL="${repo_url}"
+REPO_REF="${repo_ref}"
+OPS_BUCKET="${ops_bucket}"
+DOMAIN_API="${domain_api}"
+DOMAIN_FRONTEND="${domain_frontend}"
+AWS_REGION="${aws_region}"
+REPO_DIR="/home/ec2-user/AITutorApp"
+
+log() { echo "[user-data] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+log "dnf update + package install"
+dnf update -y
+dnf install -y docker git cronie
+
+systemctl enable --now docker
+systemctl enable --now crond
+
+# Docker Compose v2 plugin (dnf's docker package doesn't bundle it on AL2023)
+mkdir -p /usr/local/lib/docker/cli-plugins
+if [ ! -x /usr/local/lib/docker/cli-plugins/docker-compose ]; then
+  curl -sL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+fi
+
+usermod -aG docker ec2-user
+
+log "Creating 2GB swap file"
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+log "Fetching deploy key from SSM"
+mkdir -p /home/ec2-user/.ssh
+chmod 700 /home/ec2-user/.ssh
+aws ssm get-parameter --region "$AWS_REGION" --name /github/deploy-key --with-decryption \
+  --query 'Parameter.Value' --output text > /home/ec2-user/.ssh/github-deploy
+chmod 600 /home/ec2-user/.ssh/github-deploy
+
+cat > /home/ec2-user/.ssh/config <<EOF
+Host github.com
+  IdentityFile /home/ec2-user/.ssh/github-deploy
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
+chmod 600 /home/ec2-user/.ssh/config
+chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+
+if [ ! -d "$REPO_DIR/.git" ]; then
+  log "Cloning $REPO_URL"
+  sudo -u ec2-user git clone "$REPO_URL" "$REPO_DIR"
+fi
+chown -R ec2-user:ec2-user "$REPO_DIR"
+
+log "Writing bootstrap env"
+mkdir -p /etc/aitutor
+cat > /etc/aitutor/bootstrap.env <<EOF
+REPO_DIR=$REPO_DIR
+REPO_REF=$REPO_REF
+OPS_BUCKET=$OPS_BUCKET
+DOMAIN_API=$DOMAIN_API
+DOMAIN_FRONTEND=$DOMAIN_FRONTEND
+AWS_REGION=$AWS_REGION
+EOF
+chmod 600 /etc/aitutor/bootstrap.env
+
+log "Installing systemd oneshot"
+cat > /etc/systemd/system/aitutor-bootstrap.service <<EOF
+[Unit]
+Description=AITutorApp every-boot bootstrap
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+Group=docker
+EnvironmentFile=/etc/aitutor/bootstrap.env
+Environment=HOME=/home/ec2-user
+ExecStart=$REPO_DIR/scripts/ec2-bootstrap.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable aitutor-bootstrap.service
+systemctl start aitutor-bootstrap.service
+
+log "user-data complete"

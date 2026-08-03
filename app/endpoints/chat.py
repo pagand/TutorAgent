@@ -8,6 +8,7 @@ from app.models.user import User, ChatLog
 from app.services.question_service import question_service
 import app.services.rag_agent as rag_agent
 from app.services.rag_agent import get_user_history_summary, format_docs
+from app.services.llm_quota import reserve_llm_call
 from app.utils.authz import verify_session_owner
 from app.utils.db import get_db
 from app.utils.logger import logger
@@ -85,9 +86,9 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    user_id: str
-    session_id: str
-    question_number: int
+    user_id: str = Field(max_length=64)
+    session_id: str = Field(max_length=64)
+    question_number: int = Field(ge=1)
     message: str = Field(max_length=2000)
     # Accepted for wire compatibility with the documented contract, but no
     # longer used to build the prompt - see _recent_chat_history_text.
@@ -118,6 +119,10 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
 
     user_history = await get_user_history_summary(db, request.user_id)
     chat_history_text = await _recent_chat_history_text(db, request.user_id)
+
+    # Reserve the call against the per-user/global daily LLM cap before it
+    # runs - a call that then errors out on the Gemini side still counts.
+    await reserve_llm_call(db, request.user_id, "chat")
 
     # Release the DB connection before the slow LLM/retriever calls
     await db.commit()

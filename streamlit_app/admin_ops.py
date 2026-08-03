@@ -3,6 +3,7 @@
 # imports streamlit and evaluates QUESTIONS_DF at import time — this module
 # has neither, so it's directly testable under pytest and importable from
 # an E2E fixture script without pulling in a streamlit runtime.
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -35,3 +36,24 @@ def extend_all_exam_timers(db: Session, extra_minutes: int) -> int:
     result = db.execute(text(EXTEND_ALL_TIMERS_SQL), {"extra": extra_ms})
     db.commit()
     return result.rowcount
+
+
+def get_llm_usage_last_24h(db: Session) -> dict:
+    """Global and per-user LLM call counts in the rolling 24h window
+    app/services/llm_quota.py caps against. What makes the Stage 4.5 spend
+    cap operable during an exam instead of a silent tripwire — a proctor can
+    see headroom before a real student ever gets capped.
+    """
+    global_count = db.execute(
+        text("SELECT COUNT(*) FROM llm_usage_log WHERE created_at >= NOW() - INTERVAL '24 hours'")
+    ).scalar_one()
+
+    top_df = pd.read_sql(
+        text(
+            "SELECT user_id, COUNT(*) AS calls "
+            "FROM llm_usage_log WHERE created_at >= NOW() - INTERVAL '24 hours' "
+            "GROUP BY user_id ORDER BY calls DESC LIMIT 10"
+        ),
+        db.bind,
+    )
+    return {"global_count": int(global_count), "top_users": top_df}

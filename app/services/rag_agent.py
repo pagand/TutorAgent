@@ -246,7 +246,7 @@ async def get_rag_hint(question_id: int, user_answer: str | None, user_id: str, 
         result = await rag_chain.ainvoke(input_data)
         
         final_prompt_str = result['final_prompt'].to_string()
-        # Length only, not the full text — the prompt embeds per-user history
+        # Length only, not the full text - the prompt embeds per-user history
         # and BKT mastery, and LOG_LEVEL=DEBUG should be verbose, not a leak.
         logger.debug(f"Final prompt for LLM: {len(final_prompt_str)} chars")
 

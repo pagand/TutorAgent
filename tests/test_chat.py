@@ -95,7 +95,7 @@ async def test_chat_empty_history_format():
 
 async def test_recent_chat_history_reads_from_chatlog_not_client(db_session):
     """The prompt's conversation history is sourced from ChatLog, never from
-    the client-supplied chat_history field — a client can't fabricate a fake
+    the client-supplied chat_history field - a client can't fabricate a fake
     tutor turn (e.g. one that already "reveals" the answer) and have it
     rendered into the prompt as authoritative prior context."""
     from app.endpoints.chat import _recent_chat_history_text

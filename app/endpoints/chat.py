@@ -64,7 +64,7 @@ def _format_chat_history(history: list[dict]) -> str:
 
 async def _recent_chat_history_text(db: AsyncSession, user_id: str, limit: int = CHAT_HISTORY_TURNS) -> str:
     """Reads the conversation from ChatLog rather than trusting the client's
-    own chat_history — a client-fabricated transcript (e.g. a fake tutor turn
+    own chat_history - a client-fabricated transcript (e.g. a fake tutor turn
     that already "reveals" the answer) would otherwise be rendered into the
     prompt as authoritative prior context, defeating the CRITICAL RULES above
     it. Global across questions, matching the frontend's persistent ChatPanel."""
@@ -90,7 +90,7 @@ class ChatRequest(BaseModel):
     question_number: int
     message: str = Field(max_length=2000)
     # Accepted for wire compatibility with the documented contract, but no
-    # longer used to build the prompt — see _recent_chat_history_text.
+    # longer used to build the prompt - see _recent_chat_history_text.
     chat_history: list[ChatMessage] = Field(default=[], max_length=100)
     current_answer: str | None = Field(None, max_length=2000)
 

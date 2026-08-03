@@ -1,6 +1,6 @@
 // frontend/e2e/results-cross-device.spec.ts
 // A completed exam's results must be viewable from a device that never held
-// the session lock — the "slow path" in app/results/page.tsx, reached when a
+// the session lock - the "slow path" in app/results/page.tsx, reached when a
 // student re-enters their token on a fresh browser after finishing elsewhere.
 // Regression guard for a Stage 3 hardening hazard: gating GET /users/{id}/profile
 // on the session_id that claimed the lock would otherwise 403 this exact case,
@@ -25,7 +25,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
 
   // Q2: wrong twice -> locked, so its correct answer is genuinely revealed
   // on /results (unlike Q1, where the "correct" status suppresses the
-  // reveal since the student's own answer already shown it was right) —
+  // reveal since the student's own answer already shown it was right) -
   // this is what makes the profile-fetch assertion below meaningful.
   await pageA.locator('button[title^="Q2:"]').click()
   const q2Correct = getCorrectAnswer(2)
@@ -54,7 +54,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
   await expect(pageA).toHaveURL(/\/results/)
   await deviceA.close()
 
-  // Device B: a completely fresh context — no localStorage, no sessionId,
+  // Device B: a completely fresh context - no localStorage, no sessionId,
   // never held the lock. Only the token itself.
   const deviceB = await browser.newContext()
   const pageB = await deviceB.newPage()
@@ -63,7 +63,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
   await pageB.getByRole('button', { name: 'Continue' }).click()
   await expect(pageB).toHaveURL(/\/results/, { timeout: 15000 })
 
-  // The answer key must actually render, not come back blank from a 403 —
+  // The answer key must actually render, not come back blank from a 403 -
   // Q2 is locked (wrong_2), so its correct answer is only visible here if
   // the profile fetch (gated by session_id) actually succeeded.
   await expect(pageB.getByText(/1\/25 correct/).first()).toBeVisible()

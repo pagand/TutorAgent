@@ -199,10 +199,10 @@ async def submit_session(request: SubmitRequest, db: AsyncSession = Depends(get_
     participant = p_result.scalars().first()
     if participant:
         participant.status = "completed"
-        # active_session_id is deliberately left set (not nulled) — GET
+        # active_session_id is deliberately left set (not nulled) - GET
         # /users/{id}/profile is gated by verify_session_owner too, and a
         # returning student viewing /results (same device or, once
-        # completed, any device — see allow_if_completed) must still be
+        # completed, any device - see allow_if_completed) must still be
         # able to fetch their own profile after submitting.
         participant.last_seen_at = None
 

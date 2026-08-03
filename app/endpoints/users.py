@@ -38,7 +38,7 @@ async def create_user(user_create: UserCreate, db: AsyncSession = Depends(get_db
     # This runs before POST /session/start claims the device lock, so it
     # can't be gated by verify_session_owner the way the other endpoints
     # are without 403ing every legitimate login. Instead it simply never
-    # returns another participant's exam data — only what the frontend's
+    # returns another participant's exam data - only what the frontend's
     # fire-and-forget call at login time actually needs (preferences, for
     # the free_choice hint-style UI). interaction_history/completed_answers/
     # skill_mastery stay behind GET /users/{id}/profile, which IS gated.

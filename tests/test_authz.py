@@ -1,12 +1,12 @@
 # tests/test_authz.py
 """
-Tests for row-level access control (app/utils/authz.py) — Stage 3 hardening.
+Tests for row-level access control (app/utils/authz.py) - Stage 3 hardening.
 
 The device lock claimed by POST /session/start (Participant.active_session_id)
 is the only thing binding a request to the student who owns a token. These
 tests confirm a mismatched session_id is rejected on a gated endpoint, a
-matching one succeeds, participant-less (ad-hoc/dev) user_ids are exempt —
-this is what keeps the rest of the suite's ad-hoc users working unmodified —
+matching one succeeds, participant-less (ad-hoc/dev) user_ids are exempt -
+this is what keeps the rest of the suite's ad-hoc users working unmodified -
 and a completed participant's own profile read isn't blocked by a stale or
 missing session_id (the cross-device /results case).
 """
@@ -90,7 +90,7 @@ async def test_profile_read_allowed_for_completed_participant_from_any_device(cl
 
 @pytest.mark.asyncio
 async def test_profile_read_rejected_mid_exam_for_wrong_device(client, db_session):
-    """Mid-exam (not completed), profile reads ARE gated — this is the fix
+    """Mid-exam (not completed), profile reads ARE gated - this is the fix
     for the original finding that any token holder could read any
     student's full history and completed_answers."""
     await _create_participant(db_session, token="RLSMID01", status="active", active_session_id="sess-real")
@@ -114,7 +114,7 @@ async def test_bkt_endpoint_returns_200_not_500(client):
 async def test_create_user_does_not_leak_another_participants_exam_data(client, db_session):
     """POST /users/ ran before the device lock exists (POST /session/start
     hasn't fired yet), so it can't be gated by verify_session_owner without
-    breaking every legitimate login — it must instead simply never return
+    breaking every legitimate login - it must instead simply never return
     interaction_history/completed_answers/skill_mastery for an EXISTING
     user_id, since (pre-fix) any token holder could call this with someone
     else's token and get back their full in-progress exam state."""
@@ -128,7 +128,7 @@ async def test_create_user_does_not_leak_another_participants_exam_data(client, 
         "question_number": 1, "attempt_key": "k1", "user_answer": "1",
     })
 
-    # Attacker only knows the token, not sess-real — the exact scenario
+    # Attacker only knows the token, not sess-real - the exact scenario
     # POST /users/ used to be reachable through with no check at all.
     res = await client.post("/users/", json={"user_id": "RLSLEAK1"})
     assert res.status_code == 200
@@ -142,7 +142,7 @@ async def test_create_user_does_not_leak_another_participants_exam_data(client, 
 
 @pytest.mark.asyncio
 async def test_delete_user_endpoint_removed(client):
-    """DELETE /users/{id} was removed — zero consumers, and it was an
+    """DELETE /users/{id} was removed - zero consumers, and it was an
     unauthenticated destructive IDOR against any participant."""
     await client.post("/users/", json={"user_id": "no_delete_01"})
     res = await client.delete("/users/no_delete_01")

@@ -5,12 +5,12 @@
 # POST /session/start and refreshed by the 25s heartbeat, is the only
 # device-binding credential in the system. Every endpoint that acts on
 # behalf of a specific user_id must confirm the caller holds that lock
-# before touching that user's data — otherwise the participant token
+# before touching that user's data - otherwise the participant token
 # (the sole identifier) is enough on its own to read or mutate any
 # student's exam as any other student.
 #
 # Participant-less user_ids (ad-hoc dev/test identities with no manifest
-# entry) are exempt — there is no lock to enforce for identities the exam
+# entry) are exempt - there is no lock to enforce for identities the exam
 # manifest never issued a token for.
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -32,7 +32,7 @@ async def verify_session_owner(
 
     No-op when user_id has no Participant row (ad-hoc/dev/test identity).
     When allow_if_completed is True, a participant whose exam is already
-    completed is exempt too — used for read endpoints (profile, results)
+    completed is exempt too - used for read endpoints (profile, results)
     that legitimately need to work from a different device after the exam
     is over, e.g. a student checking their results on their phone.
     """

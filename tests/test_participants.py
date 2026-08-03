@@ -202,7 +202,7 @@ async def test_session_submit_persists_submitted_at(client, db_session):
     result = await db_session.execute(select(Participant).filter_by(token="SUBMITX1"))
     p = result.scalars().first()
     assert p.status == "completed"
-    # active_session_id is deliberately left set after submit — GET
+    # active_session_id is deliberately left set after submit - GET
     # /users/{id}/profile is gated on it, and a student must still be able
     # to fetch their own profile (e.g. the /results page) right after
     # submitting, from the same device.

@@ -41,7 +41,7 @@ function submitErrorMessage(err: unknown, verb: 'submit' | 'skip'): string {
 }
 
 /** A 429 or 5xx from an LLM-backed endpoint (hint/chat) means Gemini itself is
- * rate-limited or unavailable, not that anything is wrong with the request —
+ * rate-limited or unavailable, not that anything is wrong with the request -
  * distinct enough from a generic network failure to say so. */
 function llmErrorMessage(err: unknown, what: 'hint' | 'tutor'): string {
   if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {
@@ -172,7 +172,7 @@ export default function QuizPageContent() {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('timeout')), 30000)
         )
-        // startSession must resolve first — it's what claims the device lock
+        // startSession must resolve first - it's what claims the device lock
         // (Participant.active_session_id) that getUserProfile is gated on below.
         // Firing all three in one Promise.all races the lock write against the
         // profile read and can 403 intermittently.
@@ -299,7 +299,7 @@ export default function QuizPageContent() {
             if (hb.expired) { timerExpiredRef.current = true; saveAndRedirect(true) }
             if (!hb.active) { setTakenOver(true) }
           } catch {
-            // Passive indicator only — the timer keeps running client-side and
+            // Passive indicator only - the timer keeps running client-side and
             // answer/skip submissions already surface their own errors, so a
             // student isn't left wondering why nothing seems to work until a
             // submit fails out of nowhere.

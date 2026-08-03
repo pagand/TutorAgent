@@ -62,11 +62,11 @@ services:
     logging: *default-logging
 
   # Admin dashboard. Bound to the host's loopback only (127.0.0.1:8501,
-  # not 0.0.0.0) — reached via `ssh -L 8501:localhost:8501`, never exposed
+  # not 0.0.0.0) - reached via `ssh -L 8501:localhost:8501`, never exposed
   # to the internet. Same image as `api`, overriding entrypoint.sh's
   # migrate-then-uvicorn default with the Streamlit command instead. Talks
   # to Postgres directly (see streamlit_app/app.py), not through the API,
-  # so none of the API's own auth/RLS applies here — that's expected, this
+  # so none of the API's own auth/RLS applies here - that's expected, this
   # is the trusted admin path, not a second student-facing surface.
   streamlit:
     build: .

@@ -3,7 +3,7 @@ import type { ChatMessage } from '@/types'
 
 // The localhost fallback is a dev convenience only. A production build
 // (`npm run build`, output: 'export') that omits NEXT_PUBLIC_API_URL would
-// otherwise silently ship a static bundle pointing at localhost — fail the
+// otherwise silently ship a static bundle pointing at localhost - fail the
 // build instead of deploying that.
 if (process.env.NODE_ENV === 'production' && !process.env.NEXT_PUBLIC_API_URL) {
   throw new Error('NEXT_PUBLIC_API_URL must be set for a production build.')

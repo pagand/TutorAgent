@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 # --- FastAPI App Initialization ---
 # /docs, /redoc and /openapi.json are still gated by the X-API-Key middleware
 # below like any other route once API_KEY is set, but that key is only
-# obscurity (it ships in the public frontend bundle) — disabling the schema
+# obscurity (it ships in the public frontend bundle) - disabling the schema
 # outright in that configuration is one less thing a scanner holding the key
 # can trivially enumerate (every route, every field, DELETE included).
 _docs_enabled = not settings.api_key

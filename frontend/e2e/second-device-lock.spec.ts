@@ -39,8 +39,8 @@ test('second device lock: /login shows active_elsewhere, /quiz shows device-conf
   await expect(pageA.getByText('Q1 of')).toBeVisible()
 
   // Row-level access control (Stage 3): a request carrying the right token
-  // but the WRONG session_id — i.e. someone who only knows the token, not
-  // the device-bound session_id device A is holding — must be rejected,
+  // but the WRONG session_id - i.e. someone who only knows the token, not
+  // the device-bound session_id device A is holding - must be rejected,
   // independent of any UI state. This is the direct-API guard for the
   // "any token holder can act as that student" IDOR finding.
   const forged = await submitAnswerDirect(pageA.request, {

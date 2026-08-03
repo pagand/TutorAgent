@@ -6,7 +6,7 @@ import { useQuiz } from '@/context/QuizContext'
 import { sendChat, logAction } from '@/services/apiClient'
 
 /** A 429 or 5xx means Gemini itself is rate-limited or unavailable, not that
- * anything is wrong with the message — distinct enough from a generic
+ * anything is wrong with the message - distinct enough from a generic
  * network failure to say so. */
 function chatErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err) && (err.response?.status === 429 || (err.response?.status ?? 0) >= 500)) {

@@ -35,7 +35,16 @@ fi
 # refuses to run `compose build` against a buildx older than 0.17.0, and
 # dnf's docker package on AL2023 doesn't keep buildx current enough.
 if [ ! -x /usr/local/lib/docker/cli-plugins/docker-buildx ]; then
-  BUILDX_TAG="$(curl -sL https://api.github.com/repos/docker/buildx/releases/latest | grep -m1 '"tag_name"' | cut -d '"' -f4)"
+  # No `-m1` on grep: under `set -o pipefail`, `grep -m1` closes its input
+  # pipe as soon as it finds a match, and whatever is writing to that pipe
+  # (curl, or even `echo` of a large-enough variable) can receive SIGPIPE
+  # and return non-zero, which aborts the whole script under `set -e`.
+  # Found the hard way (2026-08-03): this pattern silently killed user-data
+  # before it ever reached the systemd unit install, with no error surfaced
+  # beyond cloud-init's own log. Plain `grep` (no -m1) reads to EOF, so the
+  # writer never sees a broken pipe.
+  BUILDX_RELEASE_JSON="$(curl -sL https://api.github.com/repos/docker/buildx/releases/latest)"
+  BUILDX_TAG="$(echo "$BUILDX_RELEASE_JSON" | grep '"tag_name"' | cut -d '"' -f4)"
   curl -sL "https://github.com/docker/buildx/releases/download/$${BUILDX_TAG}/buildx-$${BUILDX_TAG}.linux-amd64" \
     -o /usr/local/lib/docker/cli-plugins/docker-buildx
   chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx

@@ -135,6 +135,10 @@ fi
 
 log "Installing nightly backup cron"
 CRON_LINE="0 2 * * * cd ${REPO_DIR} && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://${OPS_BUCKET}/backups ./scripts/backup.sh >> ${REPO_DIR}/backups/cron.log 2>&1"
-( crontab -l 2>/dev/null | grep -vF './scripts/backup.sh' ; echo "$CRON_LINE" ) | crontab -
+# `|| true` on the listing: under set -o pipefail, a brand-new ec2-user with
+# no existing crontab makes `crontab -l` exit 1 with empty output, and grep
+# -v on empty input also exits 1 (no lines selected) - without the guard,
+# set -e kills the whole script right here on every box's very first boot.
+( crontab -l 2>/dev/null | grep -vF './scripts/backup.sh' || true; echo "$CRON_LINE" ) | crontab -
 
 log "Bootstrap complete"

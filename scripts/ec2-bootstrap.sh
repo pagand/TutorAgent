@@ -86,6 +86,30 @@ log "docker compose up"
 docker compose up -d --build
 docker image prune -f
 
+log "Waiting for api to report healthy"
+# entrypoint.sh runs alembic upgrade head before uvicorn starts, so seeding
+# before the container is healthy would hit a participants table that
+# doesn't exist yet on a fresh DB. start_period below mirrors the
+# healthcheck's own start_period in docker-compose.yml.
+api_healthy=false
+for _ in $(seq 1 24); do
+  api_cid="$(docker compose ps -q api)"
+  status="$(docker inspect -f '{{.State.Health.Status}}' "$api_cid" 2>/dev/null || true)"
+  if [ "$status" = "healthy" ]; then
+    api_healthy=true
+    break
+  fi
+  sleep 10
+done
+
+if [ "$api_healthy" != true ]; then
+  log "FATAL: api container never reported healthy, aborting bootstrap before seeding"
+  exit 1
+fi
+
+log "Seeding participants from prod/data/manifest.csv"
+docker compose exec -T api python prod/seed_participants.py
+
 if [ ! -f "$CERT_LIVE" ]; then
   log "Requesting certificate for ${DOMAIN_API}"
   docker run --rm \

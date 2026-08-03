@@ -56,7 +56,7 @@ Handled by Terraform + the bootstrap script, not manually:
 - nginx switches between `nginx/available/plain.conf` (no cert yet) and `nginx/available/tls.conf` (cert present) automatically
 
 ### 3.3 EC2 Backend Setup
-Also automatic. `terraform/templates/user_data.sh.tftpl` runs once on first boot (docker install, swap file, deploy key, repo clone, systemd unit); `scripts/ec2-bootstrap.sh` then runs on every boot after that (git pull, render `.env` from SSM, sync `prod/data` from S3, `docker compose up -d --build`, certbot, install the backup cron). Nothing to run by hand beyond uploading the exam data once:
+Also automatic. `terraform/templates/user_data.sh.tftpl` runs once on first boot (docker install, swap file, deploy key, repo clone, systemd unit); `scripts/ec2-bootstrap.sh` then runs on every boot after that (git pull, render `.env` from SSM, sync `prod/data` from S3, `docker compose up -d --build`, seed `participants` from `manifest.csv` once the api container is healthy, certbot, install the backup cron). Nothing to run by hand beyond uploading the exam data once:
 
 ```bash
 aws s3 sync prod/data/ s3://aitutor-434195712367-ops/artifacts/prod-data/

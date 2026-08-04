@@ -72,6 +72,7 @@
     <li><a href="#health">3. Health checks</a></li>
     <li><a href="#promote">4. Promoting code to prod</a></li>
     <li><a href="#data">5. Changing prod data</a></li>
+    <li><a href="#backups">5b. Backups — what "nightly" actually means</a></li>
     <li><a href="#logs">6. Logs</a></li>
     <li><a href="#monitoring">7. Monitoring</a></li>
     <li><a href="#incident">8. Incident response</a></li>
@@ -83,12 +84,16 @@
 
 <section id="map">
   <h2>1. System map</h2>
-  <p>One EC2 instance (tag <code>Name=aitutor-app</code>) behind a static Elastic IP runs the backend as four Docker Compose services. The frontend is a separate static export served from S3 via CloudFront. DNS for both is at the <code>da-tu.ca</code> registrar, outside AWS — <code>air.da-tu.ca</code> → CloudFront, <code>api.air.da-tu.ca</code> → the Elastic IP.</p>
+  <p><strong>Single-distribution architecture, Stage 5.</strong> One CloudFront distribution serves both the frontend (static export from S3) and the API (<code>/api/*</code>, proxied to one EC2 instance behind a static Elastic IP). <code>api.air.da-tu.ca</code> no longer exists — there is one domain, <code>air.da-tu.ca</code>, and one registrar CNAME pointing it at CloudFront. TLS terminates at CloudFront; the box only ever speaks plain HTTP.</p>
+  <div class="callout warn">
+    <strong>The CloudFront-to-origin hop is not encrypted, by design.</strong>
+    Origin traffic is not encrypted between CloudFront and EC2. This is accepted because the threat model prioritizes operational reliability over protection from network interception. CloudFront requires a publicly-trusted certificate to speak HTTPS to a custom origin, and keeping one alive would mean keeping certbot — whose renewal path never actually worked (it checked a host path certbot never wrote to; deleted rather than fixed). Mitigated two ways: the origin's security group admits port 80 only from CloudFront's published origin-facing IP ranges (nothing else can reach the box at all), and nginx rejects any request missing a shared secret CloudFront attaches on every request (<code>X-Origin-Secret</code>). Interception itself would need a position on the path between a CloudFront edge and the Elastic IP — backbone/ISP-level access, not something reachable from a student's own network.
+  </div>
   <table>
     <tr><th>Service</th><th>What it is</th><th>Reachable from</th><th>State</th></tr>
     <tr><td><code>db</code></td><td><code>postgres:16-alpine</code></td><td>compose network only, port 5432 never exposed to host</td><td><code>postgres_data</code> named volume</td></tr>
     <tr><td><code>api</code></td><td>FastAPI backend, built from the repo <code>Dockerfile</code></td><td>compose network only (port 8000, <code>expose</code> not <code>ports</code>) — nginx is the only path in</td><td><code>chroma_data</code> volume (RAG store); <code>prod/data</code> read-only bind mount</td></tr>
-    <tr><td><code>nginx</code></td><td><code>nginx:alpine</code>, reverse proxy + TLS termination</td><td>host ports 80 and 443 (the only ports the security group opens)</td><td>stateless; mounts <code>./certbot</code> and <code>./certbot-www</code> from the host</td></tr>
+    <tr><td><code>nginx</code></td><td><code>nginx:alpine</code>, reverse proxy, plain HTTP only</td><td>host port 80 only — the security group admits only CloudFront's origin-facing ranges, not the open internet</td><td>stateless; no certbot mounts, no 443 mapping</td></tr>
     <tr><td><code>streamlit</code></td><td>Admin dashboard, same image as <code>api</code> with a different entrypoint</td><td><code>127.0.0.1:8501</code> only — loopback, not the internet</td><td>stateless; talks to <code>db</code> directly, bypassing the API entirely</td></tr>
   </table>
   <div class="callout warn">
@@ -96,7 +101,8 @@
     <code>docker compose down</code> keeps <code>postgres_data</code> and <code>chroma_data</code> — safe for a routine restart.
     <code>docker compose down -v</code> destroys both. Never run <code>-v</code> against the live box without a fresh <code>pg_dump</code> in hand first.
   </div>
-  <p><strong>What's not in Docker:</strong> the Elastic IP, security group, IAM roles, CloudWatch alarms, Cost Anomaly Detection, Budgets, and the two monthly EventBridge Scheduler rules all live in Terraform (<code>terraform/</code>), applied from a laptop with SSO credentials — never from the box itself.</p>
+  <p><strong>What's not in Docker:</strong> the Elastic IP, security group, IAM roles, CloudWatch alarms, Cost Anomaly Detection, Budgets, and the CloudFront distribution (frontend origin + the <code>/api/*</code> behavior pointed at the EIP) all live in Terraform (<code>terraform/</code>), applied from a laptop with SSO credentials — never from the box itself. The two monthly EventBridge Scheduler rules that used to boot the box for certificate renewal are gone along with certbot; nothing boots the box automatically anymore.</p>
+  <p><strong>Why the Elastic IP still exists</strong> even though <code>api.air.da-tu.ca</code> doesn't: CloudFront's <code>/api/*</code> origin (<code>terraform/frontend.tf</code>) points at <code>aws_eip.api.public_dns</code>, which has to stay stable across every stop/start — a plain EC2 public IP changes on every start, and this box is deliberately stopped between exams. Without the EIP, CloudFront's origin config would go stale on the very first post-exam stop/start. The EIP has <code>prevent_destroy</code> in Terraform for this reason.</p>
 </section>
 
 <section id="startstop">
@@ -104,7 +110,11 @@
   <pre><code>aws ec2 start-instances --region us-west-2 --instance-ids &lt;id&gt;
 aws ec2 stop-instances  --region us-west-2 --instance-ids &lt;id&gt;</code></pre>
   <p>Find the current instance ID with <code>terraform output instance_id</code> (from <code>terraform/</code>) or by tag: <code>aws ec2 describe-instances --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped</code>. The ID changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change) — don't hardcode it in scripts or muscle memory.</p>
-  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, syncs <code>prod/data/</code> from S3, builds and starts all four containers, waits for <code>api</code> to report healthy, re-seeds participants, attempts a cert issue/renew, and installs the nightly backup cron. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
+  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, refreshes CloudFront's origin-facing IP list, builds and starts all four containers, waits for <code>api</code> to report healthy, re-seeds participants, and installs the nightly backup cron. No certbot step anymore — TLS terminates at CloudFront, so the box only ever renders one nginx config. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
+  <div class="callout danger">
+    <strong>Self-modifying script gotcha: a code change to <code>ec2-bootstrap.sh</code> needs two triggers to actually take effect on an already-running box.</strong>
+    The script's own first real action is <code>git reset --hard origin/main</code>, which rewrites the very file the running process is executing. The already-running process keeps reading its own stale in-memory/buffered copy to completion — so the <em>first</em> trigger after a push correctly updates the repo on disk, but still runs the <em>old</em> logic end to end (observed live during Stage 5: a first re-trigger after deleting <code>plain.conf</code>/<code>tls.conf</code> still tried to <code>cp</code> the now-deleted file, and separately, a first re-trigger after adding <code>LLM_PROVIDER=google</code> to the <code>.env</code> heredoc still rendered <code>.env</code> without it). A <em>second</em> <code>systemctl reset-failed aitutor-bootstrap.service &amp;&amp; systemctl start aitutor-bootstrap.service</code> reads the file fresh and runs correctly. A full <code>aws ec2 reboot-instances</code> does not have this problem — systemd starts a genuinely new process reading the current file from the start. When in doubt after changing this script, trigger it twice, or reboot instead of using the SSM one-liner.
+  </div>
   <p>Watch it live:</p>
   <pre><code># from a laptop with an active SSM session to the box
 aws ssm start-session --target &lt;instance-id&gt;
@@ -116,9 +126,9 @@ sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
     <tr><td><code>docker compose up -d --build</code></td><td>Application code changed, need a fresh image</td><td>Rebuilds only what changed (Docker layer cache), recreates containers, keeps volumes.</td></tr>
     <tr><td><code>sudo systemctl start aitutor-bootstrap.service</code></td><td>Want the full real deploy path exactly as a reboot would run it</td><td>Pulls <code>main</code> fresh, re-renders <code>.env</code>, re-syncs S3 data, rebuilds, re-seeds. This is the simplest single command for "get prod to match <code>main</code>" — see §4.</td></tr>
     <tr><td><code>docker compose down</code> / <code>up -d</code></td><td>Rarely needed — full stack recreate, volumes preserved</td><td>Brief full outage across all four services.</td></tr>
-    <tr><td><code>aws ec2 reboot-instances</code></td><td>OS-level hang, not a container problem</td><td>Full boot cycle, runs <code>aitutor-bootstrap.service</code> again.</td></tr>
+    <tr><td><code>aws ec2 reboot-instances</code></td><td>OS-level hang, not a container problem — or to sidestep the self-modifying-script gotcha above</td><td>Full boot cycle, runs <code>aitutor-bootstrap.service</code> again with a genuinely fresh process.</td></tr>
   </table>
-  <p><strong>Monthly automatic boot:</strong> EventBridge Scheduler starts the instance at <code>08:00 UTC</code> on the 1st and stops it 30 minutes later, purely so certbot's renewal check runs at least once inside Let's Encrypt's 90-day cert window even if the box otherwise sits stopped between exams. This is the only unattended boot the system does.</p>
+  <p><strong>No automatic boot anymore.</strong> The monthly EventBridge start/stop that used to exist purely for certbot renewal is gone along with certbot (Stage 5). Nothing boots this box unattended — it only runs when explicitly started for an exam or for testing.</p>
 </section>
 
 <section id="health">
@@ -132,24 +142,36 @@ sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
   <div class="grid2">
     <div class="card">
       <h3>Over the network</h3>
-      <pre><code># plain HTTP always answers, even pre-cert
-curl -sI http://&lt;elastic-ip&gt;/
+      <pre><code># the box itself is NOT directly reachable anymore (Stage 5) —
+# the security group admits only CloudFront's origin-facing IP
+# ranges, so a laptop curl to the EIP just hangs until it times out.
+# This is expected, not a fault - see V5 below and §8.
 
-# once DNS + cert are live
-curl -sI https://api.air.da-tu.ca/
-openssl s_client -connect api.air.da-tu.ca:443 \
-  -servername api.air.da-tu.ca &lt;/dev/null 2&gt;/dev/null \
-  | openssl x509 -noout -enddate</code></pre>
+# check the real path instead, through the edge:
+curl -sI https://air.da-tu.ca/api/
+# expect a real response (401 with no X-API-Key is fine - it means
+# the request reached the app). A CloudFront 502/504 means the origin
+# itself is unreachable - see the debugging path below.</code></pre>
     </div>
     <div class="card">
-      <h3>Cert expiry</h3>
-      <pre><code>sudo docker run --rm \
-  -v $(pwd)/certbot:/etc/letsencrypt \
-  certbot/certbot certificates</code></pre>
-      <p style="margin:0.4rem 0 0;font-size:0.85rem;">Renewal runs automatically on every boot; the monthly EventBridge boot exists specifically so this happens even during a long stopped stretch. Worth a manual glance before an exam regardless — see §10.</p>
+      <h3>Origin secret + IP lock</h3>
+      <pre><code># from the box itself, over SSM - confirms the origin-secret gate:
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/questions/
+# 403 with no header is correct; needs X-Origin-Secret to pass</code></pre>
+      <p style="margin:0.4rem 0 0;font-size:0.85rem;">TLS now terminates at CloudFront — there is no cert to check on the box anymore. Nothing renews, nothing expires, on this side.</p>
     </div>
   </div>
   <p>App-level logs to watch on a slow or failing boot: <code>docker compose logs api</code> — the healthcheck's <code>start_period: 120s</code> exists because RAG singleton init can take a moment; a <code>curl</code> against <code>/</code> failing in the first two minutes after a build is expected, not a bug.</p>
+  <div class="callout ok">
+    <strong>502/504 debugging matrix</strong>, empirically confirmed live during Stage 5 by deliberately stopping the <code>api</code> container and, separately, the whole instance:
+    <table>
+      <tr><th>Symptom</th><th>Layer</th><th>Meaning</th></tr>
+      <tr><td>CloudFront's own branded <code>504</code> page</td><td>CloudFront</td><td>Origin connection attempt timed out. Observed transiently right at the moment the origin becomes unreachable (mid-container-stop, or the whole instance stopped) before the connection is cleanly refused. Can take longer than 10s.</td></tr>
+      <tr><td>nginx's own <code>502 Bad Gateway</code> page (<code>server: nginx</code> in the response headers)</td><td>nginx → api</td><td>The <code>api</code> upstream is down but nginx itself is up and connection-refusing cleanly. Fast, consistent.</td></tr>
+      <tr><td>Plain connection hang / <code>curl</code> exit 28</td><td>Security group</td><td>Nothing is listening at all, or the source IP isn't in CloudFront's origin-facing prefix list. A laptop curling the EIP directly always looks like this now — that's V5, not a bug.</td></tr>
+    </table>
+    <p style="margin:0.5rem 0 0;">With the SG lockdown in place, <strong>a laptop cannot curl the origin directly anymore</strong> — the debugging path is SSM session → <code>curl localhost/api/...</code> inside the box → <code>docker compose logs api</code> / <code>logs nginx</code>. There is no other way in.</p>
+  </div>
 </section>
 
 <section id="promote">
@@ -159,13 +181,16 @@ openssl s_client -connect api.air.da-tu.ca:443 \
   <h3>Today's actual promotion path</h3>
   <ol>
     <li>Merge to <code>main</code>, push.</li>
-    <li>Either wait for the next reboot (only guaranteed monthly, via EventBridge), or trigger it now:
+    <li>Trigger the box to pick it up — there is no automatic boot anymore (§2), so this step is never optional:
       <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   --document-name AWS-RunShellScript \
-  --parameters commands='["sudo systemctl start aitutor-bootstrap.service"]'</code></pre>
+  --parameters commands='["sudo systemctl reset-failed aitutor-bootstrap.service", "sudo systemctl start aitutor-bootstrap.service"]'
+# if this is the box's first pull of a change to ec2-bootstrap.sh
+# itself, run the same command a second time - see the self-modifying-
+# script callout in §2.</code></pre>
     </li>
   </ol>
-  <p>That's the whole thing. Observed cost this stage: roughly 1–3 minutes depending on build-cache warmth, with automatic rollback-free re-seeding and cert-renewal folded in for free. This is genuinely simple, which is the strongest argument for leaving it alone.</p>
+  <p>That's the whole thing. Observed cost this stage: roughly 1–3 minutes depending on build-cache warmth, with automatic rollback-free re-seeding folded in for free. This is genuinely simple, which is the strongest argument for leaving it alone.</p>
   <h3>Options, costed honestly</h3>
   <table>
     <tr><th>Option</th><th>What it buys</th><th>What it costs</th><th>Recommendation</th></tr>
@@ -210,6 +235,18 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   <p>Replacing <code>prod/data/source.pdf</code> and restarting <code>api</code> re-triggers ingestion automatically — <code>ingest_pdf()</code> checks whether it's needed on every boot. Measured cost for the current 7-page source: about 2 seconds. Follows the same S3-sync-then-restart path as questions above.</p>
 </section>
 
+<section id="backups">
+  <h2>5b. Backups — what "nightly" actually means</h2>
+  <div class="callout danger">
+    <strong>The nightly cron is not the safety net.</strong>
+    <code>0 2 * * *</code> only runs while the instance is running, and this box is stopped between exams by design. Instance stopped: no backups fire at all. A single-day, 25-minute exam very likely never crosses <code>02:00</code> while the box happens to be up. Do not describe this cron as coverage in an incident.
+  </div>
+  <p><strong>The real protection is a dump taken immediately before stopping the box.</strong> While the box is stopped, data physically cannot change, so a pre-stop dump is current for the entire stopped period by definition. This is §10 step 8 — do it every time, not just after an exam.</p>
+  <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan): <code>BACKUP_S3_URI</code> now correctly points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every nightly `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>, and the failure landed only in <code>backups/cron.log</code>, which nothing monitors. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
+  <p>Verify a dump actually landed:</p>
+  <pre><code>aws s3 ls s3://aitutor-backups-&lt;account-id&gt;/backups/ --region us-west-2</code></pre>
+</section>
+
 <section id="logs">
   <h2>6. Logs</h2>
   <table>
@@ -248,7 +285,7 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <tr><th>Symptom</th><th>Command</th><th>Notes</th></tr>
     <tr><td><code>api</code> down or crash-looping</td><td><code>docker compose logs --tail 100 api</code>, then <code>docker compose restart api</code></td><td>If it won't come back healthy, <code>docker compose up -d --build</code> to rule out a stale image.</td></tr>
     <tr><td>Postgres unreachable</td><td><code>docker compose ps db</code>; <code>docker compose exec db pg_isready -U aitutor -d aitutor_db</code></td><td>If the container itself is down, <code>docker compose up -d db</code>; <code>api</code> depends on its healthcheck and will wait.</td></tr>
-    <tr><td>Cert expired, or certbot failed on last renewal</td><td><code>docker run --rm -v $(pwd)/certbot:/etc/letsencrypt certbot/certbot certificates</code></td><td><strong>nginx does not auto-fallback to plain HTTP if a previously-issued cert simply expires</strong> — <code>ec2-bootstrap.sh</code> only writes <code>plain.conf</code> when no cert exists yet at all. An expired-but-present cert keeps serving on the (now invalid) <code>tls.conf</code> until a renewal succeeds. Force a re-run: SSM in, <code>sudo systemctl start aitutor-bootstrap.service</code>.</td></tr>
+    <tr><td>Hints silently degrade to a generic "I couldn't generate a specific hint" message, or chat fails outright</td><td><code>docker compose exec api env | grep LLM_PROVIDER</code> — must read <code>google</code></td><td><strong>Real incident, Stage 5.</strong> The code default when this var is unset is <code>ollama</code>, which tries to reach a nonexistent <code>localhost:11434</code>. Hints has its own try/except that masks this as a generic fallback (<code>hint_style: "error"</code> in the response — check the actual field, not just the HTTP status, a 200 does not mean a real hint was generated); chat has no such fallback and 500s or hangs to a CloudFront 504. Fixed by explicitly setting <code>LLM_PROVIDER=google</code> in <code>ec2-bootstrap.sh</code>'s <code>.env</code> render — if this ever regresses, it's the first thing to check.</td></tr>
     <tr><td>Disk full</td><td><code>df -h</code> over SSM</td><td>Logs and Chroma share the 30GB root volume. <code>docker image prune -f</code> (bootstrap already does this on every boot), check <code>backups/cron.log</code> and old dumps in <code>./backups/</code> if retention pruning (<code>BACKUP_RETENTION_DAYS</code>, default 90 in prod) hasn't caught up.</td></tr>
     <tr><td>Student locked to the wrong device</td><td>Streamlit → student's row → <em>Clear Session Lock</em></td><td>See §9. No CLI/API equivalent needed for this one — it's the intended path.</td></tr>
     <tr><td>Student needs more time, or a whole cohort does</td><td>Streamlit → per-student <em>Adjust Timer</em> / <em>Reset Timer to NOW</em>, or <em>Exam Control → Apply to All Unsubmitted Sessions</em> for a bulk extension</td><td>Bulk extension is the mid-outage remedy — it reaches already-open tabs within one 25s heartbeat, no reload needed.</td></tr>
@@ -305,12 +342,11 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
   <ol>
     <li><strong>Snapshot before starting.</strong> Take an EBS snapshot of the current (stopped) volume before <code>aws ec2 start-instances</code>, so there's a clean pre-exam restore point.</li>
     <li><strong>Start the instance</strong>, watch <code>aitutor-bootstrap.service</code> complete over SSM (§2, §3).</li>
-    <li><strong>Verify cert expiry</strong> is comfortably in the future (§3) — don't assume the monthly renewal boot caught everything.</li>
-    <li><strong>Confirm <code>EXAM_DURATION_MS</code></strong> on the box reads <code>1500000</code> (25 minutes), not a leftover 20-minute default: <code>docker compose exec api env | grep EXAM_DURATION_MS</code>.</li>
-    <li><strong>Smoke test one real token</strong> end to end — login, answer, hint, chat, submit, results — before handing tokens to students.</li>
+    <li><strong>Confirm <code>EXAM_DURATION_MS</code></strong> on the box reads <code>1500000</code> (25 minutes), not a leftover 20-minute default, and <strong><code>LLM_PROVIDER</code> reads <code>google</code></strong> (see §8's incident row — the code default is the wrong provider): <code>docker compose exec api env | grep -E "EXAM_DURATION_MS|LLM_PROVIDER"</code>.</li>
+    <li><strong>Smoke test one real token</strong> end to end — login, answer, hint, chat, submit, results — before handing tokens to students. Check the actual hint/chat <em>content</em>, not just the HTTP status: a 200 with <code>hint_style: "error"</code> means the LLM call silently failed.</li>
     <li><strong>Expect a slow first hint.</strong> RAG cold start is ~2s measured, but the first real request after boot still pays container warm-up cost on top. Not a bug if the very first hint feels sluggish.</li>
     <li><strong>Keep an SSM session open</strong> to the box and a port-forward tunnel to Streamlit (§9) for the full exam window, so timer/lock issues can be handled in real time.</li>
-    <li><strong>After the exam:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>) <em>before</em> stopping the instance — data survives a stop regardless, but a portable dump plus a snapshot is the belt-and-suspenders version.</li>
+    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>). This is the real backup, not the nightly cron (§5b) — while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.</li>
     <li><strong>Stop the instance</strong> once data is safely off-box. It should not sit running between exams.</li>
   </ol>
 </section>
@@ -335,6 +371,10 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
   <div class="callout warn">
     <strong>AWS catalog drift is real, not hypothetical</strong>
     The Stage 4 plan sized the root EBS volume at 20GB; by Stage 5's apply, AWS's current AL2023 AMI (fetched via <code>most_recent = true</code>) needed 30GB just for its own snapshot. Nothing in the repo changed — Amazon's base image did. Worth a <code>terraform plan</code> drift check before any future apply that's been sitting for a while, even with no local changes.
+  </div>
+  <div class="callout danger">
+    <strong>Config-default traps are a real bug class here, not a one-off</strong>
+    <code>LLM_PROVIDER</code> (§8) is the same failure shape as three items already fixed earlier in this project (<code>LOG_LEVEL</code>, <code>EXAM_DURATION_MS</code>, <code>GOOGLE_MODEL_NAME</code> — see <code>PRELAUNCH_CHECKLIST.md</code> §H): <code>.env.docker.example</code> documents the required value, but <code>scripts/ec2-bootstrap.sh</code>'s <code>.env</code> heredoc never actually wrote it, so the code-level fallback silently took over in production. The other three were caught because their fallbacks happened to be <em>safe</em> ones close enough to correct not to break anything visibly; <code>LLM_PROVIDER</code>'s fallback (<code>ollama</code>) was actively wrong and broke the entire tutoring feature, just quietly enough (hints has a fallback path, chat doesn't) that nothing caught it until this stage tested chat against a real deployed box for the first time. <strong>Recommended:</strong> a one-time diff between every key in <code>.env.docker.example</code> and every key <code>ec2-bootstrap.sh</code> actually writes, and a boot-time assertion (matching the existing <code>APP_ENV=production</code> pattern in <code>app/main.py</code>'s <code>lifespan</code>) that fails loudly rather than silently degrading whenever <code>LLM_PROVIDER != "google"</code> in production.
   </div>
 </section>
 

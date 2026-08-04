@@ -52,6 +52,14 @@ API_KEY="$(ssm_get /aitutor/prod/api_key)"
 ORIGIN_SECRET="$(ssm_get /aitutor/prod/origin_secret)"
 
 cat > .env <<EOF
+# Found live during Stage 5 verification: this line was missing from every
+# prior boot of this box. The code default for LLM_PROVIDER is "ollama"
+# (app/utils/config.py:37), not "google" - with it unset, hints silently
+# degraded to the "..."/hint_style="error" fallback (rag_agent.py's own
+# try/except) and chat hard-failed outright, both trying to reach a
+# nonexistent localhost:11434. .env.docker.example already documented
+# LLM_PROVIDER=google as required; it just never made it into this render.
+LLM_PROVIDER=google
 GOOGLE_API_KEY=${GOOGLE_API_KEY}
 POSTGRES_USER=aitutor
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}

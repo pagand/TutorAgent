@@ -124,10 +124,21 @@ Also closed while the code was open for this stage, since they share the same th
 ### Stage 5 — Deploy and verify
 - Deploy, then post-deploy configuration verification (open ports, TLS, headers, CORS enforcement)
 - **Gate:** verification clean
+- **In progress, 2026-08-03/04.** Phase-1 apply done (32 resources: EC2, EIP, S3, IAM, SSM, CloudWatch, Budgets, Cost Anomaly Detection, EventBridge). Phase-2 (`aws_acm_certificate_validation.frontend`, `aws_cloudfront_distribution.frontend`, `aws_s3_bucket_policy.frontend`) is blocked on the da-tu.ca registrar adding the two DNS records already handed over — third-party turnaround, not something this session can push on.
+- Closed a real gap found during this stage: nothing seeded the `participants` table on a fresh box. Added `prod/seed_participants.py` (upsert-only, never touches `status`/`active_session_id`/`started_at`/`last_seen_at` on an existing row, so a mid-exam re-seed is safe), wired into `scripts/ec2-bootstrap.sh` after the healthcheck passes. New `scripts/update-prod-data.sh` gives a ~10s no-reboot participant refresh path.
+- First-boot validation found and fixed three real bugs, all now on `main`: two SIGPIPE-under-pipefail cases (a `curl | grep -m1 | cut` in the buildx-install block of `user_data.sh.tftpl`, and a `crontab -l | grep -v` on a fresh user with no crontab in `ec2-bootstrap.sh`), and a `.dockerignore` gap that let root-owned `certbot/` state break every `docker compose build` after the first cert attempt. All three verified with a genuine Terraform-driven instance replacement (fresh `user_data` first boot, not a re-triggered script on the old box) — `docker buildx v0.36.0`, clean build, participants seeded, certbot fails gracefully without DNS (as designed), crontab installs, bootstrap completes end to end.
+- Verified over the raw Elastic IP ahead of DNS: only ports 80 (open) and — correctly — 22/443/5432/8501 closed or refused; security headers present (`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`); `X-API-Key` enforcement returns 401 with no key.
+- Instance stopped (not terminated) between validation sessions to avoid idle EC2 compute cost while waiting on DNS — EBS volume and the Elastic IP (so the DNS records already sent to the registrar stay valid) are unaffected by a stop.
+- Still open: phase-2 apply, frontend build + S3/CloudFront deploy, the full post-deploy verification table (TLS, CORS-over-HTTPS, end-to-end real-token test), closing the five open P0s that need a real deploy.
 
 ### Stage 6 — Rehearsal
 - Full dress rehearsal with real tokens, plus k6 at 50 VUs against real Gemini
 - **Gate:** p95 targets met (< 5s non-LLM, < 90s for hints and chat), and the outage-and-resume test passes against the real stack
+
+### Stage 7 — Operations runbook
+- `docs/OPS_RUNBOOK.html`: a self-contained, internal-only HTML runbook covering the system map, start/stop, health checks, code-promotion path (with costed CI/CD recommendations, not implemented), prod data updates, log retrieval, monitoring, incident response, what Streamlit can/cannot do, the exam-day sequence, and a prioritized recommendations list.
+- Documentation and recommendations only — no CI/CD implemented, no application code changed.
+- **Gate:** every command in it traces to a real file in this repo; every Streamlit claim checked against `streamlit_app/app.py`.
 
 ---
 

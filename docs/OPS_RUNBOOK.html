@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AITutorApp — Operations Runbook</title>
+<style>
+  :root {
+    --bg: #f8fafc; --fg: #0f172a; --muted: #475569; --card: #ffffff;
+    --border: #e2e8f0; --accent: #4f46e5; --code-bg: #0f172a; --code-fg: #e2e8f0;
+    --warn-bg: #fff7ed; --warn-border: #fb923c; --danger-bg: #fef2f2; --danger-border: #f43f5e;
+    --ok-bg: #ecfdf5; --ok-border: #10b981;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f172a; --fg: #e2e8f0; --muted: #94a3b8; --card: #1e293b;
+      --border: #334155; --accent: #818cf8; --code-bg: #020617; --code-fg: #cbd5e1;
+      --warn-bg: #422006; --warn-border: #f59e0b; --danger-bg: #450a0a; --danger-border: #f87171;
+      --ok-bg: #052e1c; --ok-border: #34d399; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 2rem 1.25rem 6rem; }
+  header.doc-header { border-bottom: 2px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.5rem; }
+  h1 { font-size: 1.7rem; margin: 0 0 0.25rem; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; }
+  .meta-line { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  nav.toc { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 2rem; }
+  nav.toc h2 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 0.6rem; }
+  nav.toc ol { margin: 0; padding-left: 1.25rem; columns: 2; column-gap: 2rem; }
+  nav.toc li { margin-bottom: 0.3rem; break-inside: avoid; }
+  nav.toc a { color: var(--accent); text-decoration: none; font-size: 0.92rem; }
+  nav.toc a:hover { text-decoration: underline; }
+  section { margin-bottom: 2.75rem; scroll-margin-top: 1rem; }
+  h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-top: 0; }
+  h3 { font-size: 1.05rem; color: var(--accent); }
+  p { margin: 0.6rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0.9rem 0; font-size: 0.88rem; }
+  th, td { border: 1px solid var(--border); padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+  th { background: var(--card); }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--card) 60%, transparent); }
+  code { background: var(--code-bg); color: var(--code-fg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 0.9rem 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  .callout { border-radius: 8px; padding: 0.75rem 1rem; margin: 0.9rem 0; font-size: 0.9rem; border: 1px solid; }
+  .callout.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+  .callout.danger { background: var(--danger-bg); border-color: var(--danger-border); }
+  .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
+  .callout strong { display: block; margin-bottom: 0.2rem; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } nav.toc ol { columns: 1; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1.1rem; }
+  footer { color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 3rem; }
+  .tag { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--accent); color: #fff; }
+  .todo { color: var(--warn-border); font-weight: 600; }
+  a.backtotop { font-size: 0.8rem; color: var(--muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-header">
+  <h1>AITutorApp — Operations Runbook</h1>
+  <div class="subtitle">Internal, working document. Not for distribution outside the project.</div>
+  <div class="meta-line">Written during Stage 5 (deploy), grounded in the real first-boot behavior observed that stage. Update this as the stack changes — it will drift otherwise.</div>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#map">1. System map</a></li>
+    <li><a href="#startstop">2. Starting and stopping</a></li>
+    <li><a href="#health">3. Health checks</a></li>
+    <li><a href="#promote">4. Promoting code to prod</a></li>
+    <li><a href="#data">5. Changing prod data</a></li>
+    <li><a href="#logs">6. Logs</a></li>
+    <li><a href="#monitoring">7. Monitoring</a></li>
+    <li><a href="#incident">8. Incident response</a></li>
+    <li><a href="#streamlit">9. Streamlit admin — can / cannot</a></li>
+    <li><a href="#examday">10. Exam day runbook</a></li>
+    <li><a href="#recommendations">11. Recommendations</a></li>
+  </ol>
+</nav>
+
+<section id="map">
+  <h2>1. System map</h2>
+  <p>One EC2 instance (tag <code>Name=aitutor-app</code>) behind a static Elastic IP runs the backend as four Docker Compose services. The frontend is a separate static export served from S3 via CloudFront. DNS for both is at the <code>da-tu.ca</code> registrar, outside AWS — <code>air.da-tu.ca</code> → CloudFront, <code>api.air.da-tu.ca</code> → the Elastic IP.</p>
+  <table>
+    <tr><th>Service</th><th>What it is</th><th>Reachable from</th><th>State</th></tr>
+    <tr><td><code>db</code></td><td><code>postgres:16-alpine</code></td><td>compose network only, port 5432 never exposed to host</td><td><code>postgres_data</code> named volume</td></tr>
+    <tr><td><code>api</code></td><td>FastAPI backend, built from the repo <code>Dockerfile</code></td><td>compose network only (port 8000, <code>expose</code> not <code>ports</code>) — nginx is the only path in</td><td><code>chroma_data</code> volume (RAG store); <code>prod/data</code> read-only bind mount</td></tr>
+    <tr><td><code>nginx</code></td><td><code>nginx:alpine</code>, reverse proxy + TLS termination</td><td>host ports 80 and 443 (the only ports the security group opens)</td><td>stateless; mounts <code>./certbot</code> and <code>./certbot-www</code> from the host</td></tr>
+    <tr><td><code>streamlit</code></td><td>Admin dashboard, same image as <code>api</code> with a different entrypoint</td><td><code>127.0.0.1:8501</code> only — loopback, not the internet</td><td>stateless; talks to <code>db</code> directly, bypassing the API entirely</td></tr>
+  </table>
+  <div class="callout warn">
+    <strong>Volume lifecycle</strong>
+    <code>docker compose down</code> keeps <code>postgres_data</code> and <code>chroma_data</code> — safe for a routine restart.
+    <code>docker compose down -v</code> destroys both. Never run <code>-v</code> against the live box without a fresh <code>pg_dump</code> in hand first.
+  </div>
+  <p><strong>What's not in Docker:</strong> the Elastic IP, security group, IAM roles, CloudWatch alarms, Cost Anomaly Detection, Budgets, and the two monthly EventBridge Scheduler rules all live in Terraform (<code>terraform/</code>), applied from a laptop with SSO credentials — never from the box itself.</p>
+</section>
+
+<section id="startstop">
+  <h2>2. Starting and stopping</h2>
+  <pre><code>aws ec2 start-instances --region us-west-2 --instance-ids &lt;id&gt;
+aws ec2 stop-instances  --region us-west-2 --instance-ids &lt;id&gt;</code></pre>
+  <p>Find the current instance ID with <code>terraform output instance_id</code> (from <code>terraform/</code>) or by tag: <code>aws ec2 describe-instances --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped</code>. The ID changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change) — don't hardcode it in scripts or muscle memory.</p>
+  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, syncs <code>prod/data/</code> from S3, builds and starts all four containers, waits for <code>api</code> to report healthy, re-seeds participants, attempts a cert issue/renew, and installs the nightly backup cron. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
+  <p>Watch it live:</p>
+  <pre><code># from a laptop with an active SSM session to the box
+aws ssm start-session --target &lt;instance-id&gt;
+sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
+  <h3>Restart granularity</h3>
+  <table>
+    <tr><th>Command</th><th>When</th><th>Effect</th></tr>
+    <tr><td><code>docker compose restart api</code></td><td>Code already on disk, just need the process to pick up a change (e.g. new <code>server_ready_questions.csv</code>)</td><td>Fast, no rebuild, no data loss. Re-runs RAG ingestion check (~2s if nothing changed).</td></tr>
+    <tr><td><code>docker compose up -d --build</code></td><td>Application code changed, need a fresh image</td><td>Rebuilds only what changed (Docker layer cache), recreates containers, keeps volumes.</td></tr>
+    <tr><td><code>sudo systemctl start aitutor-bootstrap.service</code></td><td>Want the full real deploy path exactly as a reboot would run it</td><td>Pulls <code>main</code> fresh, re-renders <code>.env</code>, re-syncs S3 data, rebuilds, re-seeds. This is the simplest single command for "get prod to match <code>main</code>" — see §4.</td></tr>
+    <tr><td><code>docker compose down</code> / <code>up -d</code></td><td>Rarely needed — full stack recreate, volumes preserved</td><td>Brief full outage across all four services.</td></tr>
+    <tr><td><code>aws ec2 reboot-instances</code></td><td>OS-level hang, not a container problem</td><td>Full boot cycle, runs <code>aitutor-bootstrap.service</code> again.</td></tr>
+  </table>
+  <p><strong>Monthly automatic boot:</strong> EventBridge Scheduler starts the instance at <code>08:00 UTC</code> on the 1st and stops it 30 minutes later, purely so certbot's renewal check runs at least once inside Let's Encrypt's 90-day cert window even if the box otherwise sits stopped between exams. This is the only unattended boot the system does.</p>
+</section>
+
+<section id="health">
+  <h2>3. Health checks</h2>
+  <p>One-command "is it up", no interactive session needed:</p>
+  <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+  --document-name AWS-RunShellScript \
+  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]'
+# then: aws ssm get-command-invocation --command-id &lt;id-from-above&gt; --instance-id &lt;id&gt;</code></pre>
+  <p>Or interactively: <code>aws ssm start-session --target &lt;id&gt;</code>, then <code>cd AITutorApp && docker compose ps</code>. Healthy looks like all four containers <code>Up</code>, with <code>api</code> and <code>db</code> additionally showing <code>(healthy)</code> — <code>nginx</code> and <code>streamlit</code> have no healthcheck defined, so "running" is the only signal for them.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Over the network</h3>
+      <pre><code># plain HTTP always answers, even pre-cert
+curl -sI http://&lt;elastic-ip&gt;/
+
+# once DNS + cert are live
+curl -sI https://api.air.da-tu.ca/
+openssl s_client -connect api.air.da-tu.ca:443 \
+  -servername api.air.da-tu.ca &lt;/dev/null 2&gt;/dev/null \
+  | openssl x509 -noout -enddate</code></pre>
+    </div>
+    <div class="card">
+      <h3>Cert expiry</h3>
+      <pre><code>sudo docker run --rm \
+  -v $(pwd)/certbot:/etc/letsencrypt \
+  certbot/certbot certificates</code></pre>
+      <p style="margin:0.4rem 0 0;font-size:0.85rem;">Renewal runs automatically on every boot; the monthly EventBridge boot exists specifically so this happens even during a long stopped stretch. Worth a manual glance before an exam regardless — see §10.</p>
+    </div>
+  </div>
+  <p>App-level logs to watch on a slow or failing boot: <code>docker compose logs api</code> — the healthcheck's <code>start_period: 120s</code> exists because RAG singleton init can take a moment; a <code>curl</code> against <code>/</code> failing in the first two minutes after a build is expected, not a bug.</p>
+</section>
+
+<section id="promote">
+  <h2>4. Promoting code from GitHub to prod</h2>
+  <p><strong>Suggestions only — nothing below is implemented.</strong></p>
+  <p><strong>The image is built on the box, not locally or in AWS CI.</strong> There is no ECR, no CodeBuild, no separate build step anywhere. <code>docker compose up -d --build</code> on the EC2 instance itself is the entire build pipeline.</p>
+  <h3>Today's actual promotion path</h3>
+  <ol>
+    <li>Merge to <code>main</code>, push.</li>
+    <li>Either wait for the next reboot (only guaranteed monthly, via EventBridge), or trigger it now:
+      <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+  --document-name AWS-RunShellScript \
+  --parameters commands='["sudo systemctl start aitutor-bootstrap.service"]'</code></pre>
+    </li>
+  </ol>
+  <p>That's the whole thing. Observed cost this stage: roughly 1–3 minutes depending on build-cache warmth, with automatic rollback-free re-seeding and cert-renewal folded in for free. This is genuinely simple, which is the strongest argument for leaving it alone.</p>
+  <h3>Options, costed honestly</h3>
+  <table>
+    <tr><th>Option</th><th>What it buys</th><th>What it costs</th><th>Recommendation</th></tr>
+    <tr><td><strong>Do nothing</strong> — keep the manual SSM trigger above</td><td>Zero new surface area, zero new failure mode</td><td>A human has to remember to run the command after merging</td><td><span class="tag">Default</span> Right-sized for a system that runs a handful of exam days a year.</td></tr>
+    <tr><td><strong>GitHub Actions running tests on push</strong></td><td>Backend pytest (114 tests) and the 6-spec Playwright E2E suite currently only ever run on a laptop. CI catches a regression before it's merged, with zero deploy risk.</td><td>One workflow file. No AWS credentials needed, no infra change.</td><td><span class="tag">Recommended</span> The one option here with real value and no downside — see §11.</td></tr>
+    <tr><td><strong>Actions triggering the SSM command above on merge</strong></td><td>Removes the "someone has to remember" step</td><td>Needs a GitHub OIDC role trusted by AWS IAM (new <code>terraform/iam.tf</code> resource), and now every merge to <code>main</code> can change prod with no human in the loop</td><td>Not recommended for a system whose failure mode is a live exam. If ever done, gate it so it only fires on a manual workflow_dispatch, not every push.</td></tr>
+    <tr><td><strong>Build images in CI, push to ECR</strong></td><td>Removes the on-box build entirely; the box would <code>docker pull</code> instead</td><td>New ECR repo (~$1/mo), a registry auth step in <code>ec2-bootstrap.sh</code>, and a second artifact (image tag) to keep in sync with the git ref it came from</td><td>Not worth it at this scale. The on-box build already takes under 3 minutes and has no cost.</td></tr>
+  </table>
+</section>
+
+<section id="data">
+  <h2>5. Changing prod data</h2>
+  <div class="callout ok">
+    <strong>Safe mid-exam</strong>
+    Adding or editing a participant. <code>prod/seed_participants.py</code> only ever touches <code>token</code>/<code>name</code>/<code>identifier</code>/<code>group</code>/<code>intervention</code> — it never writes <code>status</code>, <code>active_session_id</code>, <code>started_at</code>, or <code>last_seen_at</code> on a row that already exists, so a live student's session is untouched by a re-seed.
+  </div>
+  <div class="callout danger">
+    <strong>Not safe mid-exam</strong>
+    Changing <code>server_ready_questions.csv</code> under a student who is mid-attempt. Questions load into memory once at <code>api</code> boot (<code>app/main.py</code>); nothing reloads them live, deliberately — silently swapping questions under an in-progress student would be worse than requiring an explicit restart.
+  </div>
+  <h3>Participants</h3>
+  <pre><code># 1. edit prod/data/participants.csv locally
+# 2. mint tokens + upsert manifest (.venv active, local DB running)
+python prod/generate_tokens.py
+
+# 3. push to S3 and re-seed the live box, no reboot — ~10 seconds
+./scripts/update-prod-data.sh</code></pre>
+  <p><code>update-prod-data.sh</code> syncs <code>prod/data/</code> to <code>s3://aitutor-434195712367-ops/artifacts/prod-data/</code>, then finds the running instance by the <code>aitutor-app</code> tag and runs <code>prod/seed_participants.py</code> on it over SSM. If the box is currently stopped (normal between exams), it just updates S3 and logs that the next boot will pick it up automatically — no error, no manual follow-up needed.</p>
+  <h3>Questions</h3>
+  <pre><code># 1. edit prod/data/new_evaluation_questions.csv locally
+# 2. regenerate the server-ready CSV
+python prod/prepare_data.py
+
+# 3. push to S3 (update-prod-data.sh does not do this part today)
+aws s3 sync prod/data/ s3://aitutor-434195712367-ops/artifacts/prod-data/ --region us-west-2
+
+# 4. pick up the change — restart, not a full rebuild
+aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+  --document-name AWS-RunShellScript \
+  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose restart api"]'</code></pre>
+  <h3>Source PDF (RAG corpus)</h3>
+  <p>Replacing <code>prod/data/source.pdf</code> and restarting <code>api</code> re-triggers ingestion automatically — <code>ingest_pdf()</code> checks whether it's needed on every boot. Measured cost for the current 7-page source: about 2 seconds. Follows the same S3-sync-then-restart path as questions above.</p>
+</section>
+
+<section id="logs">
+  <h2>6. Logs</h2>
+  <table>
+    <tr><th>Source</th><th>Command</th><th>Retention</th></tr>
+    <tr><td><code>api</code> / <code>db</code> / <code>nginx</code> / <code>streamlit</code> container logs</td><td><code>docker compose logs &lt;service&gt;</code> (add <code>-f</code> to follow, <code>--tail 200</code> to limit)</td><td>10MB × 3 files per service (<code>x-logging</code> anchor in <code>docker-compose.yml</code>) — roughly 30MB per service before the oldest rotates out</td></tr>
+    <tr><td>Boot / bootstrap sequence</td><td><code>sudo journalctl -u aitutor-bootstrap.service</code> (add <code>--since "1 hour ago"</code> etc.)</td><td>Whatever the box's local journald retention allows — not infinite, don't rely on it past a few boots</td></tr>
+    <tr><td>nginx access/error</td><td>Same as the nginx container log — the image logs to stdout/stderr by default, no separate file</td><td>Same 30MB cap</td></tr>
+    <tr><td>Nightly backup runs</td><td><code>cat /home/ec2-user/AITutorApp/backups/cron.log</code></td><td>Not rotated by the same mechanism — grows on the host filesystem, worth an eye during disk-full triage (§8)</td></tr>
+    <tr><td>Behavioral data</td><td>Streamlit's <em>Export Data</em> view (interaction/chat/intervention/action logs as CSV) — see §9</td><td>Lives in Postgres, not log files; export doesn't consume it</td></tr>
+  </table>
+  <p><strong>Get logs off the box before stopping it</strong> — container logs do not survive <code>docker compose down</code> or an instance stop, only the underlying data volumes do:</p>
+  <pre><code>docker compose logs --no-color &gt; /tmp/api.log
+aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%dT%H%M%SZ)-api.log</code></pre>
+  <div class="callout warn">
+    <strong>Known gap</strong>
+    No correlation ID exists anywhere in the stack, and logging is plain text, not structured. "It broke around 10:42" currently means grepping four separate log streams by timestamp and guessing which lines belong together. See §11 — this is the highest-value thing not yet built.
+  </div>
+</section>
+
+<section id="monitoring">
+  <h2>7. Monitoring</h2>
+  <p>Everything below routes to <strong>pedram.agand@gmail.com</strong> via the <code>aitutor-alerts</code> SNS topic. <strong>The email subscription needs a one-time click to confirm</strong> — until that's done, every alarm below fires silently into the void.</p>
+  <table>
+    <tr><th>Alarm</th><th>Trigger</th><th>Source</th></tr>
+    <tr><td>EC2 status check failed</td><td><code>StatusCheckFailed</code> ≥ 1, 2 consecutive periods (2 min)</td><td>CloudWatch metric alarm, instance-level hardware/network fault</td></tr>
+    <tr><td>Sustained high CPU</td><td>Average CPU ≥ 90% for 3 consecutive 5-minute periods (15 min)</td><td>CloudWatch metric alarm — worth watching during the k6 load test and live during an exam</td></tr>
+    <tr><td>Monthly budget</td><td>80% of $15 actual, 100% of $15 forecasted</td><td>AWS Budgets, scoped to the <code>Project=AITutorApp</code> tag</td></tr>
+    <tr><td>Cost anomaly</td><td>Any day's anomalous spend ≥ $1 total impact</td><td>Cost Explorer Anomaly Detection, daily frequency</td></tr>
+  </table>
+  <p><strong>In-app LLM caps</strong> — not a CloudWatch alarm, but the thing most likely to actually bind during an exam: 150 calls/user/day, 10,000 calls/day globally (<code>app/services/llm_quota.py</code>). Watch live in Streamlit's <em>System-Wide Analytics → LLM Usage (last 24h)</em> panel — shows the rolling global count and headroom remaining, plus top consumers. No alert fires when the cap is approached; it just starts rejecting hint/chat requests. Worth a manual glance mid-exam if usage looks unusually heavy.</p>
+</section>
+
+<section id="incident">
+  <h2>8. Incident response</h2>
+  <table>
+    <tr><th>Symptom</th><th>Command</th><th>Notes</th></tr>
+    <tr><td><code>api</code> down or crash-looping</td><td><code>docker compose logs --tail 100 api</code>, then <code>docker compose restart api</code></td><td>If it won't come back healthy, <code>docker compose up -d --build</code> to rule out a stale image.</td></tr>
+    <tr><td>Postgres unreachable</td><td><code>docker compose ps db</code>; <code>docker compose exec db pg_isready -U aitutor -d aitutor_db</code></td><td>If the container itself is down, <code>docker compose up -d db</code>; <code>api</code> depends on its healthcheck and will wait.</td></tr>
+    <tr><td>Cert expired, or certbot failed on last renewal</td><td><code>docker run --rm -v $(pwd)/certbot:/etc/letsencrypt certbot/certbot certificates</code></td><td><strong>nginx does not auto-fallback to plain HTTP if a previously-issued cert simply expires</strong> — <code>ec2-bootstrap.sh</code> only writes <code>plain.conf</code> when no cert exists yet at all. An expired-but-present cert keeps serving on the (now invalid) <code>tls.conf</code> until a renewal succeeds. Force a re-run: SSM in, <code>sudo systemctl start aitutor-bootstrap.service</code>.</td></tr>
+    <tr><td>Disk full</td><td><code>df -h</code> over SSM</td><td>Logs and Chroma share the 30GB root volume. <code>docker image prune -f</code> (bootstrap already does this on every boot), check <code>backups/cron.log</code> and old dumps in <code>./backups/</code> if retention pruning (<code>BACKUP_RETENTION_DAYS</code>, default 90 in prod) hasn't caught up.</td></tr>
+    <tr><td>Student locked to the wrong device</td><td>Streamlit → student's row → <em>Clear Session Lock</em></td><td>See §9. No CLI/API equivalent needed for this one — it's the intended path.</td></tr>
+    <tr><td>Student needs more time, or a whole cohort does</td><td>Streamlit → per-student <em>Adjust Timer</em> / <em>Reset Timer to NOW</em>, or <em>Exam Control → Apply to All Unsubmitted Sessions</em> for a bulk extension</td><td>Bulk extension is the mid-outage remedy — it reaches already-open tabs within one 25s heartbeat, no reload needed.</td></tr>
+    <tr><td>LLM quota exhausted (per-user or global)</td><td>Check Streamlit's LLM Usage panel to confirm</td><td><span class="todo">Gap:</span> raising the cap requires editing <code>.env</code> on the box and restarting <code>api</code> — no admin-UI toggle exists. See §11.</td></tr>
+    <tr><td>Gemini API down or rate-limiting</td><td>Check <code>docker compose logs api</code> for the LLM call error</td><td><span class="todo">Gap:</span> there is currently no graceful degradation — a hint/chat request just fails with whatever the underlying exception surfaces as. This is an open P1 in <code>PRELAUNCH_CHECKLIST.md</code> §C, not yet fixed.</td></tr>
+    <tr><td>Box completely unreachable (SSM and HTTP both dead)</td><td><code>aws ec2 reboot-instances --instance-ids &lt;id&gt;</code>; if that doesn't recover it, stop/start (new hardware); last resort, restore the most recent EBS snapshot to a new volume and re-attach</td><td>Snapshot-level instance recovery isn't scripted anywhere in this repo — it's a manual EC2 console/CLI procedure. Database-level recovery is scripted: see below.</td></tr>
+    <tr><td>Database corrupted or needs point-in-time recovery</td><td><code>DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh &lt;dump-file&gt;</code></td><td>Requires an explicit dump file argument by design — cannot silently overwrite prod with a stale environment. Validate a dump is actually restorable with <code>./scripts/restore_drill.sh</code> before you need it for real (creates a scratch DB, compares row counts, cleans up after itself).</td></tr>
+  </table>
+</section>
+
+<section id="streamlit">
+  <h2>9. Streamlit admin — what you can and cannot do</h2>
+  <p>Reach it (never exposed publicly — <code>127.0.0.1:8501</code> on the host):</p>
+  <pre><code>aws ssm start-session --target &lt;id&gt; \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=8501,localPortNumber=8501
+# then open http://localhost:8501</code></pre>
+  <div class="callout danger">
+    <strong>It bypasses the API entirely</strong>
+    Streamlit talks straight to Postgres (<code>streamlit_app/app.py</code>), not through FastAPI — none of the API's row-level authorization applies here. That's by design (it's the trusted admin path), but it means every action below is <strong>unguarded</strong>: no confirmation dialogs on destructive buttons beyond Streamlit's own click-to-submit.
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Can</h3>
+      <ul>
+        <li>View system-wide analytics: A/B distribution, hint-style preferences, per-user summary, correctness %</li>
+        <li><strong>Exam Control:</strong> bulk-extend (or reduce) every unsubmitted session's timer at once, with an affected-count preview</li>
+        <li>View LLM usage (24h rolling, global + top consumers)</li>
+        <li>Export any of Interaction/Chat/Intervention/Action logs as CSV, filtered by user/date/type</li>
+        <li>Per student: view full profile, skill-mastery trajectory, interaction history, hints & interventions, chat log, action log</li>
+        <li>Per student: edit A/B group, hint-style preference, intervention preference</li>
+        <li>Per student: <em>Reset Timer to NOW</em>, <em>Adjust Timer</em> (± minutes), <em>Clear Session Lock</em></li>
+        <li>Per student: <em>Reset Progress</em> (wipes interaction history + mastery, resets to unused) — irreversible</li>
+        <li>Per student: <em>Delete User</em> — permanently, irreversible</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Cannot — use instead</h3>
+      <ul>
+        <li>Add/edit participants → <code>update-prod-data.sh</code> (§5)</li>
+        <li>Change questions → S3 sync + <code>docker compose restart api</code> (§5)</li>
+        <li>Restart/stop/start any service → SSM + <code>docker compose</code> (§2, §8)</li>
+        <li>Read container/boot logs → <code>docker compose logs</code> / <code>journalctl</code> (§6)</li>
+        <li>Change env config (API keys, LLM caps, CORS origin) → edit <code>.env</code> on the box over SSM, then restart</li>
+        <li>Take or restore a backup → <code>scripts/backup.sh</code> / <code>restore.sh</code> (§8)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="examday">
+  <h2>10. Exam day runbook</h2>
+  <p>Sequenced from <code>PRELAUNCH_CHECKLIST.md</code> §K, folded into one list:</p>
+  <ol>
+    <li><strong>Snapshot before starting.</strong> Take an EBS snapshot of the current (stopped) volume before <code>aws ec2 start-instances</code>, so there's a clean pre-exam restore point.</li>
+    <li><strong>Start the instance</strong>, watch <code>aitutor-bootstrap.service</code> complete over SSM (§2, §3).</li>
+    <li><strong>Verify cert expiry</strong> is comfortably in the future (§3) — don't assume the monthly renewal boot caught everything.</li>
+    <li><strong>Confirm <code>EXAM_DURATION_MS</code></strong> on the box reads <code>1500000</code> (25 minutes), not a leftover 20-minute default: <code>docker compose exec api env | grep EXAM_DURATION_MS</code>.</li>
+    <li><strong>Smoke test one real token</strong> end to end — login, answer, hint, chat, submit, results — before handing tokens to students.</li>
+    <li><strong>Expect a slow first hint.</strong> RAG cold start is ~2s measured, but the first real request after boot still pays container warm-up cost on top. Not a bug if the very first hint feels sluggish.</li>
+    <li><strong>Keep an SSM session open</strong> to the box and a port-forward tunnel to Streamlit (§9) for the full exam window, so timer/lock issues can be handled in real time.</li>
+    <li><strong>After the exam:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>) <em>before</em> stopping the instance — data survives a stop regardless, but a portable dump plus a snapshot is the belt-and-suspenders version.</li>
+    <li><strong>Stop the instance</strong> once data is safely off-box. It should not sit running between exams.</li>
+  </ol>
+</section>
+
+<section id="recommendations">
+  <h2>11. Recommendations</h2>
+  <p>Nothing here is implemented — this is the prioritized "if I had more time" list, each with a real cost estimate.</p>
+  <table>
+    <tr><th>#</th><th>Recommendation</th><th>Cost</th><th>Why</th></tr>
+    <tr><td>1</td><td>Request logging middleware — one JSON line per request (method, path, status, <code>duration_ms</code>, <code>user_id</code>, <code>request_id</code>)</td><td>~40 lines of code</td><td>Converts "it broke at 10:42" from grepping four log streams to one query. The single highest-value gap in §6/§8.</td></tr>
+    <tr><td>2</td><td>Structured (JSON) logging in <code>app/utils/logger.py</code></td><td>Small — mostly a formatter swap</td><td>Makes #1 actually queryable instead of another wall of text.</td></tr>
+    <tr><td>3</td><td>Latency metrics (surface hint/chat <code>duration_ms</code> somewhere visible)</td><td>Falls out of #1 almost for free</td><td>"Were hints slow during the exam?" currently has no answer after the fact.</td></tr>
+    <tr><td>4</td><td>GitHub Actions running pytest + Playwright on every push</td><td>One workflow file, no AWS access needed</td><td>The tests already exist and are good (114 pytest, 6 E2E specs) — they just never run automatically. Zero deploy risk, real regression-catching value. See §4.</td></tr>
+    <tr><td>5</td><td>Graceful LLM failure handling — a clear "hint unavailable, try again" instead of a raw error on Gemini downtime/429</td><td>Small, contained to <code>hints.py</code>/<code>chat.py</code> error paths</td><td>Currently an open gap (§8) with no student-facing fallback.</td></tr>
+    <tr><td>6</td><td>An admin-UI toggle for the LLM caps, instead of an <code>.env</code> edit + restart</td><td>Small — one Streamlit form + a settings write path</td><td>Right now, hitting the global cap mid-exam means an SSM session and a restart under time pressure. See §8.</td></tr>
+    <tr><td>7</td><td>Error alerting — page or email on an unhandled 500</td><td>Small, e.g. a CloudWatch Logs metric filter + alarm on the existing SNS topic</td><td>Currently a 500 goes to stdout and nowhere else. Acceptable only if a proctor is actively watching Streamlit.</td></tr>
+  </table>
+  <div class="callout ok">
+    <strong>A process note worth keeping, not just a code recommendation</strong>
+    Two real incidents this stage were the same bug class: a shell pipeline under <code>set -o pipefail</code> where one stage (<code>grep -m1</code>, or <code>grep -v</code> on empty input) exits non-zero for a benign reason and silently kills the whole script. Worth a quick pipefail-audit pass — <code>grep -n '|.*|' scripts/*.sh terraform/templates/*.tftpl</code> as a starting point — any time these bootstrap scripts are next touched.
+  </div>
+  <div class="callout warn">
+    <strong>AWS catalog drift is real, not hypothetical</strong>
+    The Stage 4 plan sized the root EBS volume at 20GB; by Stage 5's apply, AWS's current AL2023 AMI (fetched via <code>most_recent = true</code>) needed 30GB just for its own snapshot. Nothing in the repo changed — Amazon's base image did. Worth a <code>terraform plan</code> drift check before any future apply that's been sitting for a while, even with no local changes.
+  </div>
+</section>
+
+<footer>
+  AITutorApp — internal ops runbook. Keep this in sync with <code>PRELAUNCH_CHECKLIST.md</code> and <code>CLAUDE.md</code>; when they disagree, the checklist and the actual repo state win.
+  <br><a class="backtotop" href="#top">back to top</a>
+</footer>
+
+</div>
+</body>
+</html>

@@ -13,8 +13,16 @@ data "aws_ami" "al2023" {
   }
 }
 
+# Stage 5, F4/D5: it's the CloudFront origin hostname and is already with
+# the registrar (indirectly, via the CNAME pointing at CloudFront, but
+# re-obtaining a released address means new DNS work regardless). Guard
+# against an untargeted `terraform destroy` releasing it permanently.
 resource "aws_eip" "api" {
   domain = "vpc"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = {
     Name = "aitutor-api-eip"

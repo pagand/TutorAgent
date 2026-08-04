@@ -101,38 +101,7 @@ resource "aws_ce_anomaly_subscription" "aitutor" {
   }
 }
 
-# Monthly 30-minute boot so certbot renews the Let's Encrypt cert even if
-# the box otherwise sits stopped between exams for the full 90-day
-# validity window. scripts/ec2-bootstrap.sh's systemd unit runs on every
-# boot this schedule triggers.
-resource "aws_scheduler_schedule" "monthly_start" {
-  name                         = "aitutor-monthly-start"
-  schedule_expression          = "cron(0 8 1 * ? *)"
-  schedule_expression_timezone = "UTC"
-
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  target {
-    arn      = "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
-    role_arn = aws_iam_role.scheduler.arn
-    input    = jsonencode({ InstanceIds = [aws_instance.app.id] })
-  }
-}
-
-resource "aws_scheduler_schedule" "monthly_stop" {
-  name                         = "aitutor-monthly-stop"
-  schedule_expression          = "cron(30 8 1 * ? *)"
-  schedule_expression_timezone = "UTC"
-
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  target {
-    arn      = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
-    role_arn = aws_iam_role.scheduler.arn
-    input    = jsonencode({ InstanceIds = [aws_instance.app.id] })
-  }
-}
+# Stage 5, D2: the monthly boot-for-cert-renewal schedules are gone along
+# with certbot itself. Their only purpose was keeping a Let's Encrypt cert
+# alive on a box that sits stopped between exams; TLS now terminates at
+# CloudFront (D1), which needs no renewal on this side at all.

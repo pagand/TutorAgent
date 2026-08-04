@@ -57,3 +57,13 @@ variable "backup_retention_days" {
   type        = number
   default     = 90
 }
+
+# Stage 5: the distribution is created before the registrar has published
+# either DNS record, so it must come up on its own d<xxxx>.cloudfront.net
+# domain first. Flip this once both CNAMEs (ACM validation + the frontend
+# alias) are live, then apply again to attach the real domain and cert.
+variable "enable_custom_domain" {
+  description = "Attach air.da-tu.ca + the ACM cert to the CloudFront distribution. Keep false until the registrar has published both CNAMEs."
+  type        = bool
+  default     = false
+}

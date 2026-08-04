@@ -24,10 +24,25 @@ resource "aws_acm_certificate" "frontend" {
   }
 }
 
+# Waits on the registrar to publish the validation CNAME, so it stays
+# conditional on enable_custom_domain: without that, `apply` blocks for up
+# to 45 minutes on a record that doesn't exist yet. aws_acm_certificate
+# itself stays unconditional - it's what produces the validation CNAME to
+# hand the registrar in the first place.
 resource "aws_acm_certificate_validation" "frontend" {
+  count = var.enable_custom_domain ? 1 : 0
+
   provider                = aws.us_east_1
   certificate_arn         = aws_acm_certificate.frontend.arn
   validation_record_fqdns = [for r in aws_acm_certificate.frontend.domain_validation_options : r.resource_record_name]
+}
+
+# Shared secret the origin (nginx) requires on every request, so the SG
+# prefix-list lock (network.tf) isn't the only thing standing between the
+# public internet and the box.
+data "aws_ssm_parameter" "origin_secret" {
+  name            = "/aitutor/prod/origin_secret"
+  with_decryption = true
 }
 
 resource "aws_cloudfront_origin_access_control" "frontend" {
@@ -64,10 +79,11 @@ resource "aws_cloudfront_function" "index_rewrite" {
 }
 
 # nginx already sets these for the API (Stage 3); the static frontend had
-# none. Cost: $0. connect-src is scoped to the real API domain since the
-# static export talks to nothing else. style-src allows 'unsafe-inline'
-# because Tailwind's compiled output and Next's static export rely on it;
-# there is no inline script anywhere in the export, so script-src stays strict.
+# none. Cost: $0. connect-src is 'self' - Stage 5 moved the API behind this
+# same distribution at /api/*, so it's same-origin now, not a separate
+# domain. style-src allows 'unsafe-inline' because Tailwind's compiled
+# output and Next's static export rely on it; there is no inline script
+# anywhere in the export, so script-src stays strict.
 resource "aws_cloudfront_response_headers_policy" "frontend" {
   name = "aitutor-frontend-security-headers"
 
@@ -90,7 +106,7 @@ resource "aws_cloudfront_response_headers_policy" "frontend" {
       override                   = true
     }
     content_security_policy {
-      content_security_policy = "default-src 'self'; connect-src 'self' https://${var.domain_api}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
+      content_security_policy = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
       override                = true
     }
   }
@@ -100,12 +116,38 @@ resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
-  aliases             = [var.domain_frontend]
+  aliases             = var.enable_custom_domain ? [var.domain_frontend] : []
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
     origin_id                = "frontend-s3"
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
+  }
+
+  # Stage 5, D1: the API lives behind this same distribution rather than
+  # its own domain. Plaintext to the origin (D3) - CloudFront requires a
+  # publicly-trusted cert to speak HTTPS to a custom origin, and keeping
+  # one alive would mean keeping certbot (D2). Origin traffic is not
+  # encrypted between CloudFront and EC2. This is accepted because the
+  # threat model prioritizes operational reliability over protection from
+  # network interception. origin_ssl_protocols is required by the provider
+  # schema even though origin_protocol_policy never uses it here.
+  origin {
+    domain_name = aws_eip.api.public_dns
+    origin_id   = "ec2-api"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+      origin_read_timeout    = 60
+    }
+
+    custom_header {
+      name  = "X-Origin-Secret"
+      value = data.aws_ssm_parameter.origin_secret.value
+    }
   }
 
   default_cache_behavior {
@@ -124,16 +166,46 @@ resource "aws_cloudfront_distribution" "frontend" {
     }
   }
 
+  # nginx (not a CloudFront Function) strips the /api prefix before
+  # proxying to the app - see nginx/available/app.conf. No response-headers
+  # policy here: nginx already sets the API's security headers, and the
+  # frontend policy's CSP is meaningless on JSON responses.
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "ec2-api"
+    viewer_protocol_policy = "https-only"
+    compress               = true
+
+    cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # AWS managed: CachingDisabled
+    origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac" # AWS managed: AllViewerExceptHostHeader
+  }
+
   restrictions {
     geo_restriction {
       restriction_type = "none"
     }
   }
 
-  viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.frontend.certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+  # Serves on the default d<xxxx>.cloudfront.net cert until
+  # enable_custom_domain flips true (see aws_acm_certificate_validation
+  # above) - lets everything downstream (frontend deploy, /api/*
+  # migration, V1-V9 verification) proceed without waiting on DNS.
+  dynamic "viewer_certificate" {
+    for_each = var.enable_custom_domain ? [1] : []
+    content {
+      acm_certificate_arn      = aws_acm_certificate_validation.frontend[0].certificate_arn
+      ssl_support_method       = "sni-only"
+      minimum_protocol_version = "TLSv1.2_2021"
+    }
+  }
+
+  dynamic "viewer_certificate" {
+    for_each = var.enable_custom_domain ? [] : [1]
+    content {
+      cloudfront_default_certificate = true
+    }
   }
 
   tags = {

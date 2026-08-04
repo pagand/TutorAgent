@@ -47,28 +47,35 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 # No 22: SSM Session Manager is the only shell access path (recorded
-# decision, checklist section J). Egress is open so docker pulls, apt
-# updates, certbot, and SSM's own outbound channel all work.
+# decision, checklist section J). No 443: certbot is gone (D2), TLS
+# terminates at CloudFront (D1), and the CloudFront-to-origin hop is
+# plaintext by design (D3). Port 80 accepts only CloudFront's published
+# origin-facing ranges, not the open internet - direct requests to the
+# Elastic IP now time out at the SG rather than reaching nginx (V5).
+# Egress is open so docker pulls, dnf updates, and SSM's own outbound
+# channel all work.
 resource "aws_security_group" "app" {
-  name        = "aitutor-app"
-  description = "AITutorApp EC2: 80/443 inbound only, no SSH"
+  # name_prefix, not a fixed name: description is immutable on this
+  # resource, so this Stage 5 edit forces a replace. aws_instance.app
+  # references this SG by id (compute.tf), never by name, so a generated
+  # suffix is safe - but a fixed name would collide with itself under
+  # create_before_destroy, since AWS requires SG names to be unique per
+  # VPC and the old SG is still alive when the new one is created.
+  name_prefix = "aitutor-app-"
+  description = "AITutorApp EC2: port 80 from CloudFront only, no SSH, no direct HTTPS"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "HTTP from CloudFront origin-facing ranges only"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
   }
 
   egress {
@@ -80,5 +87,9 @@ resource "aws_security_group" "app" {
 
   tags = {
     Name = "aitutor-app-sg"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }

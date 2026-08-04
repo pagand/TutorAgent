@@ -50,14 +50,9 @@ evaluation/
 # Production data — answer key and participant tokens; arrives via bind mount only
 prod/data/
 
-# EC2 runtime-selected nginx config and certbot state — never committed,
-# rendered/populated by scripts/ec2-bootstrap.sh. certbot writes root-owned
-# files here on the host, which the non-root docker build client can't read
-# as part of the build context once they exist — every `docker compose
-# build` after the first certbot run would fail without this exclusion.
+# EC2 runtime-selected nginx config — never committed, rendered by
+# scripts/ec2-bootstrap.sh on every boot.
 nginx/conf.d/
-certbot/
-certbot-www/
 
 # OS
 .DS_Store

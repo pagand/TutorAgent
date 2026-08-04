@@ -1,15 +1,10 @@
 output "dns_records_to_add" {
-  description = "Records to add at the da-tu.ca registrar. The apply is two-phase - see the plan's Apply order."
+  description = "Records to add at the da-tu.ca registrar. api.air.da-tu.ca no longer exists (Stage 5, D1/D4) - the API is served from this same distribution at /api/*."
   value = {
     acm_validation_cname = {
       name  = tolist(aws_acm_certificate.frontend.domain_validation_options)[0].resource_record_name
       type  = tolist(aws_acm_certificate.frontend.domain_validation_options)[0].resource_record_type
       value = tolist(aws_acm_certificate.frontend.domain_validation_options)[0].resource_record_value
-    }
-    api_a_record = {
-      name  = var.domain_api
-      type  = "A"
-      value = aws_eip.api.public_ip
     }
     frontend_cname_record = {
       name  = var.domain_frontend

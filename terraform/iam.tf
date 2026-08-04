@@ -37,22 +37,46 @@ data "aws_iam_policy_document" "instance_inline" {
     resources = ["arn:aws:kms:us-west-2:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"]
   }
 
-  # Read-only on artifacts/ (prod/data delivery), write-only on the
-  # backup bucket. Deliberately excludes the ops bucket's terraform/
-  # prefix, which holds state - the instance role never touches it.
+  # Read-only on artifacts/ (prod/data delivery). Deliberately excludes
+  # the ops bucket's terraform/ prefix, which holds state - the instance
+  # role never touches it.
   statement {
-    sid     = "ReadProdDataArtifacts"
-    actions = ["s3:GetObject", "s3:ListBucket"]
-    resources = [
-      "arn:aws:s3:::${local.ops_bucket}",
-      "arn:aws:s3:::${local.ops_bucket}/artifacts/*",
-    ]
+    sid       = "ReadProdDataArtifacts"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${local.ops_bucket}/artifacts/*"]
+  }
+
+  # ListBucket takes a bucket-level resource and an s3:prefix condition,
+  # not an object-level resource - it can't share a statement with
+  # GetObject above. s3:prefix is only ever present on ListBucket calls,
+  # so a shared statement would silently deny every GetObject (the
+  # condition key is absent on GetObject requests, so StringLike never
+  # matches and the statement grants nothing for it).
+  statement {
+    sid       = "ListProdDataArtifacts"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${local.ops_bucket}"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["artifacts/*"]
+    }
+  }
+
+  # Stage 5, F3: read-write, not write-only. Backups were previously
+  # write-only on this bucket, so nothing on the box could pull a dump
+  # back down - no restore path existed at all.
+  statement {
+    sid       = "ReadWriteBackups"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.backups.arn}/*"]
   }
 
   statement {
-    sid       = "WriteBackups"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.backups.arn}/*"]
+    sid       = "ListBackups"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.backups.arn]
   }
 }
 
@@ -67,33 +91,6 @@ resource "aws_iam_instance_profile" "instance" {
   role = aws_iam_role.instance.name
 }
 
-# EventBridge Scheduler's own execution role, distinct from the instance
-# role: it only needs to call ec2:StartInstances/StopInstances.
-data "aws_iam_policy_document" "scheduler_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["scheduler.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "scheduler" {
-  name               = "aitutor-scheduler-role"
-  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
-}
-
-data "aws_iam_policy_document" "scheduler_inline" {
-  statement {
-    sid       = "StartStopInstance"
-    actions   = ["ec2:StartInstances", "ec2:StopInstances"]
-    resources = ["arn:aws:ec2:us-west-2:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.app.id}"]
-  }
-}
-
-resource "aws_iam_role_policy" "scheduler_inline" {
-  name   = "aitutor-scheduler-inline"
-  role   = aws_iam_role.scheduler.id
-  policy = data.aws_iam_policy_document.scheduler_inline.json
-}
+# Stage 5, D2: the scheduler role existed only to run the monthly
+# start/stop EventBridge schedules for certbot renewal (guardrails.tf),
+# both deleted along with certbot.

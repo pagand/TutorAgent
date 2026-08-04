@@ -46,11 +46,9 @@ terraform/*.tfstate*
 terraform/*.tfvars
 terraform/*.tfplan
 
-# EC2 runtime-selected nginx config and certbot state — never committed,
-# rendered/populated by scripts/ec2-bootstrap.sh
+# EC2 runtime-selected nginx config — never committed, rendered by
+# scripts/ec2-bootstrap.sh on every boot.
 nginx/conf.d/
-certbot/
-certbot-www/
 
 # # LLM plannar
 DEVELOPMENT_PLAN.md

@@ -47,17 +47,17 @@ services:
       start_period: 120s
       retries: 3
 
+  # TLS terminates at CloudFront (Stage 5, D1); nginx only ever serves
+  # plain HTTP, so no 443 mapping and no certbot mounts.
   nginx:
     image: nginx:alpine
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./certbot:/etc/letsencrypt
-      - ./certbot-www:/var/www/certbot
+      - ./nginx/cloudfront-origin-ips.conf:/etc/nginx/cloudfront-origin-ips.conf:ro
     depends_on:
       - api
     mem_limit: 128m

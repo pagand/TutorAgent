@@ -50,7 +50,12 @@ terraform/*.tfplan
 # scripts/ec2-bootstrap.sh on every boot.
 nginx/conf.d/
 
-# # LLM plannar
+# Local planning and design docs, never tracked.
+# All of these except CLAUDE.md were superseded by PRELAUNCH_CHECKLIST.md,
+# which is now the single tracker for outstanding work, and were moved to
+# docs/archive/ on 2026-08-04. Their filenames stay listed so a stray copy
+# at the repo root is still ignored if one ever reappears.
+docs/archive/
 DEVELOPMENT_PLAN.md
 ARCHITECTURE.md
 TESTING_STRATEGY.md

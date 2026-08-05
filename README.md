@@ -116,9 +116,13 @@ DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/back
 DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh ./backups/aitutor_<ts>.dump
 ```
 
-On EC2, this cron line is installed automatically by `scripts/ec2-bootstrap.sh` on every boot, pointed at the Stage 4 Terraform-managed backup bucket:
+There is no backup cron. A nightly `0 2 * * *` job only fires while the instance is running, and this box is stopped between exams by design, so on a single-day exam it very likely never fires at all. Backups are explicit, on-demand runbook steps instead - see `docs/OPS_RUNBOOK.html` section 10, which runs `scripts/backup.sh` immediately before every `stop-instances`.
+
+On EC2, the manual run that uploads to the Terraform-managed backup bucket is:
 ```
-0 2 * * * cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://aitutor-backups-434195712367/backups ./scripts/backup.sh >> ~/AITutorApp/backups/cron.log 2>&1
+cd ~/AITutorApp && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db \
+  BACKUP_S3_URI=s3://aitutor-backups-434195712367/backups ./scripts/backup.sh
 ```
+`scripts/ec2-bootstrap.sh` also renders the same `BACKUP_S3_URI` into `.env` on every boot, but `.env` is read by Docker Compose, not by your shell, so the variable still has to be passed explicitly on the command line above.
 
 `BACKUP_S3_URI` is optional for manual/local runs — set it to target S3, or omit it to keep dumps local under `BACKUP_DIR` (default `./backups`).

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # scripts/backup.sh — dumps the Postgres DB to a timestamped file, prunes old
-# dumps past the retention window, and optionally uploads to S3. Safe to run
-# from cron: exits non-zero on failure so cron mail is meaningful.
+# dumps past the retention window, and optionally uploads to S3. Run on
+# demand only - there is no backup cron (docs/OPS_RUNBOOK.html section 5b).
+# Exits non-zero on any failure, so a failed run is visible to whoever ran it.
 #
 # Local dev / EC2 direct:  DATABASE_URL must point at a reachable Postgres.
 # Docker Compose (EC2 prod): set DOCKER_DB_SERVICE=db so pg_dump runs inside

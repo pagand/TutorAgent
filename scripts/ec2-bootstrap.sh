@@ -146,20 +146,17 @@ fi
 log "Seeding participants from prod/data/manifest.csv"
 docker compose exec -T api python prod/seed_participants.py
 
-log "Installing nightly backup cron"
-# Stage 5, F2: this previously pointed at the ops bucket, where the
-# instance role has no PutObject - aws s3 cp got AccessDenied, backup.sh
-# exited non-zero under set -e, and the failure landed in a cron.log
-# nothing monitors. You would have believed you had off-box backups and
-# had none. Also per the Stage 5 plan's section 3: this cron is cheap
-# insurance for multi-day windows, not the real protection - the real
-# protection is a dump taken immediately before stopping the box, which
-# is a runbook step, not this cron.
-CRON_LINE="0 2 * * * cd ${REPO_DIR} && DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db BACKUP_S3_URI=s3://${BACKUPS_BUCKET}/backups ./scripts/backup.sh >> ${REPO_DIR}/backups/cron.log 2>&1"
-# `|| true` on the listing: under set -o pipefail, a brand-new ec2-user with
-# no existing crontab makes `crontab -l` exit 1 with empty output, and grep
-# -v on empty input also exits 1 (no lines selected) - without the guard,
-# set -e kills the whole script right here on every box's very first boot.
-( crontab -l 2>/dev/null | grep -vF './scripts/backup.sh' || true; echo "$CRON_LINE" ) | crontab -
-
+# No backup cron is installed. `0 2 * * *` only fires while the instance
+# runs, and this box is stopped between exams by design, so on a
+# single-day exam it very likely never fires at all. Backups are explicit
+# runbook steps instead (docs/OPS_RUNBOOK.html section 10), run on demand.
+# BACKUP_S3_URI is still rendered into .env above so a manual
+# ./scripts/backup.sh run uploads to the right bucket with no extra args.
+#
+# Removing a previously-installed cron line from a box that already has
+# one: `crontab -l | grep -vF './scripts/backup.sh' | crontab -` by hand.
+# Not done here, because on a fresh ec2-user with no crontab `crontab -l`
+# exits 1 and `grep -v` on empty input also exits 1, which under
+# `set -o pipefail` would kill this script on every first boot - the exact
+# bug that was fixed once already when the cron was installed here.
 log "Bootstrap complete"

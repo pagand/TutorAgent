@@ -72,7 +72,8 @@
     <li><a href="#health">3. Health checks</a></li>
     <li><a href="#promote">4. Promoting code to prod</a></li>
     <li><a href="#data">5. Changing prod data</a></li>
-    <li><a href="#backups">5b. Backups — what "nightly" actually means</a></li>
+    <li><a href="#backups">5b. Backups — on demand only, there is no cron</a></li>
+    <li><a href="#snapshot">5c. Instance snapshot and restore</a></li>
     <li><a href="#logs">6. Logs</a></li>
     <li><a href="#monitoring">7. Monitoring</a></li>
     <li><a href="#incident">8. Incident response</a></li>
@@ -118,7 +119,7 @@
   <pre><code>aws ec2 start-instances --region us-west-2 --instance-ids &lt;id&gt;
 aws ec2 stop-instances  --region us-west-2 --instance-ids &lt;id&gt;</code></pre>
   <p>Find the current instance ID with <code>terraform output instance_id</code> (from <code>terraform/</code>) or by tag: <code>aws ec2 describe-instances --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped</code>. The ID changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change) — don't hardcode it in scripts or muscle memory.</p>
-  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, refreshes CloudFront's origin-facing IP list, builds and starts all four containers, waits for <code>api</code> to report healthy, re-seeds participants, and installs the nightly backup cron. No certbot step anymore — TLS terminates at CloudFront, so the box only ever renders one nginx config. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
+  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, refreshes CloudFront's origin-facing IP list, builds and starts all four containers, waits for <code>api</code> to report healthy, and re-seeds participants. No backup cron is installed anymore (§5b), and no certbot step anymore — TLS terminates at CloudFront, so the box only ever renders one nginx config. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
   <div class="callout danger">
     <strong>Self-modifying script gotcha: a code change to <code>ec2-bootstrap.sh</code> needs two triggers to actually take effect on an already-running box.</strong>
     The script's own first real action is <code>git reset --hard origin/main</code>, which rewrites the very file the running process is executing. The already-running process keeps reading its own stale in-memory/buffered copy to completion — so the <em>first</em> trigger after a push correctly updates the repo on disk, but still runs the <em>old</em> logic end to end (observed live during Stage 5: a first re-trigger after deleting <code>plain.conf</code>/<code>tls.conf</code> still tried to <code>cp</code> the now-deleted file, and separately, a first re-trigger after adding <code>LLM_PROVIDER=google</code> to the <code>.env</code> heredoc still rendered <code>.env</code> without it). A <em>second</em> <code>systemctl reset-failed aitutor-bootstrap.service &amp;&amp; systemctl start aitutor-bootstrap.service</code> reads the file fresh and runs correctly. A full <code>aws ec2 reboot-instances</code> does not have this problem — systemd starts a genuinely new process reading the current file from the start. When in doubt after changing this script, trigger it twice, or reboot instead of using the SSM one-liner.
@@ -269,18 +270,104 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
 </section>
 
 <section id="backups">
-  <h2>5b. Backups — what "nightly" actually means</h2>
+  <h2>5b. Backups — on demand only, there is no cron</h2>
   <div class="callout danger">
-    <strong>The nightly cron is not the safety net.</strong>
-    <code>0 2 * * *</code> only runs while the instance is running, and this box is stopped between exams by design. Instance stopped: no backups fire at all. A single-day, 25-minute exam very likely never crosses <code>02:00</code> while the box happens to be up. Do not describe this cron as coverage in an incident.
+    <strong>There is no scheduled backup. Do not go looking for one.</strong>
+    A nightly <code>0 2 * * *</code> cron used to be installed by <code>ec2-bootstrap.sh</code>; it was deleted, because it only ran while the instance ran and this box is stopped between exams by design. A single-day, 25-minute exam very likely never crosses <code>02:00</code> while the box happens to be up, so the cron was coverage on paper and nothing in practice. Never describe a scheduled backup as coverage in an incident, there isn't one.
   </div>
-  <p><strong>The real protection is a dump taken immediately before stopping the box.</strong> While the box is stopped, data physically cannot change, so a pre-stop dump is current for the entire stopped period by definition. This is §10 step 8 — do it every time, not just after an exam.</p>
-  <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan): <code>BACKUP_S3_URI</code> now correctly points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every nightly `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>, and the failure landed only in <code>backups/cron.log</code>, which nothing monitors. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
+  <p><strong>The real protection is a dump taken immediately before stopping the box.</strong> While the box is stopped, data physically cannot change, so a pre-stop dump is current for the entire stopped period by definition. This is §10 step 7 — do it every time, not just after an exam.</p>
+  <p><strong>There is deliberately no mid-exam backup step either.</strong> <code>docker compose restart</code> loses nothing, and the <code>postgres_data</code> named volume survives a stop/start of the instance. The only events that actually destroy data are instance termination and EBS loss, neither of which a mid-exam <code>pg_dump</code> would have prevented in the window it covers. The recorded failure contingency ("restart services, retain data, resume the exam") is satisfied by the restart alone.</p>
+  <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan), and still relevant to the manual runs: <code>BACKUP_S3_URI</code> points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
   <p>Verify a dump actually landed:</p>
   <pre><code>aws s3 ls s3://aitutor-backups-&lt;account-id&gt;/backups/ --region us-west-2</code></pre>
   <div class="callout danger">
     <strong>Verified live, 2026-08-04: the backups bucket is empty. No off-box copy of production data exists right now.</strong>
-    <code>s3://aitutor-backups-434195712367</code> contains zero objects. The nightly cron mechanism is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - it has simply never had the chance to fire, because the box has not been left running across a <code>02:00</code> boundary since the fix landed. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the cron is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10: run <code>scripts/backup.sh</code> and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
+    <code>s3://aitutor-backups-434195712367</code> contains zero objects. The <code>backup.sh</code> upload path is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - nobody has run it against production yet. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the mechanism is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10: run <code>scripts/backup.sh</code> and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
+  </div>
+</section>
+
+<section id="snapshot">
+  <h2>5c. Instance snapshot and restore</h2>
+  <p>Built 2026-08-05, per the plan in <code>PRELAUNCH_CHECKLIST.md</code>, "Instance snapshot: requirements and plan". Two scripts, two directions:</p>
+  <ul>
+    <li><code>scripts/snapshot.sh</code> - capture. Bundles Postgres (via <code>backup.sh</code>), the <code>chroma_data</code> Docker volume (the Chroma vector store plus <code>llm_cache.db</code>, which lives inside it), a CSV export of all 9 application tables, a point-in-time copy of <code>prod/data</code>, and all four services' container logs into ONE timestamped archive, uploaded to the backups bucket.</li>
+    <li><code>scripts/snapshot_restore.sh</code> - restore. Takes a bundle and brings a fresh box's Postgres and <code>chroma_data</code> volume up to the captured state.</li>
+  </ul>
+  <div class="callout danger">
+    <strong>Not a cron, and not the same thing as §5b's backups.</strong>
+    <code>backup.sh</code> is the routine pre-stop Postgres-only dump. <code>snapshot.sh</code> is the heavier, occasional full-instance bundle - run it post-exam and whenever you want a complete offline copy of everything, not every time you stop the box. Both land in the same bucket but under different prefixes (<code>backups/</code> vs <code>snapshots/</code>), and neither expires: <code>terraform/backups.tf</code>'s lifecycle rule was changed 2026-08-04 so current objects in this bucket have no expiry at all, only noncurrent (superseded) versions are pruned.
+  </div>
+  <div class="callout warn">
+    <strong>Where every command below runs, and how to authenticate</strong>
+    <p>Everything in this section runs <strong>on the box</strong>, reached over SSM (there is no SSH - port 22 has no ingress rule). Every <code>aws</code> command needs a region and a valid AWS SSO session. From your laptop, once per session:</p>
+    <pre><code>aws sso login --profile AdministratorAccess-434195712367
+export AWS_PROFILE=AdministratorAccess-434195712367</code></pre>
+    <p>With that exported, every following <code>aws</code> command in this section can omit <code>--profile</code>; the examples below include it explicitly anyway so a command can be copy-pasted on its own. Region is always <code>us-west-2</code>. The box's instance id is <code>i-0b0d93da111a1e907</code>.</p>
+    <p>Open a shell on the box (also needs the Session Manager plugin - see §9 if <code>SessionManagerPlugin is not found</code>):</p>
+    <pre><code>aws ssm start-session --target i-0b0d93da111a1e907 \
+  --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
+    <p>Once connected, become the app user and go to the repo before running anything below:</p>
+    <pre><code>sudo -iu ec2-user
+cd /home/ec2-user/AITutorApp</code></pre>
+  </div>
+
+  <h3>Capture: bringing the box down to a single restorable bundle</h3>
+  <p>Run this any time you want a full offline copy - a required step post-exam, and worth doing before any risky change (Terraform apply that touches the instance, a manual package upgrade, etc.). Requires the containers to be up, same as <code>backup.sh</code> - run it <strong>before</strong> <code>stop-instances</code>, not against a stopped box.</p>
+  <pre><code># on the box, in /home/ec2-user/AITutorApp, containers running
+POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/snapshot.sh</code></pre>
+  <div class="callout warn">
+    <strong>This causes a brief, deliberate <code>api</code> outage.</strong>
+    <code>llm_cache.db</code> is a live SQLite file inside the <code>chroma_data</code> volume; tarring it while <code>api</code> is running risks a torn copy. <code>snapshot.sh</code> runs <code>docker compose stop api</code> for the few seconds the volume tar takes, then <code>docker compose start api</code> immediately after. <code>db</code>, <code>nginx</code>, and <code>streamlit</code> are never stopped. Do not run this mid-exam - it is a post-exam / maintenance-window step, same reasoning as §5b's "not a cron."
+  </div>
+  <p>What it produces, all under one key:</p>
+  <pre><code>s3://aitutor-backups-&lt;account-id&gt;/snapshots/aitutor_snapshot_&lt;YYYYMMDDTHHMMSSZ&gt;.tar.gz</code></pre>
+  <p>Verify it landed (same pattern as §5b):</p>
+  <pre><code>aws s3 ls s3://aitutor-backups-434195712367/snapshots/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
+  <p>A copy is also left locally on the box under <code>./backups/snapshots/</code>. Unpacked, the bundle contains:</p>
+  <table>
+    <tr><th>Path</th><th>Contents</th></tr>
+    <tr><td><code>dump/aitutor_*.dump</code></td><td>Postgres dump (<code>pg_dump -Fc</code>), all 9 tables plus <code>alembic_version</code>. Restore source of truth.</td></tr>
+    <tr><td><code>csv/*.csv</code></td><td>One CSV per table, full rows, header included - for analysis, not for restore.</td></tr>
+    <tr><td><code>chroma_data.tar.gz</code></td><td>Tar of the <code>chroma_data</code> Docker volume (vector store + <code>llm_cache.db</code>). Absent if the script could not resolve the volume - check its output for a warning before assuming this is present.</td></tr>
+    <tr><td><code>prod_data/</code></td><td>Point-in-time copy of <code>prod/data</code> as actually served at capture time. Record only, not a restore path (see below).</td></tr>
+    <tr><td><code>logs/*.log</code></td><td><code>docker compose logs</code> for <code>api</code>/<code>db</code>/<code>nginx</code>/<code>streamlit</code>, capped at whatever the 10MB x 3 file <code>x-logging</code> retention held at capture time.</td></tr>
+    <tr><td><code>README.md</code></td><td>Data dictionary - JSON-column notes, and the corrected <code>user_action_logs.action_type</code> list (see callout below).</td></tr>
+  </table>
+  <div class="callout danger">
+    <strong>Known defect the bundle works around: the <code>UserActionLog</code> docstring in <code>app/models/user.py</code> is stale.</strong>
+    It documents <code>intervention_offered</code>/<code>intervention_accepted</code>/<code>intervention_rejected</code>, <code>session_complete</code>, <code>timer_expired</code>, and more - none of which the app emits. Querying the CSV export by those names returns nothing, silently. The <strong>19 real values</strong>, verified against <code>frontend/src</code> and the validation whitelist in <code>app/endpoints/action_log.py</code>, are: <code>session_start</code>, <code>session_submit</code>, <code>session_expire</code>, <code>timer_warning</code>, <code>question_view</code>, <code>question_navigate</code>, <code>choice_select</code>, <code>answer_focus</code>, <code>answer_submit</code>, <code>answer_skip</code>, <code>hint_request</code>, <code>hint_display</code>, <code>hint_feedback</code>, <code>intervention_offer</code>, <code>intervention_accept</code>, <code>intervention_reject</code>, <code>chat_send</code>, <code>profile_view</code>, <code>preference_update</code>. The bundle's own <code>README.md</code> repeats this list so an analyst never has to consult the stale docstring. Fixing the docstring itself is a separate, not-yet-done source change - out of scope for this script.
+  </div>
+
+  <h3>Restore: bringing a fresh box back to the captured state</h3>
+  <p>Assumes the old instance is gone and Terraform has already created a replacement, or you are restoring onto a fresh box for any other reason. Sequence:</p>
+  <ol>
+    <li><code>terraform apply</code> creates the instance; <code>ec2-bootstrap.sh</code> runs on first boot and brings the containers up with an <strong>empty</strong> database (see §2/§3 for confirming bootstrap finished).</li>
+    <li>Connect over SSM as above, <code>cd</code> into the repo, then download and restore in one step:
+      <pre><code>POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db \
+  ./scripts/snapshot_restore.sh \
+  s3://aitutor-backups-434195712367/snapshots/aitutor_snapshot_&lt;ts&gt;.tar.gz</code></pre>
+      This downloads the bundle, restores Postgres by calling the existing <code>scripts/restore.sh</code> unchanged (<code>pg_restore --clean --if-exists</code>, so it replaces the freshly-seeded <code>participants</code> rows with the captured ones), then restores the <code>chroma_data</code> volume - stopping <code>api</code> for the duration, same brief-outage tradeoff as capture.
+    </li>
+    <li>Verify: <code>snapshot_restore.sh</code> extracts the bundle into a temp directory it deletes on exit, so check row counts directly against Postgres instead of the (by-then-gone) extracted CSVs:
+      <pre><code>docker compose exec -T db psql -U aitutor -d aitutor_db -c \
+  "SELECT 'users', COUNT(*) FROM users UNION ALL SELECT 'participants', COUNT(*) FROM participants;"</code></pre>
+      If you want a full per-table comparison against the bundle's own CSVs, download and unpack the same bundle a second time yourself (<code>aws s3 cp ... && tar xzf ...</code>) rather than relying on anything <code>snapshot_restore.sh</code> left behind.
+    </li>
+  </ol>
+  <div class="callout danger">
+    <strong>Alembic ordering hazard.</strong>
+    Step 1 already ran <code>alembic upgrade head</code> against the fresh box's current <code>main</code>. Step 2 then restores an <code>alembic_version</code> row from the snapshot's dump. If the repo has gained migrations since the snapshot was taken, the restored <code>alembic_version</code> will point at an older revision than the schema actually is, and the next <code>alembic upgrade head</code> will try to re-run migrations that already applied. There is no automatic handling of this today - if the snapshot predates the box's current migration history, check <code>alembic_version</code> after restoring and reconcile it by hand before trusting the schema.
+  </div>
+  <div class="callout warn">
+    <strong><code>prod/data</code> is NOT restored by this script, on purpose.</strong>
+    On a rebuilt box, <code>prod/data</code> (questions + participant manifest) arrives via <code>ec2-bootstrap.sh</code>'s own S3 sync from the ops bucket - that is the one authoritative path for getting it onto a box (see §5, <code>update-prod-data.sh</code>). The bundle's <code>prod_data/</code> copy is a point-in-time record for audit only.
+  </div>
+  <p>What a restore cannot bring back, regardless: anything that happened after the snapshot (there is no point-in-time recovery or WAL archiving - a snapshot is a single moment, full stop), the instance's surroundings (Elastic IP, CloudFront distribution, SSM parameters, the GitHub deploy key - all come from Terraform and SSM, not this bundle), and the deployed frontend (a separate S3/CloudFront static export, not instance data). Restore is always "Terraform first, then this bundle," never this bundle alone.</p>
+
+  <div class="callout ok">
+    <strong>What has actually been verified, and what has not (as of 2026-08-05)</strong>
+    <p>Tested locally against seeded, disposable scratch Postgres databases (never against the dev or production database): the Postgres capture-then-restore round trip via <code>backup.sh</code>/<code>restore.sh</code>'s non-Docker code path (all 9 tables matched row-for-row after restore), and the CSV export (all 9 tables produced real rows, JSON columns rendered as single JSON-text columns as documented above). Both scripts pass <code>bash -n</code> and were dry-run for their failure paths (missing bundle argument, missing <code>POSTGRES_USER</code>/<code>POSTGRES_DB</code>, nonexistent bundle path all fail immediately with no default target, matching <code>restore.sh</code>'s own safety property).</p>
+    <p><strong>NOT tested: the <code>chroma_data</code> Docker-volume capture and restore, the real S3 upload/download, and the <code>docker compose</code>/<code>docker inspect</code> volume-resolution logic.</strong> None of these can be exercised locally - this repo's dev-parity rule forbids running Docker Compose locally (it would corrupt the dev <code>chroma_db</code> mount), and there is no local Docker Compose stack to test against. Treat this half of both scripts as reviewed but unproven until the first real run on the box.</p>
   </div>
 </section>
 
@@ -291,7 +378,7 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
     <tr><td><code>api</code> / <code>db</code> / <code>nginx</code> / <code>streamlit</code> container logs</td><td><code>docker compose logs &lt;service&gt;</code> (add <code>-f</code> to follow, <code>--tail 200</code> to limit)</td><td>10MB × 3 files per service (<code>x-logging</code> anchor in <code>docker-compose.yml</code>) — roughly 30MB per service before the oldest rotates out</td></tr>
     <tr><td>Boot / bootstrap sequence</td><td><code>sudo journalctl -u aitutor-bootstrap.service</code> (add <code>--since "1 hour ago"</code> etc.)</td><td>Whatever the box's local journald retention allows — not infinite, don't rely on it past a few boots</td></tr>
     <tr><td>nginx access/error</td><td>Same as the nginx container log — the image logs to stdout/stderr by default, no separate file</td><td>Same 30MB cap</td></tr>
-    <tr><td>Nightly backup runs</td><td><code>cat /home/ec2-user/AITutorApp/backups/cron.log</code></td><td>Not rotated by the same mechanism — grows on the host filesystem, worth an eye during disk-full triage (§8)</td></tr>
+    <tr><td>Backup runs</td><td>Nothing to tail, <code>backup.sh</code> is run interactively (§5b, §10) and prints to your terminal. The old <code>backups/cron.log</code> is gone along with the cron; a stale copy may still exist on a box booted before that change.</td><td>Dumps themselves live under <code>~/AITutorApp/backups/</code> until <code>BACKUP_RETENTION_DAYS</code> prunes them</td></tr>
     <tr><td>Behavioral data</td><td>Streamlit's <em>Export Data</em> view (interaction/chat/intervention/action logs as CSV) — see §9</td><td>Lives in Postgres, not log files; export doesn't consume it</td></tr>
   </table>
   <p><strong>Get logs off the box before stopping it</strong> — container logs do not survive <code>docker compose down</code> or an instance stop, only the underlying data volumes do:</p>
@@ -327,7 +414,7 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <tr><td><code>api</code> down or crash-looping</td><td><code>docker compose logs --tail 100 api</code>, then <code>docker compose restart api</code></td><td>If it won't come back healthy, <code>docker compose up -d --build</code> to rule out a stale image.</td></tr>
     <tr><td>Postgres unreachable</td><td><code>docker compose ps db</code>; <code>docker compose exec db pg_isready -U aitutor -d aitutor_db</code></td><td>If the container itself is down, <code>docker compose up -d db</code>; <code>api</code> depends on its healthcheck and will wait.</td></tr>
     <tr><td>Hints silently degrade to a generic "I couldn't generate a specific hint" message, or chat fails outright</td><td><code>docker compose exec api env | grep LLM_PROVIDER</code> — must read <code>google</code></td><td><strong>Real incident, Stage 5.</strong> The code default when this var is unset is <code>ollama</code>, which tries to reach a nonexistent <code>localhost:11434</code>. Hints has its own try/except that masks this as a generic fallback (<code>hint_style: "error"</code> in the response — check the actual field, not just the HTTP status, a 200 does not mean a real hint was generated); chat has no such fallback and 500s or hangs to a CloudFront 504. Fixed by explicitly setting <code>LLM_PROVIDER=google</code> in <code>ec2-bootstrap.sh</code>'s <code>.env</code> render — if this ever regresses, it's the first thing to check.</td></tr>
-    <tr><td>Disk full</td><td><code>df -h</code> over SSM</td><td>Logs and Chroma share the 30GB root volume. <code>docker image prune -f</code> (bootstrap already does this on every boot), check <code>backups/cron.log</code> and old dumps in <code>./backups/</code> if retention pruning (<code>BACKUP_RETENTION_DAYS</code>, default 90 in prod) hasn't caught up.</td></tr>
+    <tr><td>Disk full</td><td><code>df -h</code> over SSM</td><td>Logs and Chroma share the 30GB root volume. <code>docker image prune -f</code> (bootstrap already does this on every boot), check old dumps in <code>./backups/</code> if retention pruning (<code>BACKUP_RETENTION_DAYS</code>, default 90 in prod) hasn't caught up.</td></tr>
     <tr><td>Student locked to the wrong device</td><td>Streamlit → student's row → <em>Clear Session Lock</em></td><td>See §9. No CLI/API equivalent needed for this one — it's the intended path.</td></tr>
     <tr><td>Student needs more time, or a whole cohort does</td><td>Streamlit → per-student <em>Adjust Timer</em> / <em>Reset Timer to NOW</em>, or <em>Exam Control → Apply to All Unsubmitted Sessions</em> for a bulk extension</td><td>Bulk extension is the mid-outage remedy — it reaches already-open tabs within one 25s heartbeat, no reload needed.</td></tr>
     <tr><td>LLM quota exhausted (per-user or global)</td><td>Check Streamlit's LLM Usage panel to confirm</td><td><span class="todo">Gap:</span> raising the cap requires editing <code>.env</code> on the box and restarting <code>api</code> — no admin-UI toggle exists. See §11.</td></tr>
@@ -382,14 +469,9 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
       </ul>
     </div>
   </div>
-  <div class="callout warn">
-    <strong>Research data export gap: there is no one-command way to get all research data off the box.</strong>
-    Two partial paths only, verified against <code>streamlit_app/app.py</code>:
-    <ul style="margin:0.4rem 0 0;">
-      <li>A full <code>pg_dump</code> via <code>scripts/backup.sh</code> - complete, but the output is a Postgres dump; you need a Postgres to restore it into before you can query anything out of it.</li>
-      <li>Streamlit's <em>Export Data</em> view - CSV export, filtered by user/date, but only for <strong>Interaction Logs, Chat Logs, Intervention Logs, and Action Logs</strong> (the exact four options in its <code>log_type</code> selectbox), one type at a time, and it needs an SSM port-forward to a currently-running box.</li>
-    </ul>
-    <p style="margin:0.5rem 0 0;"><strong>SkillMastery has no bulk export at all</strong> - confirmed by reading the export view's code: it is not one of the four <code>log_type</code> options. It is only viewable per student, in that student's <em>Skill Mastery</em> tab, as an on-screen line chart plus a raw-data table inside an expander - and that per-student view has no <code>st.download_button</code> either, unlike the Interaction History and Chat Log tabs next to it. The only way to get <code>skill_mastery</code> rows out today is a direct Postgres query - either <code>docker compose exec db psql -U aitutor -d aitutor_db -c "SELECT * FROM skill_mastery;"</code> over an SSM session, or restoring a <code>pg_dump</code> and querying the table there.</p>
+  <div class="callout ok">
+    <strong>Research data export gap - closed 2026-08-05 by <code>scripts/snapshot.sh</code> (see §5c).</strong>
+    Before this, only two partial paths existed, verified against <code>streamlit_app/app.py</code>: a full <code>pg_dump</code> via <code>scripts/backup.sh</code> (complete, but needs a Postgres to restore into before you can query it), and Streamlit's <em>Export Data</em> view (CSV, but only Interaction/Chat/Intervention/Action logs, one type at a time, no <code>skill_mastery</code> at all - it is not one of its four <code>log_type</code> options and its per-student Skill Mastery tab has no download button either). <code>scripts/snapshot.sh</code> now exports all 9 tables including <code>skill_mastery</code> to CSV in one run, no restore or port-forward required. The two paths above still work and are unaffected - this is an addition, not a replacement.
   </div>
 </section>
 
@@ -403,7 +485,7 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <li><strong>Smoke test one real token</strong> end to end — login, answer, hint, chat, submit, results — before handing tokens to students. Check the actual hint/chat <em>content</em>, not just the HTTP status: a 200 with <code>hint_style: "error"</code> means the LLM call silently failed.</li>
     <li><strong>Expect a slow first hint.</strong> RAG cold start is ~2s measured, but the first real request after boot still pays container warm-up cost on top. Not a bug if the very first hint feels sluggish.</li>
     <li><strong>Keep an SSM session open</strong> to the box and a port-forward tunnel to Streamlit (§9) for the full exam window, so timer/lock issues can be handled in real time.</li>
-    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>). This is the real backup, not the nightly cron (§5b) — while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.</li>
+    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>). This is the only backup, nothing is scheduled (§5b), and while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.</li>
     <li><strong>Stop the instance</strong> once data is safely off-box. It should not sit running between exams.</li>
   </ol>
 </section>

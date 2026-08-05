@@ -173,18 +173,202 @@ Also closed while the code was open for this stage, since they share the same th
 
 | | Pri | Item | Detail |
 |---|---|---|---|
-| [x] | **P0** | Automated Postgres backup | **Fixed (Stage 2).** `scripts/backup.sh` runs `pg_dump -Fc` to a timestamped file, prunes past `BACKUP_RETENTION_DAYS` (default 14), and uploads to `BACKUP_S3_URI` when that var is set — unset until Stage 4 creates the bucket, so dumps stay local under `BACKUP_DIR` until then. Works both against a directly-reachable `DATABASE_URL` (local dev) and via `docker compose exec` (`DOCKER_DB_SERVICE=db`, since 5432 stays unexposed on EC2 by design). Verified against the real dev DB: a live 96K dump of all 9 tables. Cron line documented in `README.md` and referenced from `SKILL.md` §3.3 for Stage 4's bootstrap to install. **Caveat added 2026-08-04:** the mechanism is correct but has never produced a production artifact. The backups bucket `aitutor-backups-434195712367` was verified live today and contains zero objects. No off-box copy of production data exists yet. This row's `[x]` records that the code path works, not that a backup exists. |
-| [x] | **P0** | F2 — nightly backups were writing to a bucket the instance couldn't write to | **Found and fixed, Stage 5.** Once Stage 4 created buckets, `ec2-bootstrap.sh` set `BACKUP_S3_URI=s3://${OPS_BUCKET}/backups` — but `terraform/iam.tf`'s instance role only ever granted `s3:PutObject` on `aitutor-backups-<account>`, a *separate* bucket; the ops-bucket statement was read-only. Every nightly `aws s3 cp` got AccessDenied, `backup.sh` exited non-zero under `set -e`, and the failure landed only in `backups/cron.log`, which nothing monitors. **The system would have believed it had off-box backups and had none.** Fixed by pointing `BACKUP_S3_URI` at the correct bucket (`aitutor-backups-$(aws sts get-caller-identity --query Account --output text)`), derived at boot rather than threaded through `user_data.sh.tftpl` (which would force a full instance replacement on every edit). Also corrected the working assumption that the nightly cron is meaningful coverage at all — see `docs/OPS_RUNBOOK.html` §5b: it only runs while the instance runs, and this box is stopped between exams by design, so a single-day exam very likely never fires it. The real protection is a dump taken immediately before stopping the box (§10 exam-day runbook, step 8). |
+| [x] | **P0** | Automated Postgres backup | **Fixed (Stage 2).** `scripts/backup.sh` runs `pg_dump -Fc` to a timestamped file, prunes past `BACKUP_RETENTION_DAYS` (default 14), and uploads to `BACKUP_S3_URI` when that var is set — unset until Stage 4 creates the bucket, so dumps stay local under `BACKUP_DIR` until then. Works both against a directly-reachable `DATABASE_URL` (local dev) and via `docker compose exec` (`DOCKER_DB_SERVICE=db`, since 5432 stays unexposed on EC2 by design). Verified against the real dev DB: a live 96K dump of all 9 tables. **Correction, 2026-08-04:** "Automated" is no longer accurate. The nightly cron this row originally described was deleted (section J, Resolved 2026-08-04); `backup.sh` is now an on-demand script only, run manually and as a post-exam runbook step. **Caveat added 2026-08-04:** the mechanism is correct but has never produced a production artifact. The backups bucket `aitutor-backups-434195712367` was verified live today and contains zero objects. No off-box copy of production data exists yet. This row's `[x]` records that the code path works, not that a backup exists. |
+| [x] | **P0** | F2 — nightly backups were writing to a bucket the instance couldn't write to | **Found and fixed, Stage 5.** Once Stage 4 created buckets, `ec2-bootstrap.sh` set `BACKUP_S3_URI=s3://${OPS_BUCKET}/backups` — but `terraform/iam.tf`'s instance role only ever granted `s3:PutObject` on `aitutor-backups-<account>`, a *separate* bucket; the ops-bucket statement was read-only. Every nightly `aws s3 cp` got AccessDenied, `backup.sh` exited non-zero under `set -e`, and the failure landed only in `backups/cron.log`, which nothing monitors. **The system would have believed it had off-box backups and had none.** Fixed by pointing `BACKUP_S3_URI` at the correct bucket (`aitutor-backups-$(aws sts get-caller-identity --query Account --output text)`), derived at boot rather than threaded through `user_data.sh.tftpl` (which would force a full instance replacement on every edit). Also corrected the working assumption that the nightly cron is meaningful coverage at all — see `docs/OPS_RUNBOOK.html` §5b: it only ran while the instance ran, and this box is stopped between exams by design, so a single-day exam very likely never fired it. **That conclusion was carried to its end on 2026-08-04: the cron is now deleted entirely** (section J, Resolved 2026-08-04). The `BACKUP_S3_URI` fix recorded above still stands and still applies to the manual runs. The real protection is a dump taken immediately before stopping the box (§10 exam-day runbook, step 7, the "step 8" this row previously cited was an off-by-one, the pre-stop backup is item 7 of 8). |
 | [x] | **P1** | F3 — the instance role could write backups but never read them back | **Found and fixed, Stage 5.** The IAM statement was `PutObject` only — no `GetObject`, no `ListBucket` on the backups bucket, so nothing on the box could pull a dump down; no restore path existed at all despite backups (once F2 was also fixed) actually landing. Fixed in `terraform/iam.tf`: renamed to `ReadWriteBackups` (`PutObject` + `GetObject`) plus a separate `ListBackups` statement scoped to the bucket ARN. |
 | [ ] | **P0** | EBS snapshot before and after each exam | Manual or scripted. Two clicks that make the whole exam recoverable. Deferred to section K's exam-day runbook — no EC2 instance exists yet to snapshot. |
 | [x] | **P0** | Restore drill | **Fixed (Stage 2).** `scripts/restore_drill.sh` creates a scratch DB, calls `pg_restore` directly to restore the newest dump into it (own `psql`/`pg_restore` calls, not a shared code path with `restore.sh`), compares every table's row count against the source, and drops the scratch DB. Run live against the dev DB: all 9 tables matched (`users` 55, `interaction_logs` 1051, `user_action_logs` 1522, etc.) — a genuine restore, not just a dump that was never opened. `scripts/restore.sh` (the separate, general-purpose restore path) requires an explicit target (`TARGET_DATABASE_URL` or `DOCKER_DB_SERVICE`), with no default, so it can't silently overwrite production; verified live too, restoring into a scratch DB via an explicit target URL. **Note added 2026-08-04:** every run of this drill, including the one above, has been against a dump of the dev database. It has never been run against a production-sourced dump, and per the row above, no production dump exists yet to run it against. |
 | [x] | **P1** | Docker log rotation | **Already fixed, found stale while correcting this section's EBS size (Stage 5).** `docker-compose.yml`'s `x-logging` anchor caps every service at `max-size: "10m"`, `max-file: "3"` (10MB × 3 = 30MB per service, ~120MB total across `db`/`api`/`nginx`/`streamlit`) — far short of filling the 30GB root disk even under sustained `LOG_LEVEL=DEBUG`. |
 | [ ] | **P1** | Persist app logs to disk | Logs go to stdout only (`app/utils/logger.py`) and vanish when the container is recreated. Ship to a file on EBS so post-exam triage is possible. |
+| [x] | **P1** | One-command instance snapshot (`scripts/snapshot.sh`) | **Built.** Requirements and implementation plan are in "Instance snapshot: requirements and plan" immediately below this table; the plan is now implemented as specified there. `scripts/snapshot.sh` captures everything associated with the instance (Postgres via `backup.sh`, the `chroma_data` volume including `llm_cache.db`, `prod/data`, all four services' container logs) plus a CSV export of all 9 tables and a data-dictionary `README.md` (including the corrected `user_action_logs.action_type` values, see the known-defect note below), bundles it under one timestamped key (`snapshots/aitutor_snapshot_<ts>.tar.gz`) in the backups bucket, and does not touch the ops bucket. Not a cron. Restore direction is a new script, `scripts/snapshot_restore.sh` (not an extension of `restore.sh`, kept separate so `restore.sh`'s single-purpose, explicit-target safety property stays easy to audit); it downloads/unpacks the bundle, calls `restore.sh` unchanged for Postgres, and restores the `chroma_data` volume via a scratch container, briefly stopping `api` for both the capture and the restore. Closes the §9 research-data-export gap in `docs/OPS_RUNBOOK.html`, including the `skill_mastery` bulk export that had no path before. **Tested 2026-08-05:** the Postgres capture-restore round trip (via `backup.sh`/`restore.sh`'s non-Docker code path) and the CSV export were run against seeded scratch databases (`aitutor_snaptest_src`/`_dst`, migrated with `alembic upgrade head`, since dropped), all 9 tables matched row-for-row after restore, and all 9 CSVs produced real rows with the documented JSON-column behavior confirmed. `bash -n` and dry runs (missing-argument / missing-env-var / nonexistent-bundle-path failure paths) passed on both scripts. **The `chroma_data` Docker-volume capture and restore steps are UNTESTED**, they cannot be exercised locally (no local Docker Compose stack per this repo's dev-parity rule) and have not yet been run against the real box. Also unverified: the actual S3 upload/download path and the `docker compose exec`/`docker inspect` invocations, which need the real Compose stack. Treat the volume and S3 legs as reviewed-but-unproven until run for real. |
 | [x] | **P1** | `LOG_LEVEL=INFO` in production `.env` | **Already done, found stale during the 2026-08-04 audit.** This duplicates the row 40 fix in section 0 (`config.py:29`'s fallback plus `.env.docker.example`), and `scripts/ec2-bootstrap.sh` writes `LOG_LEVEL=INFO` into the production `.env` it renders. Closing here rather than deleting, since section A tracks data-safety items and disk-filling debug logs belong here too, this was just never marked done when section 0 closed it. |
 
-**What is already safe:** Postgres named volume survives `restart`, `down`, and EC2 stop/start.
-`chroma_db/` (vector store plus `llm_cache.db`, `rag_agent.py:148`) is a bind mount onto EBS and also survives.
+**What is already safe:** the `postgres_data` named volume survives `restart`, `down`, and EC2 stop/start.
+The vector store plus `llm_cache.db` (`rag_agent.py:148` writes the cache inside `chroma_persist_dir`) live in the `chroma_data` **named Docker volume** and also survive.
+**Corrected 2026-08-04:** this paragraph previously called `chroma_db/` "a bind mount onto EBS", which has been stale since section H's `chroma_db` ownership fix replaced the `./chroma_db` bind mount with the `chroma_data` named volume in `docker-compose.yml`. It is still on the same EBS root volume, just under `/var/lib/docker/volumes/`, which matters for how a snapshot script has to read it.
 Only `docker compose down -v` or instance termination destroys data.
+
+### Instance snapshot: requirements and plan
+
+**Status, updated 2026-08-05: built.** `scripts/snapshot.sh` and `scripts/snapshot_restore.sh` now exist and implement the plan below as written. The commands in this section describe the design; see the tracked row above this section and `docs/OPS_RUNBOOK.html`'s new snapshot/restore section for what was actually built, what was tested (Postgres round trip and CSV export, against scratch databases), and what remains unverified (the `chroma_data` Docker-volume capture/restore and the real S3 path, neither of which can be exercised without the real Compose stack on the box).
+Added 2026-08-04 at the user's request, grounded against the real repo so a future implementer does not have to re-derive any of it.
+
+#### What it is
+
+One script, `scripts/snapshot.sh`, run on demand and as a post-exam runbook step.
+It is explicitly **not** a cron and **not** nightly, for the same reason the nightly backup cron was deleted (section J, Resolved 2026-08-04): the box is stopped between exams, so nothing scheduled on it is real coverage.
+
+It must serve two distinct purposes from the same artifact, and both are load-bearing:
+
+1. **Disaster recovery.** If the instance is terminated or its EBS volume is lost, this artifact is enough to rebuild the captured state onto a brand new instance.
+2. **Analysis.** The same artifact contains an analysis-friendly export (CSV) so research questions can be answered without standing up a Postgres and restoring a binary dump first.
+
+Purpose 2 is what `docs/OPS_RUNBOOK.html` §9 currently records as a gap: today the only complete export is a `pg_dump` you must restore before you can query it, and Streamlit's Export Data view covers only 4 of the log tables, one at a time, over an SSM port-forward, with no bulk export for `skill_mastery` at all.
+
+#### Exactly what must be captured
+
+**All 9 application tables**, verified by reading `app/models/user.py`.
+There is no "just the logs" subset; foreign keys make the log tables useless without `users` and `participants`.
+
+| Table | Model | Why it is in the snapshot |
+|---|---|---|
+| `users` | `User` | Identity, `preferences` JSON (holds `ab_group` and `hint_style_preference`), `feedback_scores` JSON. Every other table joins to it. |
+| `participants` | `Participant` | Roster: `token`, `name`, `identifier`, `group`, `intervention`, `status`, `active_session_id`, `last_seen_at`, `started_at`. Regenerable from `manifest.csv` in principle, but the live `status`/`started_at`/`last_seen_at` columns are exam-run state and are not. |
+| `exam_sessions` | `ExamSession` | `exam_start_ms`, `exam_duration_ms`, `submitted_at`, `session_id`. The per-student timeline anchor every other timestamp is interpreted against, including any admin timer extension applied on the day. |
+| `interaction_logs` | `InteractionLog` | The primary outcome table: `question_id`, `skill`, `attempt_key`, `user_answer`, `is_correct`, `time_taken_ms`, `hint_shown`, `hint_style_used`, `hint_text`, `user_feedback_rating`, `bkt_change`. |
+| `skill_mastery` | `SkillMastery` | `skill_id`, `mastery_level`, `consecutive_errors`, `consecutive_skips`, `last_updated`. **This is the table with no bulk export today** (`docs/OPS_RUNBOOK.html` §9). |
+| `user_action_logs` | `UserActionLog` | **The action log the requirement names**: `user_id`, `session_id`, `timestamp`, `action_type`, `question_number`, `action_data` (JSON). This is where "changed answer", "next question", "selected a choice" live, each with a per-user timestamp. |
+| `chat_logs` | `ChatLog` | `question_number`, `timestamp`, `user_message`, `tutor_response`. |
+| `intervention_logs` | `InterventionLog` | `question_number`, `timestamp`, `time_on_question_ms`, `mastery_at_trigger`, `reason`, `accepted`. Separate from `interaction_logs` because an intervention can fire before any answer exists. |
+| `llm_usage_log` | `LlmUsageLog` | `user_id`, `endpoint` (`hint` or `chat`), `created_at`. One row per accepted LLM call, reserved before the call runs. Call counts only: no token counts, no cost, no latency. |
+
+`alembic_version` also exists in the database and comes along inside `pg_dump` automatically.
+It is schema bookkeeping, not analysis data, and should be excluded from the CSV export.
+
+**Non-database content:**
+
+| Item | Where it actually lives | Note |
+|---|---|---|
+| Chroma vector store | `chroma_data` **named Docker volume**, mounted at `/app/chroma_db` (`docker-compose.yml:34`) | Not a bind mount. See "Capturing a named volume" below. |
+| LLM cache | `llm_cache.db`, a SQLite file written **inside** `chroma_persist_dir` (`app/services/rag_agent.py:148`, `app/utils/config.py:24`) | It is inside the same `chroma_data` volume. Capturing the volume captures both; they are not two separate steps. |
+| Questions data | `prod/data/server_ready_questions.csv`, bind-mounted read-only (`docker-compose.yml:35`) | Point-in-time copy: which question set the students actually saw. |
+| Participant manifest | `prod/data/manifest.csv`, same bind mount | Point-in-time copy: which tokens were live. |
+| Container logs | `docker compose logs` for `api`, `db`, `nginx`, `streamlit` | Capped at 10MB x 3 files per service by `docker-compose.yml`'s `x-logging` anchor, and destroyed by `docker compose down` or an instance stop. If the snapshot does not take them, nothing does. |
+
+#### Telemetry: what exists, and what the requirement asks for that does not
+
+The requirement asks for "latency and traces and logs, plus the action logs".
+Grounded against the repo, only part of that exists, and the plan must not pretend otherwise.
+
+**Exists and must be captured:**
+
+- Per-answer latency: `interaction_logs.time_taken_ms`.
+- Per-intervention dwell time: `intervention_logs.time_on_question_ms`.
+- Full per-user, per-event action timeline with timestamps: `user_action_logs`.
+- LLM call volume per user per endpoint: `llm_usage_log`.
+- Application and nginx stdout logs, for the retention window the `x-logging` cap allows.
+
+**Does not exist anywhere, so the snapshot cannot contain it:**
+
+- **Distributed traces. There is no tracing in this stack at all.** There is also no correlation ID, and logging is plain text rather than structured, which `docs/OPS_RUNBOOK.html` §6 already records as a known gap and §11 lists as the highest-value unbuilt item.
+- **Server-side request latency.** Nothing times a request end to end, and nothing times the Gemini call. `llm_usage_log` records that a call was made, not how long it took. The only latency numbers in the system are the two client-reported millisecond fields above.
+
+This is an open question, not a thing to quietly drop: see "Open questions" below.
+
+#### KNOWN DEFECT the plan must handle: the `UserActionLog` docstring is stale
+
+`app/models/user.py:120-132`'s docstring lists action types the application never emits, and omits several it does.
+Anyone writing analysis queries straight from that docstring gets empty result sets and will not know why.
+
+Verified by grepping `frontend/src` for `action_type`, the **19 values actually emitted** are:
+
+`session_start`, `session_submit`, `session_expire`, `timer_warning`, `question_view`, `question_navigate`, `choice_select`, `answer_focus`, `answer_submit`, `answer_skip`, `hint_request`, `hint_display`, `hint_feedback`, `intervention_offer`, `intervention_accept`, `intervention_reject`, `chat_send`, `profile_view`, `preference_update`.
+
+The docstring's specific errors:
+
+- Documents `intervention_offered` / `intervention_accepted` / `intervention_rejected`. The app emits `intervention_offer` / `intervention_accept` / `intervention_reject`.
+- Documents `session_complete` and `timer_expired`. The app emits `session_submit` and `session_expire`.
+- Documents `chat_message_sent` and `chat_response_received`. The app emits `chat_send` only; the tutor's reply is captured in `chat_logs`, not as an action.
+- Omits `answer_focus` and `timer_warning` entirely.
+
+**Important nuance, so the implementer does not "fix" the wrong file:** the validation whitelist in `app/endpoints/action_log.py:19-54` is **correct and current**. It holds the canonical `{entity}_{verb}` names *and* keeps the old names as explicit legacy aliases. Only the model docstring is stale.
+
+What the plan requires:
+
+1. The snapshot must ship a small `README` or data-dictionary file inside the bundle listing the 19 real values above, so the artifact is self-describing and an analyst never has to consult the stale docstring.
+2. Separately, fix the docstring in `app/models/user.py`. That is a source-code change and is deliberately **not** part of this snapshot work item; raise it as its own row.
+3. The CSV export must not filter on `action_type`. Export every row and let the analyst filter, so an unknown or legacy value is never silently dropped (`action_log.py:93-94` already logs unknown types with a warning rather than rejecting them, and that data-loss-averse posture must carry through).
+
+#### Reuse versus genuinely new
+
+Simplicity First applies hard here.
+The goal is one wrapper, not a second parallel backup system.
+
+**Reuse as-is, call it, do not reimplement:**
+
+- `scripts/backup.sh` produces the Postgres half. It already does the timestamped `pg_dump -Fc`, the `DOCKER_DB_SERVICE=db` path that works around 5432 being unexposed, retention pruning, and the S3 upload. `snapshot.sh` should invoke it (or invoke it with `BACKUP_S3_URI` unset and place the dump into the bundle itself, so there is exactly one upload). It must not contain its own `pg_dump` call.
+- `scripts/restore.sh` is the Postgres restore direction, unchanged. It already requires an explicit target so it cannot silently overwrite production.
+- `scripts/restore_drill.sh` is how the dump inside a snapshot gets validated. Note it has still only ever run against a dev-sourced dump (row above).
+- The timestamp convention from `backup.sh:23`: `date -u +%Y%m%dT%H%M%SZ`. Use it verbatim so snapshot keys sort alongside dump keys.
+- `scripts/update-prod-data.sh` stays the authoritative path for getting `prod/data` **onto** a box, and the snapshot must not duplicate that job. The snapshot's copy of `prod/data` is a point-in-time record for analysis and audit, not the restore path. On a rebuilt box, `prod/data` arrives via `ec2-bootstrap.sh`'s existing `aws s3 sync` from the ops bucket.
+
+**Genuinely new, and only this:**
+
+- Capturing the `chroma_data` named volume.
+- Capturing the four services' container logs to files.
+- CSV export of the 9 tables.
+- The bundling and single-key upload wrapper, plus the data-dictionary file.
+
+#### Capturing a named volume (this is the part that differs from copying a directory)
+
+`docker-compose.yml:91-93` declares `chroma_data` as a named volume, and `docker-compose.yml:34` mounts it at `/app/chroma_db`.
+Section H's `chroma_db` bind mount ownership fix is what replaced the old `./chroma_db` bind mount, and this checklist's own "What is already safe" paragraph was still describing the old bind mount until it was corrected on 2026-08-04.
+`tar` on a host path will therefore not find it.
+
+The standard capture is a throwaway container that mounts the volume read-only and tars it to a host path, roughly:
+
+- mount `chroma_data` read-only into a scratch container, mount an output directory from the host, `tar` the volume contents into it.
+- Restore is the exact inverse: mount the volume writable into a scratch container and untar into it.
+
+Two things the implementer must get right:
+
+1. **Do not hardcode the volume name.** Compose prefixes it with the project name, so the real Docker volume is almost certainly `aitutorapp_chroma_data`, not `chroma_data`. Resolve it at runtime (`docker compose ps -q api` then inspect its mounts, or `docker volume ls` filtered by the compose project label) rather than assuming either spelling.
+2. **`llm_cache.db` is a live SQLite file.** Tarring it while `api` is running can capture a torn file. Since this script runs post-exam and on demand, the simple and correct answer is to `docker compose stop api` for the duration of the volume capture and start it again afterwards. That is a deliberate, brief outage, and it must be stated in the runbook step rather than left implicit. `db` stays up, because `backup.sh` needs it.
+
+#### CSV export (the analysis half)
+
+Do it with `\copy ... TO STDOUT WITH CSV HEADER` run through `docker compose exec -T db psql`, one file per table, all 9 tables.
+No Python, no new dependency, no Streamlit, no port-forward.
+
+Notes the implementer needs:
+
+- `user_action_logs.action_data` and `users.preferences` / `users.feedback_scores` are JSON columns. CSV emits them as a single JSON-text column, which is fine, but the bundled data dictionary must say so, because an analyst will otherwise expect flat columns.
+- This export is what closes the `skill_mastery` gap recorded in `docs/OPS_RUNBOOK.html` §9. Update §9 when the script lands.
+- Export every row of every table. No date filter, no user filter. Filtering is the analyst's job, and a filter here is a silent-data-loss risk.
+
+#### Destination: bucket and IAM, verified rather than assumed
+
+This was checked against `terraform/backups.tf` and `terraform/iam.tf` directly, because sections A and G record two prior real bugs in exactly this area (F2, backups written to a bucket the role could not write; F3, the role could write but never read back).
+
+- **Bucket:** `aitutor-backups-<account-id>` (`terraform/backups.tf:5`), currently `aitutor-backups-434195712367`. Versioning enabled, all public access blocked.
+- **Write:** confirmed. `terraform/iam.tf`'s `ReadWriteBackups` statement grants `s3:PutObject` and `s3:GetObject` on `${aws_s3_bucket.backups.arn}/*`, which covers any prefix, including a new `snapshots/` one.
+- **Read back:** confirmed. The same statement's `s3:GetObject`, plus a separate `ListBackups` statement granting `s3:ListBucket` on the bucket ARN. F3 is genuinely fixed in code.
+- **Do not use the ops bucket.** The instance role's ops-bucket access is `s3:GetObject` on `artifacts/*` only, with no `PutObject` anywhere. Writing a snapshot there is exactly the F2 bug again.
+- **Key convention:** `s3://aitutor-backups-<account-id>/snapshots/aitutor_snapshot_<YYYYMMDDTHHMMSSZ>.tar.gz`, using `backup.sh`'s timestamp format so snapshots and dumps sort together.
+
+**Real problem found while verifying this, and it needs a decision before the script is written:**
+`terraform/backups.tf:27-44` applies a lifecycle rule with `filter {}`, meaning it matches **every object in the bucket**, that expires objects after `var.backup_retention_days` (`terraform/terraform.tfvars:22` sets 90) and expires noncurrent versions after the same 90 days.
+A research snapshot written to this bucket is therefore **silently deleted 90 days later**, and versioning does not save it because noncurrent versions expire on the same schedule.
+That is acceptable for a rolling operational dump and clearly wrong for the permanent research record this snapshot is supposed to be.
+See "Open questions".
+
+#### Restore direction: bringing a brand new instance back to the captured state
+
+Assumes the old instance is gone and Terraform has created a replacement.
+
+1. `terraform apply` creates the instance. `user_data.sh.tftpl` runs once, `ec2-bootstrap.sh` runs on boot: repo pulled, `.env` rendered from SSM, `prod/data` synced from the ops bucket, containers built and started, migrations applied by `entrypoint.sh`, participants seeded from `manifest.csv`. At this point the box is functional with an **empty** database.
+2. Download and unpack the snapshot: `aws s3 cp s3://aitutor-backups-<account-id>/snapshots/aitutor_snapshot_<ts>.tar.gz .` and untar. The instance role can read this (verified above).
+3. Restore Postgres: `DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh <dump>`. `pg_restore --clean --if-exists` replaces the freshly-seeded `participants` rows with the captured ones, which is the intent.
+4. Restore Chroma: `docker compose stop api`, untar the volume archive back into the resolved `chroma_data` volume via a scratch container, `docker compose start api`.
+5. Verify: run `scripts/restore_drill.sh`-style row-count comparison against the CSV exports in the same bundle, which is a free consistency check the bundle uniquely makes possible.
+
+**Ordering hazard the implementer must handle:** step 1 runs `alembic upgrade head` against the new box's `main`, then step 3 restores an `alembic_version` row from the snapshot. If the repo has gained migrations since the snapshot, the restored `alembic_version` will point at an older revision than the schema actually is, and the next `alembic upgrade head` will try to re-run migrations that already applied. Decide explicitly whether to exclude `alembic_version` from the restore or to pin the rebuilt box to the snapshot's commit. This interacts directly with F5 in section G (nothing is version-pinned).
+
+**What this artifact explicitly CANNOT restore:**
+
+- Anything that happened after the snapshot was taken. There is no PITR and no WAL archiving. The snapshot is a point in time, full stop.
+- The instance's identity and surroundings: Elastic IP association, the CloudFront distribution and its origin config, SSM Parameter Store secrets, and the GitHub deploy key. Those come from Terraform and SSM, not from this bundle. A restore is "Terraform first, then this artifact", never this artifact alone.
+- The deployed frontend. It is a static export in a separate S3 bucket behind CloudFront, built from the repo, and is not instance data.
+- Container logs older than what the `x-logging` cap held at capture time, and any logs produced by a container that was recreated before the snapshot ran.
+- A running system on its own. The script needs the containers up, so like `backup.sh` it must run **before** `stop-instances`, not against a stopped box.
+
+#### Open questions, to be answered before implementation
+
+1. **Resolved 2026-08-05.** `terraform/backups.tf` now applies no expiry to current objects at all (only noncurrent versions are pruned, on `var.backup_retention_days`), so this no longer needs a per-prefix carve-out, every object under both `backups/` and `snapshots/` persists indefinitely.
+2. **"Traces" were requested and do not exist.** No tracing, no correlation ID, no server-side request or LLM latency instrumentation. Does the user want that instrumented first (it is `docs/OPS_RUNBOOK.html` §11's top recommendation, and would be a change to `app/`), or is the existing client-reported `time_taken_ms` plus the `user_action_logs` timestamp trail sufficient for the analysis in mind?
+3. **Is a brief `api` stop during capture acceptable?** It is the simple way to get a consistent `llm_cache.db` and Chroma copy. If the snapshot must ever run mid-exam, the answer changes and the script needs a SQLite-native online backup instead.
+4. **Should the bundle be encrypted?** It contains student names, identifiers, and full chat transcripts in plain CSV. The bucket blocks public access and S3 default encryption applies at rest, but the artifact is also intended to be downloaded to a laptop for analysis, which leaves that boundary.
+5. **Expected bundle size is unknown.** The dev-database dump is 96K, but Chroma plus `llm_cache.db` after a real 50-student exam has never been measured. Worth measuring during the dress rehearsal (section F) so the runbook can state a realistic capture duration.
 
 ---
 
@@ -247,7 +431,7 @@ Caching is correctly configured and requires no changes to switch on:
 |---|---|---|
 | Cache enabled by default | Yes | `use_llm_cache: bool = True` (`app/utils/config.py:33`), `USE_LLM_CACHE=true` (`.env.docker.example`) |
 | Backing store | SQLite at `./chroma_db/llm_cache.db` | `app/services/rag_agent.py:148` |
-| Persistence | Survives restarts and EC2 stop/start | `./chroma_db` is a bind mount onto EBS |
+| Persistence | Survives restarts and EC2 stop/start | The `chroma_data` named Docker volume, mounted at `/app/chroma_db` (corrected 2026-08-04; this said "bind mount" before, stale since section H's ownership fix) |
 | Determinism | `temperature=0` | `app/services/rag_agent.py:163` — identical prompts return identical output, which is what makes caching sound here |
 | Test model | `gemini-2.5-flash-lite` | Already set in `.env.docker.example`; code default needs aligning, see section H |
 
@@ -416,13 +600,19 @@ Resolved (Stage 4):
 | Backup retention | **90 days**, in the Terraform-managed backup bucket (`terraform/backups.tf`) | `scripts/backup.sh`'s `BACKUP_S3_URI` now has a real target with a lifecycle rule; dumps expire automatically rather than accumulating forever. |
 | Swap file | **Yes, 2GB** on the root volume | Was the one open question from 2026-08-02, answered this session. With `mem_limit` set and `memswap_limit` unset, a transient memory spike degrades instead of OOM-killing a container mid-exam. Counted into the 20GB root volume sizing. |
 
+Resolved (2026-08-04):
+
+| Decision | Answer | Consequence |
+|---|---|---|
+| Should the nightly backup cron exist? | **No. Deleted outright, approved by the user 2026-08-04.** | The `0 2 * * *` cron only fired while the instance ran, and the box is stopped between exams by design, so on a single-day exam it very likely never fired at all. `scripts/backup.sh` only dumps Postgres; everything else is regenerable and already covered by `scripts/update-prod-data.sh`. The cron installation is removed from `scripts/ec2-bootstrap.sh`; `scripts/backup.sh` itself stays, invoked on demand and as a post-exam runbook step. `README.md`, `docs/OPS_RUNBOOK.html` (§2, §5b, §6, §8, §10) and the phase3-deploy skill are updated to match. |
+| Is there a scheduled mid-exam backup? | **No.** | **This corrects the reasoning previously recorded in this section.** A mid-exam dump was argued for on the grounds that the recorded failure contingency ("restart services, retain data, resume the exam") is only true if a dump exists to restore from. That is wrong: `docker compose restart` loses nothing, and the `postgres_data` named volume survives an instance stop/start. The only events that destroy data are instance termination and EBS loss, and a mid-exam `pg_dump` sitting on the same EBS volume does not protect against either. There is therefore no scheduled mid-exam backup step. |
+
 Still open:
 
 | | Question | Detail |
 |---|---|---|
 | [ ] | Expected concurrent peak | 50 is the planning number. Confirm whether that is simultaneous or staggered arrival, which changes the DB pool and rate limit sizing. **Now also blocks Stage 4.5's cap sizing**, the per-user and global LLM limits have to be set above the true legitimate peak, and a synchronised 50-student start is a different number from staggered arrival. |
 | [ ] | Number of participants per exam | Confirm the real cohort size. `prod/data/participants.csv` currently holds 3 rows (dev), and the dev DB has 3 participants; every cost and capacity figure in this document assumes 50. |
-| [ ] | **Decision awaited: should the nightly backup cron be deleted in favor of two explicit runbook steps?** | **Reasoning, added 2026-08-04, awaiting the user's approval, not yet decided.** `scripts/backup.sh` only runs `pg_dump -Fc` of Postgres. Everything else regenerable, participants from `manifest.csv`, questions from the CSV pipeline, is already covered by the existing S3 prod-data sync (`scripts/update-prod-data.sh`). The only truly unrecoverable content is `interaction_logs`, `chat_logs`, `intervention_logs` and `skill_mastery`, which is the research output the whole system exists to produce. A pre-exam backup therefore protects nothing, and the nightly `0 2 * * *` cron is meaningless on a box that stays stopped between exams (`docs/OPS_RUNBOOK.html` §5b already says this in isolation, but the tracker has never drawn the conclusion). The backup has exactly two moments of real value: mid-exam, because the recorded contingency "restart services, retain data, resume the exam" (section J above) is only actually true if a dump exists to restore from, and immediately post-exam, before stopping the box, which is what captures the research data for good. **Proposed decision, not yet approved:** delete the nightly cron entirely and replace it with the two explicit runbook steps that already exist in `docs/OPS_RUNBOOK.html` §10, steps 1 and 7, treating those two moments as the only backup that matters rather than as a supplement to an always-on cron. |
 
 ---
 
@@ -494,7 +684,7 @@ Two more P0s added during Stage 3, both in section 0: the complete absence of au
 
 Ten further checkboxes deliberately carry no priority, because they are not build work:
 
-- **3 open questions/decisions** in section J (expected concurrent peak, number of participants per exam, and the new nightly-backup-cron decision added this pass). These need answers or approval, not implementation.
+- **2 open questions/decisions** in section J (expected concurrent peak, number of participants per exam). The nightly-backup-cron decision that was open here was approved and executed on 2026-08-04; it now sits in section J's "Resolved (2026-08-04)" table, and the cron is deleted.
 - **7 exam-day runbook steps** in section K. These are executed on the day, not before it.
 
 ## Audit record

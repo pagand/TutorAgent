@@ -8,6 +8,23 @@ Findings are recorded with the file and line that produced them so nothing has t
 
 ---
 
+## Next round, pick up here (added 2026-08-04)
+
+The three items below are the immediate next actions for the next session.
+The three P0s listed after them are already tracked in detail further down (sections A, F, G), they are repeated here only as pointers so every open P0 is visible from the top of the document.
+
+- [ ] **P0, do 2026-08-05.** Verify the cost allocation tag fix actually took effect. Run `aws ce list-cost-allocation-tags` and confirm `Project` reads `Active`, then confirm `aitutor-monthly-budget` reports a non-zero actual spend at least once. The tag applies going forward only and can take up to 24h to populate. Until the budget reports non-zero once, the $15/mo guardrail is unproven, not just unconfirmed. Optionally run `aws ce start-cost-allocation-tag-backfill` to recover August's history.
+- [ ] **P0.** Push the committed CSP and cost-tag work to the remote. Both fixes are applied to live AWS and committed locally (commit `35ff0bb`), but a fresh clone plus `terraform apply` would not have them until they are on the remote, which risks reverting the live CSP back to the blank-page state.
+- [ ] **P0, awaiting input.** The user ran a bug bash on 2026-08-04 against `https://d2u3k75qofedmd.cloudfront.net` and found many errors. The error list will be supplied next session. Placeholder row, an agent must triage and fix each one once the list arrives.
+
+**Open P0s consolidated here, detail lives at their original location:**
+
+- [ ] EBS snapshot before and after each exam, section A.
+- [ ] Full dress rehearsal on the real AWS stack plus k6 at 50 VUs against real Gemini, section F.
+- [ ] `terraform destroy` plus re-apply to prove the stack is reproducible, section G.
+
+---
+
 ## Section 0 — Deploy blockers and exam integrity
 
 Found by independent audit, all verified directly against the code.
@@ -200,7 +217,8 @@ That was wrong. Audit found three more, all in section 0:
 |---|---|---|---|
 | [x] | **P0** | Bulk timer extension in admin | **Fixed (Stage 2), with a correction to this row's own proposed implementation.** Shifting `exam_start_ms` forward (as originally suggested here) would falsify the recorded exam start time, which is research data; implemented instead as `exam_duration_ms = exam_duration_ms + N minutes`, matching the existing per-student "Adjust Timer" semantics. New `streamlit_app/admin_ops.py` (`extend_all_exam_timers`, `count_active_sessions`) scoped to `submitted_at IS NULL` so already-finished students are untouched; wired into a new "Exam Control" section on the System-Wide Analytics view with an affected-count preview before applying. **This alone would have been cosmetic** — see the new heartbeat-reconciliation row above this table — without also fixing the frontend to actually pick up the change on an open tab. Guarded by `tests/test_admin_bulk_timer.py` and the E2E timer-compensation assertion. |
 | [ ] | **P1** | Surface connection loss to the student | Heartbeat failure is swallowed silently, so a student sees nothing wrong until they try to submit. A passive "reconnecting" indicator is calmer than a submit failure appearing out of nowhere. |
-| [ ] | **P1** | Graceful LLM failure handling | Billing is on the paid tier so quota is not the ceiling it would have been, but a 429 or Gemini outage should surface as "hint unavailable, try again" rather than a broken UI. |
+| [ ] | **P1** | Graceful LLM failure handling | Billing is on the paid tier so quota is not the ceiling it would have been, but a 429 or Gemini outage should surface as "hint unavailable, try again" rather than a broken UI. **Costed in `docs/OPS_RUNBOOK.html` §11, recommendation 5**: small, contained to the error paths in `hints.py`/`chat.py`. The runbook's own incident-response table (§8) already lists this as a live gap: a Gemini outage today just surfaces whatever exception the client raises. |
+| [ ] | **P2** | Admin-UI toggle for the LLM spend caps | New finding, imported from `docs/OPS_RUNBOOK.html` §11, recommendation 6. `LLM_MAX_CALLS_PER_USER_PER_DAY` and `LLM_MAX_CALLS_PER_DAY` (`app/services/llm_quota.py`) can only be raised by an `.env` edit plus an SSM session plus `docker compose up -d api`, which is the runbook's own description of hitting the global cap mid-exam, "under time pressure." Small: one Streamlit form plus a settings write path. |
 | [ ] | **P1** | Document expected cold-start delay | `start_period: 120s` on the healthcheck implies RAG singletons (`app/services/rag_agent.py:24-29`) take a while to re-initialize. The first hint after any restart will be slow. Proctors should know this is normal. |
 | [ ] | **P2** | Consider a "pause exam" concept | Out of scope for this exam, but the wall-clock timer has no pause. Worth recording as a known limitation. |
 
@@ -295,9 +313,9 @@ That is a grading-fairness problem as much as a UX one, because the time cost is
 
 | | Pri | Item | Detail |
 |---|---|---|---|
-| [ ] | **P1** | Request logging middleware | No correlation ID exists. Nothing links an app log line to a `user_id`. "It broke at 10:42" currently means grepping stdout by timestamp and guessing. One JSON line per request (method, path, status, `duration_ms`, `user_id`, `request_id`) is roughly 40 lines of code and converts triage from guesswork to grep. |
-| [ ] | **P1** | Structured (JSON) logging | `app/utils/logger.py` uses a plain-text formatter, so no field queries are possible. |
-| [ ] | **P1** | Latency metrics | Cannot currently answer "were hints slow during the exam?" after the fact. Falls out of the middleware above. |
+| [ ] | **P1** | Request logging middleware | No correlation ID exists. Nothing links an app log line to a `user_id`. "It broke at 10:42" currently means grepping stdout by timestamp and guessing. One JSON line per request (method, path, status, `duration_ms`, `user_id`, `request_id`) is roughly 40 lines of code and converts triage from guesswork to grep. **Costed in `docs/OPS_RUNBOOK.html` §11, recommendation 1**, and called there "the single highest-value gap" in the whole runbook, ~40 lines of code. |
+| [ ] | **P1** | Structured (JSON) logging | `app/utils/logger.py` uses a plain-text formatter, so no field queries are possible. **Costed in `docs/OPS_RUNBOOK.html` §11, recommendation 2**: small, mostly a formatter swap, and it is what makes the row above actually queryable instead of another wall of text. |
+| [ ] | **P1** | Latency metrics | Cannot currently answer "were hints slow during the exam?" after the fact. Falls out of the middleware above. **Costed in `docs/OPS_RUNBOOK.html` §11, recommendation 3**: falls out of the request-logging middleware above almost for free. |
 | [ ] | **P2** | Error alerting | An unhandled 500 goes to stdout and nowhere else. Nobody is paged. Acceptable if a proctor is actively watching the dashboard. |
 
 **What already exists, and is genuinely good:** timestamped `user_action_logs` covering `session_start`, `question_view`, `choice_select`, `answer_submit`, `hint_request`, `hint_display`, `hint_feedback`, and all three intervention states (`app/models/user.py:110-134`).
@@ -318,6 +336,7 @@ The gap is entirely in *failure* visibility, not in *behavioural* data.
 | [x] | **P0** | E2E second-device test | **Fixed (Stage 1b).** `frontend/e2e/second-device-lock.spec.ts` covers both the existing `/login` `active_elsewhere` behavior and the new `/quiz` 409 handling (a proctor moving a student straight to `/quiz` on a second device, bypassing `/login`). |
 | [ ] | **P0** | Full dress rehearsal on the real AWS stack | Seed real tokens, run the real flow, watch the real dashboard. Not a staging approximation. |
 | [ ] | **P1** | k6 load test that hits Gemini for real | Phase 3.6 specifies 50 VUs. It must make real LLM calls, otherwise it validates nothing about the actual failure mode. Pass criteria: p95 < 5s non-LLM, < 90s for hints and chat. |
+| [ ] | **P1** | GitHub Actions CI running pytest plus Playwright on every push | New finding, imported from `docs/OPS_RUNBOOK.html` §11, recommendation 4. The tests already exist and are good, 114 pytest cases and 6 E2E specs, they simply never run automatically today, only on a laptop before a manual merge. One workflow file, no AWS credentials needed, zero deploy risk. Runbook's own verdict: "the one option here with real value and no downside." |
 
 ---
 
@@ -371,6 +390,7 @@ Pay the $3.60.
 |---|---|---|---|
 | [ ] | **P2** | Stray SQLite files | `aistutor.db` and `aitutor.db` sit unreferenced in the repo root (note the typo variant). Not used by any config. |
 | [ ] | **P2** | Stale Chroma directories | `chroma_db_old/` and `chroma_db_old_evaluation/`. |
+| [ ] | **P2** | Dead component: `frontend/src/components/CompletionModal.tsx` | **Found during the 2026-08-04 doc-consolidation sweep.** CLAUDE.md's own "What's Built" section records that the dedicated `/results` page "replaces CompletionModal overlay" (Phase 2 UX hardening), but the file itself was never deleted. Confirmed with a repo-wide grep: no `import`/`from` reference to it anywhere in `frontend/src`, it is not reachable from any page. |
 | [ ] | **P2** | Document the dev/Docker `chroma_db` collision | Dev and the Docker bind mount share `./chroma_db`, so running Docker locally writes into the dev vector store and its LLM cache. This is the concrete reason behind CLAUDE.md's "do not run Docker locally" rule, and it should say so. |
 
 ---
@@ -402,6 +422,7 @@ Still open:
 |---|---|---|
 | [ ] | Expected concurrent peak | 50 is the planning number. Confirm whether that is simultaneous or staggered arrival, which changes the DB pool and rate limit sizing. **Now also blocks Stage 4.5's cap sizing**, the per-user and global LLM limits have to be set above the true legitimate peak, and a synchronised 50-student start is a different number from staggered arrival. |
 | [ ] | Number of participants per exam | Confirm the real cohort size. `prod/data/participants.csv` currently holds 3 rows (dev), and the dev DB has 3 participants; every cost and capacity figure in this document assumes 50. |
+| [ ] | **Decision awaited: should the nightly backup cron be deleted in favor of two explicit runbook steps?** | **Reasoning, added 2026-08-04, awaiting the user's approval, not yet decided.** `scripts/backup.sh` only runs `pg_dump -Fc` of Postgres. Everything else regenerable, participants from `manifest.csv`, questions from the CSV pipeline, is already covered by the existing S3 prod-data sync (`scripts/update-prod-data.sh`). The only truly unrecoverable content is `interaction_logs`, `chat_logs`, `intervention_logs` and `skill_mastery`, which is the research output the whole system exists to produce. A pre-exam backup therefore protects nothing, and the nightly `0 2 * * *` cron is meaningless on a box that stays stopped between exams (`docs/OPS_RUNBOOK.html` §5b already says this in isolation, but the tracker has never drawn the conclusion). The backup has exactly two moments of real value: mid-exam, because the recorded contingency "restart services, retain data, resume the exam" (section J above) is only actually true if a dump exists to restore from, and immediately post-exam, before stopping the box, which is what captures the research data for good. **Proposed decision, not yet approved:** delete the nightly cron entirely and replace it with the two explicit runbook steps that already exist in `docs/OPS_RUNBOOK.html` §10, steps 1 and 7, treating those two moments as the only backup that matters rather than as a supplement to an always-on cron. |
 
 ---
 
@@ -420,16 +441,34 @@ It needs these additions before it is trustworthy:
 
 ---
 
+## L. Non-blocking backlog, swept from other planning docs (2026-08-04)
+
+None of this blocks the exam go-live this document exists to gate.
+It is recorded here only so it is not lost, since it is genuinely unaddressed and this is now the single tracker for outstanding work.
+Found while sweeping the gitignored planning docs (`IMPROVEMENT.md`, `ARCHITECTURE.md`, `DEVELOPMENT_PLAN.md`, `TESTING_STRATEGY.md`, `LLMaS_plan.md`, `Plan_Profile-Centric_FrontEnd.md`, `progress.md`) for unfinished work not already represented in this document.
+Full per-file verdicts are recorded in the audit note at the end of this document; only the following four items were genuinely unaddressed.
+
+| | Pri | Item | Detail |
+|---|---|---|---|
+| [ ] | **P2** | `get_bkt_mastery` default is hardcoded at the endpoint | `app/endpoints/hints.py:52` passes `settings.bkt_p_l0` directly as the default mastery value, rather than letting the BKT service own its own default. Cosmetic coupling, not a bug, from `IMPROVEMENT.md`'s "Good for the Future" backend list. The two other items in that same list (question-type validation, rating input bounds) are already resolved in the current code, `question_service.check_answer` now does token-based matching and `AnswerRequest.feedback_rating` already carries `Field(None, ge=1, le=5)` in `app/endpoints/answer.py:35`. |
+| [ ] | **P2** | Evaluation scoring: "penalty for trying" | From `IMPROVEMENT.md`'s "New Findings" list. Current scoring (+2 correct, -1 incorrect, 0 skip) in `evaluation/run_evaluation.py` makes a student who tries and fails score lower than one who gives up, which can make the treatment group look worse for engaging more. **Already explicitly deferred by the user**, per the same file: "User deferred this specific logic change for now, favoring better metrics tracking first." Listed here only so the deferred decision is not lost, not as new pressure to act. |
+| [ ] | **P2** | Evaluation framework: static RAG usage defeats its own purpose | From `IMPROVEMENT.md`'s "New Findings" list. The knowledge base PDF is fixed and the question set is known in advance, which means retrieval could in principle be hardcoded rather than exercised for real. Affects the offline evaluation framework (`evaluation/`) only, not the production exam flow. |
+| [ ] | **P2** | Evaluation framework: "Anxious" persona is behaviorally indistinguishable from "Struggling" | From `IMPROVEMENT.md`'s "New Findings" list. The simulated Anxious persona in `evaluation/run_evaluation.py` shows no visible hesitation or second-guessing, it answers immediately or skips exactly like the Struggling persona. Affects the offline evaluation framework only, not the production exam flow. |
+
+---
+
 ## Summary counts
 
-Recounted mechanically on 2026-08-04 (parsed from the tables by script, not tallied by hand):
+Recounted mechanically on 2026-08-04, this consolidation pass (parsed by grepping every `| [ ] | **P0/P1/P2** |` / `| [x] | **P0/P1/P2** |` table row in this file, not tallied by hand):
 
 | Priority | Open | Done | Total | Meaning |
 |---|---|---|---|---|
 | P0 | **3** | 39 | 42 | Blocks go-live |
-| P1 | **18** | 19 | 37 | Should be fixed before go-live |
-| P2 | **10** | 4 | 14 | Post-exam cleanup |
-| **Total actionable** | **31** | **62** | **93** | Every actionable item carries a priority |
+| P1 | **19** | 19 | 38 | Should be fixed before go-live |
+| P2 | **16** | 4 | 20 | Post-exam cleanup |
+| **Total actionable** | **38** | **62** | **100** | Every actionable item carries a priority |
+
+**Movement this pass, all additions, no removals and no re-prioritizations.** P0 unchanged at 3 open (the three P0s were consolidated into the new top-of-document section, not altered). P1 open rose 18 → 19: one new row, GitHub Actions CI (section F, imported from `docs/OPS_RUNBOOK.html` §11). P2 open rose 10 → 16: six new rows, an admin-UI toggle for the LLM caps (section B) and a dead-file finding, `CompletionModal.tsx` (section I), both found this pass, plus four items imported from `IMPROVEMENT.md`'s unaddressed backlog into new section L (the BKT-default coupling nitpick and three evaluation-framework findings). Three existing P1 rows (request logging, structured logging, latency metrics, section E) and one existing P1 row (graceful LLM failure handling, section B) were annotated with `docs/OPS_RUNBOOK.html` §11's costing, not duplicated, so they do not appear in this count twice.
 
 **Updated 2026-08-04, later the same day, after independent verification against the live deployment (not just the code).**
 The P0 count rose again, from 39 to 42, and as with every previous rise recorded in this section, that increase is itself the finding, not a bookkeeping detail.
@@ -453,9 +492,9 @@ Two more P0s added during Stage 3, both in section 0: the complete absence of au
 
 **All of Stage 4.5's block is now fixed** (2026-08-03, same day): manifest-token gate, `GET /questions/` gating, in-app LLM spend cap, closed-state screen, UX latency budget decided, RAG cold start measured and found negligible. Two riders closed alongside it (`/participants/login` name-oracle rate limiting, the `/docs` boot-assertion coupling) plus one new $0 Terraform addition (CloudFront response headers), which is why the P2 total rose from 13 to 14 rather than only losing an open row. 17 new backend tests (91 → 108); the full Playwright E2E suite passes unmodified, since it already runs at the production `require_participant_token` posture.
 
-Nine further checkboxes deliberately carry no priority, because they are not build work:
+Ten further checkboxes deliberately carry no priority, because they are not build work:
 
-- **2 open questions** in section J (backup retention, expected concurrent peak). These need answers, not implementation.
+- **3 open questions/decisions** in section J (expected concurrent peak, number of participants per exam, and the new nightly-backup-cron decision added this pass). These need answers or approval, not implementation.
 - **7 exam-day runbook steps** in section K. These are executed on the day, not before it.
 
 ## Audit record
@@ -478,3 +517,20 @@ Treat any future "verified" or "already sound" block in this document as an asse
 One caveat on that last point: the `UserActionLog` docstring names are stale.
 It documents `intervention_offered/accepted/rejected`, `session_complete` and `timer_expired`, while the app actually emits `intervention_offer/accept/reject`, `session_submit` and `session_expire`.
 Anyone writing analysis queries from the docstring gets empty result sets.
+
+### Per-file verdicts, gitignored planning docs swept 2026-08-04
+
+`.claude/` and most root-level planning docs are gitignored, but the files themselves still sit on disk and were checked for unfinished work not already captured in this tracker.
+Deletion is not this document's call, these are verdicts only.
+
+| File | Verdict |
+|---|---|
+| `IMPROVEMENT.md` | **Mostly superseded, four genuinely unaddressed items imported into new section L.** The frontend "High" and "Med" priority findings describe a pre-redesign architecture, `QuestionView.tsx`, `TutorApp.tsx`, `UserLogin.tsx`, none of which exist in the current `frontend/src/components/`, so that entire half of the file is dead. The backend "Post-Evaluation Findings" are already marked fixed later in the same file's own "Completed" section. Of the backend "Good for the Future" list, two of three items are already resolved in the current code (checked directly against `app/services/question_service.py` and `app/endpoints/answer.py`), leaving one real item (the BKT default coupling). The "New Findings (Needs Attention)" section at the bottom (3 items, evaluation-framework only) is genuinely unaddressed and now lives in section L. Safe to delete once section L is accepted. |
+| `ARCHITECTURE.md` | **Fully superseded, safe to delete.** Vision-paper style description of the system as already built (RAG, BKT, personalization), not a task tracker, contains no unchecked or unfinished item. Its "Development rules" preamble (mandatory post-stage steps: update tests, update docs) is process guidance already superseded by this project's actual dev workflow as recorded in `CLAUDE.md`. |
+| `DEVELOPMENT_PLAN.md` | **Fully superseded, safe to delete.** Every stage through 7.2 is marked Complete, no open item anywhere in the file. |
+| `TESTING_STRATEGY.md` | **Fully superseded, safe to delete.** Describes the pre-Phase-3 testing philosophy and the LLM-as-a-Student evaluation strategy. Its own "Implementation Status" line calling the evaluation framework "Planned" is stale, `LLMaS_plan.md` (below) records that framework as completed and validated. No unfinished item of its own; the one useful piece of durable guidance in it (the `monkeypatch` mocking strategy for LLM calls in pytest) is a testing convention, not a work item, and is presumably still followed in `tests/` regardless of whether this file survives. |
+| `LLMaS_plan.md` | **Fully superseded, safe to delete.** Ends at "Phase 7: Framework Validation (Completed)" with an explicit conclusion that the framework is "robust, correct, and ready for full-scale experiments." No open item of its own. The follow-on findings from actually running it live in `IMPROVEMENT.md`, not here, and those are the ones carried into section L. |
+| `Plan_Profile-Centric_FrontEnd.md` | **Fully superseded, safe to delete.** A five-step refactor plan for the pre-redesign frontend (`UserProfile.tsx`, `TutorApp.tsx`, `QuestionView.tsx`), none of which exist in the current `frontend/src`. The profile-centric outcome it was aiming for was achieved, by a full redesign, not by this plan's specific steps. |
+| `progress.md` | **Fully superseded, safe to delete.** Phases 1 through 4 are marked done and match the current build. Phase 5 (session recovery) is unchecked in this file but is confirmed done in `CLAUDE.md`'s "What's Built" section, this file was simply never updated. Phase 6 (S3/CloudFront, EC2, "HTTPS via Let's Encrypt") is unchecked and now describes an architecture Stage 5 explicitly replaced, certbot and Let's Encrypt are deleted, TLS terminates at CloudFront. Section H already flags this file's line 17 as stale on a separate claim (the alembic stub-migration line). |
+
+**Also found during this sweep, not from a planning doc:** `README.md` and `PROMPTS.md` were read in full. `README.md`'s backup/restore commands and Docker deploy steps match `scripts/backup.sh`/`restore.sh` and `docker-compose.yml`. `PROMPTS.md`'s four named hint styles (Analogy, Socratic Question, Worked Example, Conceptual) still match the four keys in `app/services/prompt_library.py`'s `PROMPT_LIBRARY`, but the template text itself is stale, the live prompts now include `{user_history}` and `{options}` and materially different instructions than what `PROMPTS.md` shows. That is a documentation-accuracy gap, not an unfinished work item, so it is noted here rather than added as a row.

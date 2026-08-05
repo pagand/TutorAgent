@@ -51,8 +51,12 @@ async def participant_login(request: TokenLoginRequest, db: AsyncSession = Depen
     if exam_session is None:
         return TokenLoginResponse(state="not_started", name=participant.name, group=participant.group)
 
-    # Session exists — check for concurrent active use on a DIFFERENT device
-    if participant.status == "active" and participant.last_seen_at:
+    # Session exists — check for concurrent active use on a DIFFERENT device.
+    # active_session_id must be set for a lock to exist at all: POST /session/logout
+    # nulls it without touching status or last_seen_at, so without this condition a
+    # student who logged out is told their own token is "active on another device"
+    # until last_seen_at goes stale. Mirrors the guard in session.py's start_session.
+    if participant.status == "active" and participant.last_seen_at and participant.active_session_id:
         age_seconds = (datetime.now(timezone.utc).replace(tzinfo=None) - participant.last_seen_at).total_seconds()
         if age_seconds < STALE_SECONDS:
             # If the caller's sessionId matches the active lock → same device, resumable

@@ -258,6 +258,63 @@ async def test_heartbeat_active_false_on_takeover(client, db_session):
 # Manifest group sourcing in get_user_or_create
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# /session/logout — must not lock the student out of their own token
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_logout_then_login_is_resumable_not_active_elsewhere(client, db_session):
+    """
+    Regression test: /session/logout clears active_session_id but leaves
+    status='active', and a returning browser sends no session_id. Before the
+    fix, /participants/login's concurrent-device check only looked at
+    status + last_seen_at, so it treated "no lock held" as "locked
+    elsewhere" and returned active_elsewhere, keeping the student out of
+    their own exam for STALE_SECONDS. It must return resumable instead.
+    """
+    await _create_participant(db_session, token="LOGOUT01", status="unused")
+    await _create_user(db_session, user_id="LOGOUT01")
+
+    start_res = await client.post(
+        "/session/start", json={"user_id": "LOGOUT01", "session_id": "sess_owner"}
+    )
+    assert start_res.status_code == 200
+
+    logout_res = await client.post(
+        "/session/logout", json={"user_id": "LOGOUT01", "session_id": "sess_owner"}
+    )
+    assert logout_res.status_code == 200
+    assert logout_res.json()["logged_out"] is True
+
+    login_res = await client.post("/participants/login", json={"token": "LOGOUT01"})
+    assert login_res.status_code == 200
+    assert login_res.json()["state"] == "resumable"
+
+
+@pytest.mark.asyncio
+async def test_genuine_concurrent_device_still_blocked(client, db_session):
+    """
+    Guardrail against overcorrecting the logout fix: when a lock IS actually
+    held (active_session_id set, last_seen_at fresh) a different device
+    (or one with no session_id at all) must still get active_elsewhere.
+    """
+    fresh_ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
+    await _create_participant(db_session, token="CONCUR01", status="active",
+                               active_session_id="sess_owner", last_seen_at=fresh_ts)
+    await _create_user(db_session, user_id="CONCUR01")
+    await _create_exam_session(db_session, user_id="CONCUR01", session_id="sess_owner")
+
+    res_no_session_id = await client.post("/participants/login", json={"token": "CONCUR01"})
+    assert res_no_session_id.status_code == 200
+    assert res_no_session_id.json()["state"] == "active_elsewhere"
+
+    res_other_device = await client.post(
+        "/participants/login", json={"token": "CONCUR01", "session_id": "sess_intruder"}
+    )
+    assert res_other_device.status_code == 200
+    assert res_other_device.json()["state"] == "active_elsewhere"
+
+
 @pytest.mark.asyncio
 async def test_user_creation_uses_manifest_group(client, db_session):
     """When a Participant row exists, the created User gets its group/intervention."""

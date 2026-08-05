@@ -75,6 +75,16 @@ services:
     restart: unless-stopped
     entrypoint: []
     command: ["streamlit", "run", "streamlit_app/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    # Overrides the Dockerfile's HEALTHCHECK, which probes port 8000 because the
+    # image is built for the api service. Nothing listens on 8000 in this
+    # container, so the inherited probe always failed and the container sat
+    # permanently "unhealthy" while Streamlit was serving fine on 8501.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aitutor_db}

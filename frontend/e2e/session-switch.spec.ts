@@ -53,6 +53,13 @@ test('logging out and back in on the same token can still submit, with no reload
   await answerCurrent(page, getCorrectAnswer(1))
   await expect(page.getByText('✓ Correct!')).toBeVisible({ timeout: 15000 })
   await expect(page.getByText('Failed to submit. Please try again.')).toHaveCount(0)
+
+  // The student's own cache must survive their own logout. An earlier version
+  // of the fix swept every quizCache_* key at logout, which was right for a
+  // handover to a different student but silently discarded this student's
+  // hints and chat history when they simply logged back in.
+  const ownCache = await page.evaluate(() => localStorage.getItem('quizCache_E2ESWITCHA'))
+  expect(ownCache).not.toBeNull()
 })
 
 test('switching tokens in the same browser starts a fresh exam and leaks nothing', async ({ page }) => {
@@ -70,16 +77,6 @@ test('switching tokens in the same browser starts a fresh exam and leaks nothing
   await expect(page).toHaveURL(/\/login/)
   await page.getByRole('button', { name: 'Use a different token' }).click()
 
-  // No trace of the previous student may survive the handover. The unscoped
-  // `examResults` key is what previously let the next student read their
-  // results and revealed answer key.
-  const leftovers = await page.evaluate(() =>
-    Object.keys(localStorage).filter(
-      (k) => k === 'examResults' || k.startsWith('examResults_') || k.startsWith('quizCache_')
-    )
-  )
-  expect(leftovers).toEqual([])
-
   // The new student must reach the quiz, not inherit the previous one's
   // completed state and get bounced to /results.
   await page.getByPlaceholder(/Z7XN5Z4H/i).fill('E2ESWITCHC')
@@ -87,4 +84,18 @@ test('switching tokens in the same browser starts a fresh exam and leaks nothing
   await page.getByRole('button', { name: 'Start Exam' }).click()
   await expect(page.getByText('Q1 of')).toBeVisible({ timeout: 15000 })
   await expect(page).not.toHaveURL(/\/results/)
+
+  // Once the browser belongs to the next student, nothing of the previous one
+  // may remain. The unscoped `examResults` key is what previously let them
+  // read the previous student's results and revealed answer key. Cleared on
+  // the way IN rather than at logout, so a same-token resume keeps its own
+  // hints and chat.
+  const foreign = await page.evaluate(() =>
+    Object.keys(localStorage).filter(
+      (k) =>
+        k === 'examResults' ||
+        ((k.startsWith('examResults_') || k.startsWith('quizCache_')) && !k.endsWith('E2ESWITCHC'))
+    )
+  )
+  expect(foreign).toEqual([])
 })

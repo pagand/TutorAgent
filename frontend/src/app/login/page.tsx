@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { participantLogin, createUser, logoutSession, apiHealth } from '@/services/apiClient'
-import { clearLocalSession } from '@/services/localSession'
+import { clearLocalSession, claimLocalSession } from '@/services/localSession'
 import { useQuiz } from '@/context/QuizContext'
 
 type LoginState = 'idle' | 'not_started' | 'resumable' | 'active_elsewhere' | 'completed' | 'invalid'
@@ -107,6 +107,10 @@ export default function LoginPage() {
     try {
       await createUser(t)
       const sessionId = generateSessionId()
+      // Drop any other student's cached results, hints and chat before this
+      // student's session begins. Done here rather than at logout because
+      // this is the first point where the incoming identity is known.
+      claimLocalSession(t)
       localStorage.setItem('userId', t)
       localStorage.setItem('sessionId', sessionId)
       router.replace('/quiz')

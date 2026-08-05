@@ -67,6 +67,7 @@
 <nav class="toc">
   <h2>Contents</h2>
   <ol>
+    <li><a href="#prereqs">0. Prerequisites - read this first</a></li>
     <li><a href="#map">1. System map</a></li>
     <li><a href="#startstop">2. Starting and stopping</a></li>
     <li><a href="#health">3. Health checks</a></li>
@@ -82,6 +83,92 @@
     <li><a href="#recommendations">11. Recommendations</a></li>
   </ol>
 </nav>
+
+<section id="prereqs">
+  <h2>0. Prerequisites - read this first</h2>
+  <p>Everything below depends on the facts on this page. It exists so no procedure later in this document has to re-explain how to authenticate or reach the box. If a later section says "see §0," this is where it points.</p>
+
+  <h3>Authenticate: AWS SSO</h3>
+  <p>This account uses AWS SSO, not long-lived access keys. Once per shell session (the token lasts several hours, then needs a fresh login):</p>
+  <pre><code>aws sso login --profile AdministratorAccess-434195712367</code></pre>
+  <p>This opens a browser to complete the login. If any command below fails with an expired-token or refresh-failed error, this is the fix - run it again.</p>
+
+  <div class="callout danger">
+    <strong>The profile flag is not optional, and a missing one looks like a different error entirely.</strong>
+    There is no default AWS profile configured on a fresh machine. A bare <code>aws</code> command with no <code>--profile</code> and no <code>AWS_PROFILE</code> exported fails with <code>Unable to locate credentials</code> / <code>NoCredentialProviders</code>. That error means "you forgot the profile flag," not "your SSO session expired" - re-running <code>aws sso login</code> will not fix it. Every <code>aws</code> command in this document needs <code>--profile AdministratorAccess-434195712367</code>, or export it once for the whole shell so every later command can drop the flag:
+    <pre><code>export AWS_PROFILE=AdministratorAccess-434195712367</code></pre>
+    This document writes <code>--profile</code> explicitly on most examples anyway, so any single command can be copy-pasted on its own without depending on shell state from an earlier step.
+  </div>
+
+  <p><strong>Region is <code>us-west-2</code></strong> for every resource in this stack (except the ACM certificate for CloudFront, which must live in <code>us-east-1</code> - that is called out where it matters, in §1). Pass <code>--region us-west-2</code>, or export it once:</p>
+  <pre><code>export AWS_REGION=us-west-2</code></pre>
+
+  <h3>Shell access on the box: SSM only, there is no SSH</h3>
+  <p>Port 22 has no ingress rule at all on the instance's security group (<code>terraform/network.tf</code>) - not "locked down," genuinely absent. <code>ssh</code> to the box will hang and time out, not refuse the connection. The only way onto the box is AWS Systems Manager Session Manager, which needs no open port at all - it works over an outbound HTTPS connection the SSM agent on the box initiates itself.</p>
+  <p>Interactive shell:</p>
+  <pre><code>aws ssm start-session --target &lt;instance-id&gt; --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
+  <div class="callout warn">
+    <strong>You land as <code>ssm-user</code>, not <code>ec2-user</code>. The repo is not under this user's home directory.</strong>
+    An interactive session drops you into <code>/home/ssm-user</code> (AWS's default for Session Manager), which has nothing in it. To reach the app:
+    <pre><code>sudo -iu ec2-user
+cd /home/ec2-user/AITutorApp</code></pre>
+    Every command in this document that runs "on the box" assumes you have done this, or is written as a full path from the start. If a command below only says <code>cd AITutorApp</code>, treat that as shorthand for the two lines above, not something to type verbatim in an <code>ssm-user</code> shell.
+  </div>
+  <div class="callout ok">
+    <strong>SSO login and <code>--profile</code> are a laptop concept only - not needed once you're on the box.</strong>
+    Every <code>aws</code> command <em>targeting</em> the box from your laptop (<code>start-session</code>, <code>send-command</code>, <code>describe-instances</code>, etc.) needs the SSO login and profile above. But any <code>aws</code> command run <em>on the box itself</em> (inside an SSM session, or inside <code>scripts/snapshot.sh</code>/<code>ec2-bootstrap.sh</code>) authenticates automatically via the instance's IAM role - no login, no profile, no credentials file. If you see <code>aws s3 cp</code> or <code>aws sts get-caller-identity</code> with no <code>--profile</code> anywhere in a script in this repo, that is why - it is expected to run on the box, not your laptop.
+  </div>
+  <p>Non-interactive (most automation and every <code>aws ssm send-command</code> example in this document uses this shape - these run as <code>root</code>, so they use full paths and don't need the <code>sudo -iu ec2-user</code> step above):</p>
+  <pre><code>CMD_ID="$(aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 \
+  --instance-ids &lt;instance-id&gt; \
+  --document-name AWS-RunShellScript \
+  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]' \
+  --query 'Command.CommandId' --output text)"
+
+aws ssm get-command-invocation --region us-west-2 --profile AdministratorAccess-434195712367 \
+  --command-id "$CMD_ID" --instance-id &lt;instance-id&gt; \
+  --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json</code></pre>
+  <p>The first call returns immediately with a command id; the command itself runs asynchronously on the box, so the second call is what actually shows the result - if you query it too soon it reports <code>InProgress</code> rather than a finished status, just re-run the same <code>get-command-invocation</code> call again a few seconds later.</p>
+
+  <h3>Local tools you need before any of this works</h3>
+  <table>
+    <tr><th>Tool</th><th>Why</th><th>Check it's installed</th><th>Install</th></tr>
+    <tr><td>AWS CLI v2</td><td>Every command in this document</td><td><code>aws --version</code> - expect <code>aws-cli/2.x</code></td><td><a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html">AWS docs</a>, or <code>brew install awscli</code> on macOS</td></tr>
+    <tr><td>Terraform</td><td>Everything in §1's "what's not in Docker" list, all infra changes</td><td><code>terraform version</code> - <code>terraform/versions.tf</code> requires <code>&gt;= 1.10</code></td><td><code>brew install terraform</code> on macOS, or <a href="https://developer.hashicorp.com/terraform/install">HashiCorp's installer</a></td></tr>
+    <tr><td>Session Manager plugin</td><td>Required by <code>aws ssm start-session</code> specifically (not <code>send-command</code>) - a separate binary the CLI shells out to, not bundled with it</td><td>Run any <code>start-session</code> command above; <code>SessionManagerPlugin is not found</code> means it's missing (see also §9, hit live on 2026-08-04)</td><td><code>brew install --cask session-manager-plugin</code> on macOS. No shell restart needed - the CLI resolves it on <code>PATH</code> at call time.</td></tr>
+  </table>
+
+  <h3>Stable identifiers</h3>
+  <table>
+    <tr><th>Identifier</th><th>Value</th></tr>
+    <tr><td>AWS account</td><td><code>434195712367</code></td></tr>
+    <tr><td>SSO profile</td><td><code>AdministratorAccess-434195712367</code></td></tr>
+    <tr><td>Region</td><td><code>us-west-2</code> (ACM cert for CloudFront is the one exception, in <code>us-east-1</code> - see §1)</td></tr>
+    <tr><td>Public URL</td><td><code>https://air.da-tu.ca</code> (live, see §1 - <code>https://d2u3k75qofedmd.cloudfront.net</code> is the underlying CloudFront domain, also works, needs no DNS)</td></tr>
+    <tr><td>CloudFront distribution id</td><td><code>EAU1TO5IJG1RT</code></td></tr>
+    <tr><td>API path</td><td>Same-origin <code>/api/*</code> behind the CloudFront distribution above - there is no separate API hostname (<code>api.air.da-tu.ca</code> is retired, §1)</td></tr>
+    <tr><td>Elastic IP (the EC2 origin)</td><td><code>32.184.88.152</code></td></tr>
+    <tr><td>Backups bucket</td><td><code>aitutor-backups-434195712367</code></td></tr>
+    <tr><td>Frontend bucket</td><td><code>aitutor-frontend-434195712367</code></td></tr>
+    <tr><td>Ops bucket (Terraform state, deploy artifacts)</td><td><code>aitutor-434195712367-ops</code></td></tr>
+    <tr><td>Repo path on the box</td><td><code>/home/ec2-user/AITutorApp</code></td></tr>
+    <tr><td>EC2 instance id</td><td><strong>Not stable - see below, do not hardcode it</strong></td></tr>
+  </table>
+
+  <div class="callout danger">
+    <strong>The instance id changes every time the box is replaced, and it will be replaced more than once. Never hardcode it, anywhere - script, doc, or muscle memory.</strong>
+    Terraform recreates the instance (new id, empty database until restored) whenever <code>user_data</code> or the AMI changes - <code>most_recent = true</code> on the AMI data source means this can happen even with zero repo changes, just from Amazon publishing a new AL2023 image. It was <code>i-0b0d93da111a1e907</code> earlier in Stage 5; a 2026-08-05 rebuild replaced it with <code>i-068fb380c5ec1d2d4</code>. Neither of those two values should be pasted into a command - always look it up fresh:
+    <pre><code>aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text</code></pre>
+    Capture it into a shell variable once per session and reuse it, rather than re-running the lookup for every command:
+    <pre><code>INSTANCE_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text)"
+echo "$INSTANCE_ID"</code></pre>
+    Everywhere later in this document that shows <code>&lt;id&gt;</code> or <code>&lt;instance-id&gt;</code> in a command, substitute <code>$INSTANCE_ID</code> from this lookup (or <code>"$INSTANCE_ID"</code> if you've exported it as above). <code>terraform output instance_id</code> from <code>terraform/</code> is an equivalent shortcut when you already have Terraform state locally.
+  </div>
+</section>
 
 <section id="map">
   <h2>1. System map</h2>
@@ -108,25 +195,24 @@
     <strong>The Elastic IP costs money whether the instance is running or not - do not "optimize" it away.</strong>
     The line item that shows up in Cost Explorer as <strong>"Amazon Virtual Private Cloud"</strong> is not VPC infrastructure at all - it is purely the public IPv4 charge on this EIP, usage types <code>USW2-PublicIPv4:IdleAddress</code> and <code>USW2-PublicIPv4:InUseAddress</code>, $0.005/hr, roughly $3.60/mo, billed continuously including while the instance is stopped. That is the correct tradeoff: it is what keeps the CloudFront origin hostname stable across stop/start (see above). The older rationale for the EIP, a Route 53 A record and a certbot TLS cert, is obsolete - both were deleted in Stage 5. Releasing the EIP to save ~$3.60/mo would break the CloudFront origin the next time the box stops and starts.
   </div>
-  <div class="callout warn">
-    <strong>DNS / custom domain: currently pending.</strong>
-    The ACM certificate for <code>air.da-tu.ca</code> is <code>PENDING_VALIDATION</code> in us-east-1, and the CloudFront distribution (<code>EAU1TO5IJG1RT</code>) has zero aliases attached - it still serves on the default CloudFront certificate only. Two CNAMEs are outstanding at the registrar: the ACM validation record, and <code>air.da-tu.ca</code> → <code>d2u3k75qofedmd.cloudfront.net</code>. Until both land, <code>air.da-tu.ca</code> does not resolve to this stack at all. This blocks <strong>only</strong> the custom domain and its cert - everything else is fully usable today over <code>https://d2u3k75qofedmd.cloudfront.net</code>, which already has working HTTPS via the default CloudFront cert.
+  <div class="callout ok">
+    <strong>DNS / custom domain: live, confirmed 2026-08-05.</strong>
+    The ACM certificate for <code>air.da-tu.ca</code> is <code>ISSUED</code> in us-east-1, and the CloudFront distribution (<code>EAU1TO5IJG1RT</code>) now has <code>air.da-tu.ca</code> attached as an alias. Both registrar CNAMEs (the ACM validation record, and <code>air.da-tu.ca</code> → <code>d2u3k75qofedmd.cloudfront.net</code>) have propagated - <code>dig air.da-tu.ca</code> resolves through to CloudFront, and <code>curl -sI https://air.da-tu.ca/</code> returns a real <code>200</code>. This was previously pending for most of Stage 5; the fallback CloudFront domain (<code>https://d2u3k75qofedmd.cloudfront.net</code>) still works identically and is left in this document's examples below since it needs no DNS at all, but <code>https://air.da-tu.ca</code> is now the real, working public URL.
   </div>
 </section>
 
 <section id="startstop">
   <h2>2. Starting and stopping</h2>
-  <pre><code>aws ec2 start-instances --region us-west-2 --instance-ids &lt;id&gt;
-aws ec2 stop-instances  --region us-west-2 --instance-ids &lt;id&gt;</code></pre>
-  <p>Find the current instance ID with <code>terraform output instance_id</code> (from <code>terraform/</code>) or by tag: <code>aws ec2 describe-instances --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped</code>. The ID changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change) — don't hardcode it in scripts or muscle memory.</p>
+  <pre><code>aws ec2 start-instances --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID
+aws ec2 stop-instances  --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID</code></pre>
+  <p>Get <code>$INSTANCE_ID</code> from §0's lookup - the id changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change), so don't hardcode it in scripts or muscle memory.</p>
   <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, refreshes CloudFront's origin-facing IP list, builds and starts all four containers, waits for <code>api</code> to report healthy, and re-seeds participants. No backup cron is installed anymore (§5b), and no certbot step anymore — TLS terminates at CloudFront, so the box only ever renders one nginx config. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
   <div class="callout danger">
     <strong>Self-modifying script gotcha: a code change to <code>ec2-bootstrap.sh</code> needs two triggers to actually take effect on an already-running box.</strong>
     The script's own first real action is <code>git reset --hard origin/main</code>, which rewrites the very file the running process is executing. The already-running process keeps reading its own stale in-memory/buffered copy to completion — so the <em>first</em> trigger after a push correctly updates the repo on disk, but still runs the <em>old</em> logic end to end (observed live during Stage 5: a first re-trigger after deleting <code>plain.conf</code>/<code>tls.conf</code> still tried to <code>cp</code> the now-deleted file, and separately, a first re-trigger after adding <code>LLM_PROVIDER=google</code> to the <code>.env</code> heredoc still rendered <code>.env</code> without it). A <em>second</em> <code>systemctl reset-failed aitutor-bootstrap.service &amp;&amp; systemctl start aitutor-bootstrap.service</code> reads the file fresh and runs correctly. A full <code>aws ec2 reboot-instances</code> does not have this problem — systemd starts a genuinely new process reading the current file from the start. When in doubt after changing this script, trigger it twice, or reboot instead of using the SSM one-liner.
   </div>
-  <p>Watch it live:</p>
-  <pre><code># from a laptop with an active SSM session to the box
-aws ssm start-session --target &lt;instance-id&gt; --region us-west-2
+  <p>Watch it live (§0 for the instance id lookup and authentication):</p>
+  <pre><code>aws ssm start-session --target $INSTANCE_ID --region us-west-2 --profile AdministratorAccess-434195712367
 sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
   <h3>Restart granularity</h3>
   <table>
@@ -146,12 +232,15 @@ sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
     <strong>HTTP 200 from curl is not evidence the site works. This is not a hypothetical - it happened.</strong>
     The deployed frontend once served a blank white page to every single visitor while every curl-based check in this document reported success. Cause: <code>terraform/frontend.tf</code>'s CloudFront response-headers policy set <code>script-src 'self'</code> with no <code>'unsafe-inline'</code>. Next.js's static export bootstraps through inline <code>&lt;script&gt;self.__next_f.push(...)&lt;/script&gt;</code> tags carrying the RSC flight payload - CSP blocked all of them, React threw <code>Error: Connection closed.</code>, and the server-rendered markup was wiped. <code>curl -sI</code> against the page still returned a clean <code>200</code> the entire time, because curl neither executes JavaScript nor enforces CSP - it only ever saw the initial HTML, not what the browser did with it after. Fixed to <code>script-src 'self' 'unsafe-inline'</code> (see the comment above <code>aws_cloudfront_response_headers_policy.frontend</code> in <code>terraform/frontend.tf</code>), applied, CloudFront invalidated. <strong>Every curl-based check below only verifies that a server responded - none of them can catch a client-side rendering failure like this one.</strong> Load the deployed page in a real browser and confirm visible text is present before trusting any curl result as "the site works."
   </div>
-  <p>One-command "is it up", no interactive session needed:</p>
-  <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+  <p>One-command "is it up", no interactive session needed (see §0 for <code>$INSTANCE_ID</code> and this exact send-command / get-command-invocation shape):</p>
+  <pre><code>CMD_ID="$(aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
   --document-name AWS-RunShellScript \
-  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]'
-# then: aws ssm get-command-invocation --command-id &lt;id-from-above&gt; --instance-id &lt;id&gt;</code></pre>
-  <p>Or interactively: <code>aws ssm start-session --target &lt;id&gt; --region us-west-2</code>, then <code>cd AITutorApp && docker compose ps</code>. Healthy looks like all four containers <code>Up</code>, with <code>api</code> and <code>db</code> additionally showing <code>(healthy)</code> — <code>nginx</code> and <code>streamlit</code> have no healthcheck defined, so "running" is the only signal for them.</p>
+  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]' \
+  --query 'Command.CommandId' --output text)"
+aws ssm get-command-invocation --region us-west-2 --profile AdministratorAccess-434195712367 \
+  --command-id "$CMD_ID" --instance-id $INSTANCE_ID \
+  --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json</code></pre>
+  <p>Or interactively (see §0 for the instance id lookup and the <code>sudo -iu ec2-user</code> step): <code>aws ssm start-session --target $INSTANCE_ID --region us-west-2 --profile AdministratorAccess-434195712367</code>, then <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp && docker compose ps</code>. Healthy looks like all four containers <code>Up</code>, with <code>api</code>, <code>db</code>, and <code>streamlit</code> additionally showing <code>(healthy)</code>, <code>nginx</code> genuinely has no healthcheck defined (a plain reverse proxy with nothing to probe), so "running" is the only signal for it. Streamlit and api both build from the same root <code>Dockerfile</code>, which bakes in a healthcheck against port 8000 - correct for <code>api</code>, wrong for <code>streamlit</code> (which serves on 8501), so <code>docker-compose.yml</code> overrides it for the <code>streamlit</code> service with its own probe against <code>http://localhost:8501/_stcore/health</code>. Before this override existed, <code>streamlit</code> inherited the 8000 probe, which always failed, and the container sat permanently <code>unhealthy</code> while working fine - if you ever see that again, it means the override in <code>docker-compose.yml</code> was lost.</p>
   <div class="grid2">
     <div class="card">
       <h3>Over the network</h3>
@@ -176,9 +265,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/questions/
   </div>
   <h3>Real-browser check (the one curl cannot do)</h3>
   <p>Run this after any frontend deploy, and again as part of the exam-day smoke test in §10 - not a replacement for the curl checks above, an addition to them:</p>
-  <pre><code># manual, always sufficient: open the URL in an actual browser
-# (https://d2u3k75qofedmd.cloudfront.net until DNS lands, see §1)
-# and confirm the login page text is visible, not a blank page.
+  <pre><code># manual, always sufficient: open https://air.da-tu.ca in an actual
+# browser (or https://d2u3k75qofedmd.cloudfront.net, equivalent, no
+# DNS needed - see §1) and confirm the login page text is visible,
+# not a blank page.
 
 # scriptable alternative, using the Playwright install already in
 # frontend/ (no test suite wiring needed, just the browser binary):
@@ -188,7 +278,7 @@ const { chromium } = require('@playwright/test');
 (async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage();
-  await page.goto('https://d2u3k75qofedmd.cloudfront.net/login');
+  await page.goto('https://air.da-tu.ca/login');
   const text = (await page.textContent('body')) || '';
   if (text.trim().length &lt; 20) { console.error('BLANK PAGE - visible text missing'); process.exit(1); }
   console.log('OK - visible text found:', text.trim().slice(0, 60));
@@ -215,8 +305,8 @@ const { chromium } = require('@playwright/test');
   <h3>Today's actual promotion path</h3>
   <ol>
     <li>Merge to <code>main</code>, push.</li>
-    <li>Trigger the box to pick it up — there is no automatic boot anymore (§2), so this step is never optional:
-      <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+    <li>Trigger the box to pick it up, there is no automatic boot anymore (§2), so this step is never optional. Run from your laptop, authenticated per §0, with <code>$INSTANCE_ID</code> from §0's lookup:
+      <pre><code>aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
   --document-name AWS-RunShellScript \
   --parameters commands='["sudo systemctl reset-failed aitutor-bootstrap.service", "sudo systemctl start aitutor-bootstrap.service"]'
 # if this is the box's first pull of a change to ec2-bootstrap.sh
@@ -246,6 +336,7 @@ const { chromium } = require('@playwright/test');
     Changing <code>server_ready_questions.csv</code> under a student who is mid-attempt. Questions load into memory once at <code>api</code> boot (<code>app/main.py</code>); nothing reloads them live, deliberately — silently swapping questions under an in-progress student would be worse than requiring an explicit restart.
   </div>
   <h3>Participants</h3>
+  <p>All three steps below run on your laptop, from the repo root, with an active AWS SSO session per §0 - nothing here touches the box directly except through <code>update-prod-data.sh</code>'s own SSM call.</p>
   <pre><code># 1. edit prod/data/participants.csv locally
 # 2. mint tokens + upsert manifest (.venv active, local DB running)
 python prod/generate_tokens.py
@@ -261,12 +352,13 @@ python prod/prepare_data.py
 # 3. push to S3 (update-prod-data.sh does not do this part today)
 aws s3 sync prod/data/ s3://aitutor-434195712367-ops/artifacts/prod-data/ --region us-west-2
 
-# 4. pick up the change — restart, not a full rebuild
-aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
+# 4. pick up the change, restart, not a full rebuild. From your laptop,
+#    authenticated per §0, with $INSTANCE_ID from §0's lookup:
+aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
   --document-name AWS-RunShellScript \
   --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose restart api"]'</code></pre>
   <h3>Source PDF (RAG corpus)</h3>
-  <p>Replacing <code>prod/data/source.pdf</code> and restarting <code>api</code> re-triggers ingestion automatically — <code>ingest_pdf()</code> checks whether it's needed on every boot. Measured cost for the current 7-page source: about 2 seconds. Follows the same S3-sync-then-restart path as questions above.</p>
+  <p>Replacing <code>prod/data/source.pdf</code> and restarting <code>api</code> re-triggers ingestion automatically, <code>ingest_pdf()</code> checks whether it's needed on every boot. Measured cost for the current 7-page source: about 2 seconds, producing 21 chunks (confirmed live, 2026-08-05). Follows the same S3-sync-then-restart path as questions above.</p>
 </section>
 
 <section id="backups">
@@ -278,11 +370,11 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   <p><strong>The real protection is a dump taken immediately before stopping the box.</strong> While the box is stopped, data physically cannot change, so a pre-stop dump is current for the entire stopped period by definition. This is §10 step 7 — do it every time, not just after an exam.</p>
   <p><strong>There is deliberately no mid-exam backup step either.</strong> <code>docker compose restart</code> loses nothing, and the <code>postgres_data</code> named volume survives a stop/start of the instance. The only events that actually destroy data are instance termination and EBS loss, neither of which a mid-exam <code>pg_dump</code> would have prevented in the window it covers. The recorded failure contingency ("restart services, retain data, resume the exam") is satisfied by the restart alone.</p>
   <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan), and still relevant to the manual runs: <code>BACKUP_S3_URI</code> points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
-  <p>Verify a dump actually landed:</p>
-  <pre><code>aws s3 ls s3://aitutor-backups-&lt;account-id&gt;/backups/ --region us-west-2</code></pre>
+  <p>Verify a dump actually landed (from your laptop, authenticated per §0):</p>
+  <pre><code>aws s3 ls s3://aitutor-backups-434195712367/backups/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
   <div class="callout danger">
-    <strong>Verified live, 2026-08-04: the backups bucket is empty. No off-box copy of production data exists right now.</strong>
-    <code>s3://aitutor-backups-434195712367</code> contains zero objects. The <code>backup.sh</code> upload path is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - nobody has run it against production yet. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the mechanism is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10: run <code>scripts/backup.sh</code> and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
+    <strong>Verified live, 2026-08-05: the <code>backups/</code> prefix is still empty. No off-box Postgres-only dump exists right now.</strong>
+    <code>s3://aitutor-backups-434195712367/backups/</code> contains zero objects (the <code>snapshots/</code> prefix, §5c, now has one - a different mechanism, not this one). The <code>backup.sh</code> upload path is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - nobody has run it against production yet. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the mechanism is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10 - run the exact <code>backup.sh</code> command there (with <code>BACKUP_S3_URI</code> passed explicitly, it does not pick that up on its own - see the callout in §10) and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
   </div>
 </section>
 
@@ -299,14 +391,13 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   </div>
   <div class="callout warn">
     <strong>Where every command below runs, and how to authenticate</strong>
-    <p>Everything in this section runs <strong>on the box</strong>, reached over SSM (there is no SSH - port 22 has no ingress rule). Every <code>aws</code> command needs a region and a valid AWS SSO session. From your laptop, once per session:</p>
+    <p>Everything in this section runs <strong>on the box</strong>, reached over SSM (there is no SSH - see §0). Get the current instance id and open a shell:</p>
     <pre><code>aws sso login --profile AdministratorAccess-434195712367
-export AWS_PROFILE=AdministratorAccess-434195712367</code></pre>
-    <p>With that exported, every following <code>aws</code> command in this section can omit <code>--profile</code>; the examples below include it explicitly anyway so a command can be copy-pasted on its own. Region is always <code>us-west-2</code>. The box's instance id is <code>i-0b0d93da111a1e907</code>.</p>
-    <p>Open a shell on the box (also needs the Session Manager plugin - see §9 if <code>SessionManagerPlugin is not found</code>):</p>
-    <pre><code>aws ssm start-session --target i-0b0d93da111a1e907 \
-  --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-    <p>Once connected, become the app user and go to the repo before running anything below:</p>
+INSTANCE_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text)"
+aws ssm start-session --target "$INSTANCE_ID" --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
+    <p>Once connected, become the app user and go to the repo before running anything below (§0 explains why - you land as <code>ssm-user</code>, not <code>ec2-user</code>):</p>
     <pre><code>sudo -iu ec2-user
 cd /home/ec2-user/AITutorApp</code></pre>
   </div>
@@ -367,12 +458,14 @@ POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/snapshot.sh</code></pre>
   <div class="callout ok">
     <strong>What has actually been verified, and what has not (as of 2026-08-05)</strong>
     <p>Tested locally against seeded, disposable scratch Postgres databases (never against the dev or production database): the Postgres capture-then-restore round trip via <code>backup.sh</code>/<code>restore.sh</code>'s non-Docker code path (all 9 tables matched row-for-row after restore), and the CSV export (all 9 tables produced real rows, JSON columns rendered as single JSON-text columns as documented above). Both scripts pass <code>bash -n</code> and were dry-run for their failure paths (missing bundle argument, missing <code>POSTGRES_USER</code>/<code>POSTGRES_DB</code>, nonexistent bundle path all fail immediately with no default target, matching <code>restore.sh</code>'s own safety property).</p>
-    <p><strong>NOT tested: the <code>chroma_data</code> Docker-volume capture and restore, the real S3 upload/download, and the <code>docker compose</code>/<code>docker inspect</code> volume-resolution logic.</strong> None of these can be exercised locally - this repo's dev-parity rule forbids running Docker Compose locally (it would corrupt the dev <code>chroma_db</code> mount), and there is no local Docker Compose stack to test against. Treat this half of both scripts as reviewed but unproven until the first real run on the box.</p>
+    <p><strong>Update, 2026-08-05: the capture side is now proven against real infrastructure, not just reviewed.</strong> <code>scripts/snapshot.sh</code> was exercised end to end on the rebuilt box, including the <code>chroma_data</code> Docker-volume capture and the real S3 upload - a bundle from a freshly bootstrapped box came out to about 445 KB. That box also confirmed a cold bootstrap takes about 3 minutes, the app loads 25 questions across 5 skills, and RAG ingestion turns the 7-page source PDF into 21 chunks.</p>
+    <p><strong>Still NOT tested: <code>scripts/snapshot_restore.sh</code>'s restore direction.</strong> Postgres restore via <code>restore.sh</code> is proven locally (above), but restoring the <code>chroma_data</code> volume onto a second box, and the full download-then-restore path end to end, have not been exercised for real. Treat restore as reviewed but unproven until it has actually brought a box back from a snapshot once.</p>
   </div>
 </section>
 
 <section id="logs">
   <h2>6. Logs</h2>
+  <p>Every command below runs <strong>on the box</strong> - open a shell per §0, then <code>sudo -iu ec2-user</code> and <code>cd /home/ec2-user/AITutorApp</code> before the <code>docker compose</code> commands (<code>journalctl</code> doesn't need the repo directory, only <code>sudo</code>).</p>
   <table>
     <tr><th>Source</th><th>Command</th><th>Retention</th></tr>
     <tr><td><code>api</code> / <code>db</code> / <code>nginx</code> / <code>streamlit</code> container logs</td><td><code>docker compose logs &lt;service&gt;</code> (add <code>-f</code> to follow, <code>--tail 200</code> to limit)</td><td>10MB × 3 files per service (<code>x-logging</code> anchor in <code>docker-compose.yml</code>) — roughly 30MB per service before the oldest rotates out</td></tr>
@@ -409,6 +502,7 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
 
 <section id="incident">
   <h2>8. Incident response</h2>
+  <p>Every <code>docker compose</code> / <code>df -h</code> command below runs <strong>on the box</strong> - open a shell per §0, <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp</code>.</p>
   <table>
     <tr><th>Symptom</th><th>Command</th><th>Notes</th></tr>
     <tr><td><code>api</code> down or crash-looping</td><td><code>docker compose logs --tail 100 api</code>, then <code>docker compose restart api</code></td><td>If it won't come back healthy, <code>docker compose up -d --build</code> to rule out a stale image.</td></tr>
@@ -419,24 +513,22 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <tr><td>Student needs more time, or a whole cohort does</td><td>Streamlit → per-student <em>Adjust Timer</em> / <em>Reset Timer to NOW</em>, or <em>Exam Control → Apply to All Unsubmitted Sessions</em> for a bulk extension</td><td>Bulk extension is the mid-outage remedy — it reaches already-open tabs within one 25s heartbeat, no reload needed.</td></tr>
     <tr><td>LLM quota exhausted (per-user or global)</td><td>Check Streamlit's LLM Usage panel to confirm</td><td><span class="todo">Gap:</span> raising the cap requires editing <code>.env</code> on the box and restarting <code>api</code> — no admin-UI toggle exists. See §11.</td></tr>
     <tr><td>Gemini API down or rate-limiting</td><td>Check <code>docker compose logs api</code> for the LLM call error</td><td><span class="todo">Gap:</span> there is currently no graceful degradation — a hint/chat request just fails with whatever the underlying exception surfaces as. This is an open P1 in <code>PRELAUNCH_CHECKLIST.md</code> §C, not yet fixed.</td></tr>
-    <tr><td>Box completely unreachable (SSM and HTTP both dead)</td><td><code>aws ec2 reboot-instances --instance-ids &lt;id&gt;</code>; if that doesn't recover it, stop/start (new hardware); last resort, restore the most recent EBS snapshot to a new volume and re-attach</td><td>Snapshot-level instance recovery isn't scripted anywhere in this repo — it's a manual EC2 console/CLI procedure. Database-level recovery is scripted: see below.</td></tr>
+    <tr><td>Box completely unreachable (SSM and HTTP both dead)</td><td>From your laptop, authenticated per §0: <code>aws ec2 reboot-instances --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID</code>; if that doesn't recover it, stop/start (new hardware, see §2); last resort, restore the most recent EBS snapshot to a new volume and re-attach</td><td>Snapshot-level instance recovery isn't scripted anywhere in this repo , it's a manual EC2 console/CLI procedure. Database-level recovery is scripted: see below.</td></tr>
     <tr><td>Database corrupted or needs point-in-time recovery</td><td><code>DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh &lt;dump-file&gt;</code></td><td>Requires an explicit dump file argument by design — cannot silently overwrite prod with a stale environment. Validate a dump is actually restorable with <code>./scripts/restore_drill.sh</code> before you need it for real (creates a scratch DB, compares row counts, cleans up after itself).</td></tr>
   </table>
 </section>
 
 <section id="streamlit">
   <h2>9. Streamlit admin — what you can and cannot do</h2>
-  <p>Reach it (never exposed publicly — <code>127.0.0.1:8501</code> on the host):</p>
-  <pre><code>aws ssm start-session --target &lt;id&gt; \
+  <p>Reach it (never exposed publicly, <code>127.0.0.1:8501</code> on the host). Authenticate and get <code>$INSTANCE_ID</code> per §0 first:</p>
+  <pre><code>aws ssm start-session --target $INSTANCE_ID \
   --document-name AWS-StartPortForwardingSession \
   --parameters portNumber=8501,localPortNumber=8501 \
-  --region us-west-2
-# then open http://localhost:8501</code></pre>
+  --region us-west-2 --profile AdministratorAccess-434195712367
+# then open http://localhost:8501 in a browser on your laptop</code></pre>
   <div class="callout warn">
-    <strong>Two prerequisites that are easy to miss, and both fail confusingly</strong>
-    <p>Every <code>aws</code> command in this runbook needs a region and valid credentials. Without a region the CLI fails with <code>NoRegion</code> before it does anything else, which is why <code>--region us-west-2</code> is written out on every command here. If you authenticate through SSO rather than a default profile, add <code>--profile &lt;your-sso-profile&gt;</code> too, or export <code>AWS_PROFILE</code> once for the shell.</p>
-    <p><code>start-session</code> additionally needs the <strong>Session Manager plugin</strong>, a separate binary the AWS CLI shells out to. It is not bundled with the CLI and not installed by anything in this repo. Without it you get <code>SessionManagerPlugin is not found</code>, which looks like a permissions or SSM problem but is purely a missing local binary. On macOS: <code>brew install --cask session-manager-plugin</code>. No shell restart is needed, the CLI resolves it on <code>PATH</code> at call time.</p>
-    <p>Both of these were hit live on 2026-08-04 while opening Streamlit, in that order. Anything in this runbook that depends on <code>start-session</code>, including the exam-day Streamlit tunnel, is blocked until the plugin is installed, so install it well before exam day rather than discovering it under time pressure.</p>
+    <strong>The Session Manager plugin is the prerequisite most likely to be missing here</strong>
+    <p>This command needs the Session Manager plugin (§0's tools table) - without it, <code>SessionManagerPlugin is not found</code>, which looks like a permissions or SSM problem but is purely a missing local binary. This and the missing-profile trap in §0 were hit live on 2026-08-04 while opening Streamlit for the first time, in that order - install the plugin well before exam day rather than discovering it under time pressure, since the exam-day Streamlit tunnel (§10) depends on it too.</p>
   </div>
   <div class="callout danger">
     <strong>It bypasses the API entirely</strong>
@@ -479,13 +571,37 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
   <h2>10. Exam day runbook</h2>
   <p>Sequenced from <code>PRELAUNCH_CHECKLIST.md</code> §K, folded into one list:</p>
   <ol>
-    <li><strong>Snapshot before starting.</strong> Take an EBS snapshot of the current (stopped) volume before <code>aws ec2 start-instances</code>, so there's a clean pre-exam restore point.</li>
+    <li><strong>Snapshot before starting.</strong> Take an EBS snapshot of the current (stopped) volume before <code>aws ec2 start-instances</code>, so there's a clean pre-exam restore point. From your laptop, authenticated per §0, with <code>$INSTANCE_ID</code> from §0's lookup (this is the same command used in step 7 below - the box has one root volume, no others):
+      <pre><code>VOLUME_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --instance-ids $INSTANCE_ID \
+  --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId' --output text)"
+
+SNAP_ID="$(aws ec2 create-snapshot --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --volume-id "$VOLUME_ID" --description "aitutor $(date -u +%Y%m%dT%H%M%SZ)" \
+  --query 'SnapshotId' --output text)"
+
+# poll until it's done - completed is safe to walk away from,
+# pending is not (the underlying volume can still change under it)
+aws ec2 describe-snapshots --profile AdministratorAccess-434195712367 --region us-west-2 \
+  --snapshot-ids "$SNAP_ID" --query 'Snapshots[0].[State,Progress]' --output text</code></pre>
+    </li>
     <li><strong>Start the instance</strong>, watch <code>aitutor-bootstrap.service</code> complete over SSM (§2, §3).</li>
     <li><strong>Confirm <code>EXAM_DURATION_MS</code></strong> on the box reads <code>1500000</code> (25 minutes), not a leftover 20-minute default, and <strong><code>LLM_PROVIDER</code> reads <code>google</code></strong> (see §8's incident row — the code default is the wrong provider): <code>docker compose exec api env | grep -E "EXAM_DURATION_MS|LLM_PROVIDER"</code>.</li>
-    <li><strong>Smoke test one real token</strong> end to end — login, answer, hint, chat, submit, results — before handing tokens to students. Check the actual hint/chat <em>content</em>, not just the HTTP status: a 200 with <code>hint_style: "error"</code> means the LLM call silently failed.</li>
+    <li><strong>Smoke test one real token</strong> end to end (login, answer, hint, chat, submit, results) before handing tokens to students. Confirm the quiz loads 25 questions across 5 skills (confirmed live, 2026-08-05) - a wrong count means the wrong <code>server_ready_questions.csv</code> landed. Check the actual hint/chat <em>content</em>, not just the HTTP status: a 200 with <code>hint_style: "error"</code> means the LLM call silently failed.</li>
     <li><strong>Expect a slow first hint.</strong> RAG cold start is ~2s measured, but the first real request after boot still pays container warm-up cost on top. Not a bug if the very first hint feels sluggish.</li>
     <li><strong>Keep an SSM session open</strong> to the box and a port-forward tunnel to Streamlit (§9) for the full exam window, so timer/lock issues can be handled in real time.</li>
-    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot and run <code>./scripts/backup.sh</code> (with <code>DOCKER_DB_SERVICE=db</code>). This is the only backup, nothing is scheduled (§5b), and while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.</li>
+    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot (same <code>create-snapshot</code> command as step 1) and run <code>backup.sh</code> on the box (per §0: <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp</code>), with <code>BACKUP_S3_URI</code> passed explicitly:
+      <pre><code>DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db \
+  BACKUP_S3_URI=s3://aitutor-backups-434195712367/backups \
+  ./scripts/backup.sh</code></pre>
+      <div class="callout warn" style="margin-top:0.5rem;">
+        <strong><code>BACKUP_S3_URI</code> must be passed on the command line - it is not already in an interactive shell's environment.</strong>
+        <code>ec2-bootstrap.sh</code> renders <code>BACKUP_S3_URI</code> into the app's <code>.env</code> file, but that file is only read by <code>docker compose</code>'s <code>env_file:</code> mechanism for the <code>api</code>/<code>streamlit</code> containers - it is never sourced into an interactive host shell. <code>backup.sh</code> itself runs on the host (it shells out to <code>docker compose exec</code> for the dump, it isn't a container process), and reads <code>BACKUP_S3_URI</code> straight from its own process environment via <code>${BACKUP_S3_URI:-}</code> (<code>scripts/backup.sh</code>). Omit it and the script does not error - it just silently skips the upload and leaves the dump local-only under <code>./backups/</code>, which defeats the entire point of a pre-stop backup. Always pass it explicitly, as above, rather than assuming it's already set.
+      </div>
+      Verify the upload landed before proceeding (same check as §5b):
+      <pre><code>aws s3 ls s3://aitutor-backups-434195712367/backups/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
+      This is the only backup, nothing is scheduled (§5b), and while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.
+    </li>
     <li><strong>Stop the instance</strong> once data is safely off-box. It should not sit running between exams.</li>
   </ol>
 </section>

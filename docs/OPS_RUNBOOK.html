@@ -425,6 +425,19 @@ POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/snapshot.sh</code></pre>
     <tr><td><code>README.md</code></td><td>Data dictionary - JSON-column notes, and the corrected <code>user_action_logs.action_type</code> list (see callout below).</td></tr>
   </table>
   <div class="callout danger">
+    <strong>Never count CSV rows with <code>wc -l</code>. It will tell you the export is corrupted when it is fine.</strong>
+    Free-text columns (<code>hint_text</code>, chat messages) contain embedded newlines, and CSV quoting means one logical row legitimately spans several physical lines. Measured on a real bundle: <code>wc -l csv/interaction_logs.csv</code> reported <strong>69</strong> for a table holding <strong>23</strong> rows. Use a real CSV parser instead, which is already on the box:
+    <pre>python3 -c "import csv,sys; print(sum(1 for _ in csv.reader(open(sys.argv[1]))) - 1)" csv/interaction_logs.csv</pre>
+    Cross-check against the live database with <code>docker compose exec -T db psql -U aitutor -d aitutor_db -c "SELECT count(*) FROM interaction_logs;"</code>. Verified equal on all 9 tables for the 2026-08-05 snapshot.
+  </div>
+  <div class="callout danger">
+    <strong>The local copy under <code>./backups/snapshots/</code> is plaintext PII. Delete it when you are done with it.</strong>
+    It holds student names, identifiers and full chat transcripts as unencrypted CSV. <code>snapshot.sh</code> says so on stdout when it finishes, which is easy to miss and does not help anyone reading this document instead of running the script. The S3 copy is the one that is meant to persist; the on-box copy is a convenience. Remove it with <code>rm /home/ec2-user/AITutorApp/backups/snapshots/&lt;bundle&gt;.tar.gz</code> once the S3 upload is confirmed. The same applies to anything you extract while inspecting a bundle.
+  </div>
+  <div class="callout">
+    <strong>Getting the exact S3 key.</strong> The script's own last line of output is authoritative (<code>[snapshot] Done. s3://...</code>). Prefer copying it from there rather than grepping a bucket listing, which will contain every previous snapshot too.
+  </div>
+  <div class="callout danger">
     <strong>Known defect the bundle works around: the <code>UserActionLog</code> docstring in <code>app/models/user.py</code> is stale.</strong>
     It documents <code>intervention_offered</code>/<code>intervention_accepted</code>/<code>intervention_rejected</code>, <code>session_complete</code>, <code>timer_expired</code>, and more - none of which the app emits. Querying the CSV export by those names returns nothing, silently. The <strong>19 real values</strong>, verified against <code>frontend/src</code> and the validation whitelist in <code>app/endpoints/action_log.py</code>, are: <code>session_start</code>, <code>session_submit</code>, <code>session_expire</code>, <code>timer_warning</code>, <code>question_view</code>, <code>question_navigate</code>, <code>choice_select</code>, <code>answer_focus</code>, <code>answer_submit</code>, <code>answer_skip</code>, <code>hint_request</code>, <code>hint_display</code>, <code>hint_feedback</code>, <code>intervention_offer</code>, <code>intervention_accept</code>, <code>intervention_reject</code>, <code>chat_send</code>, <code>profile_view</code>, <code>preference_update</code>. The bundle's own <code>README.md</code> repeats this list so an analyst never has to consult the stale docstring. Fixing the docstring itself is a separate, not-yet-done source change - out of scope for this script.
   </div>

@@ -1,7 +1,7 @@
 # streamlit_app/app.py
 import streamlit as st
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 import sys, os
 import pandas as pd
 
@@ -27,8 +27,9 @@ def get_db_engine():
     sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
     return create_engine(sync_url)
 
-engine = get_db_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+@st.cache_resource
+def get_db_session_registry():
+    return scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=get_db_engine()))
 
 st.title("DaTu AIR Admin Dashboard")
 
@@ -36,7 +37,14 @@ if 'success_message' in st.session_state:
     st.success(st.session_state.success_message, icon="✅")
     del st.session_state.success_message
 
-db = SessionLocal()
+# One Session per script-runner thread, reused across reruns. Streamlit re-runs
+# this whole file on every widget interaction, so constructing a new Session
+# here would leak one pooled connection per rerun whenever the run doesn't
+# reach the db.close() at the bottom (an st.rerun(), an st.stop(), an
+# interrupted rerun, or an unhandled error). The rollback discards any
+# transaction such a run left open, so this rerun starts clean.
+db = get_db_session_registry()
+db.rollback()
 
 # Sidebar
 st.sidebar.title("Select View")
@@ -126,6 +134,9 @@ if selected_view == VIEW_SYSTEM:
     if bulk_submit:
         try:
             affected = extend_all_exam_timers(db, int(bulk_extra_min))
+            # admin_ops deliberately doesn't import streamlit, so the cache
+            # invalidation the queries.py writes do for themselves happens here.
+            st.cache_data.clear()
             action_word = "Added" if bulk_extra_min >= 0 else "Removed"
             st.session_state.success_message = (
                 f"{action_word} {abs(bulk_extra_min)} min for {affected} unsubmitted session(s)."

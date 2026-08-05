@@ -43,6 +43,13 @@ bkt_calculator = BKTCalculator(
 )
 
 
+# Read queries are cached so a widget interaction (which re-runs the whole
+# Streamlit script) doesn't re-issue every query. Kept short because the
+# dashboard is watched live during an exam; every admin write below calls
+# st.cache_data.clear() so an action's effect is never hidden by the cache.
+CACHE_TTL_SECONDS = 10
+
+
 # --- Cached Data Loading ---
 @st.cache_data
 def load_questions(path: str = settings.QUESTION_CSV_FILE_PATH):
@@ -59,37 +66,57 @@ QUESTIONS_DF = load_questions()
 
 
 # --- User Queries ---
-def get_all_user_ids(db: Session) -> list:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_all_user_ids(_db: Session) -> list:
     query = text("SELECT id FROM users ORDER BY created_at DESC")
-    return [row[0] for row in db.execute(query)]
+    return [row[0] for row in _db.execute(query)]
 
 
-def get_all_users_summary(db: Session) -> pd.DataFrame:
-    """Returns all users with their A/B group, creation time, basic stats, and timer info."""
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_all_users_summary(_db: Session) -> pd.DataFrame:
+    """Returns all users with their A/B group, creation time, basic stats, and timer info.
+
+    Each log table is aggregated to one row per user *before* being joined onto
+    users. Joining interaction_logs and chat_logs onto the same user row directly
+    produces a cartesian product (interactions x chats), which both inflates the
+    non-DISTINCT SUMs and makes the query cost grow quadratically with activity.
+    """
     query = text("""
+        WITH interaction_agg AS (
+            SELECT user_id,
+                   COUNT(*) AS total_interactions,
+                   SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_answers,
+                   SUM(CASE WHEN hint_shown THEN 1 ELSE 0 END) AS hints_used
+            FROM interaction_logs
+            GROUP BY user_id
+        ),
+        chat_agg AS (
+            SELECT user_id, COUNT(*) AS chat_messages
+            FROM chat_logs
+            GROUP BY user_id
+        )
         SELECT
             u.id AS user_id,
             u.created_at,
             u.preferences->>'ab_group' AS ab_group,
             u.preferences->>'hint_style_preference' AS hint_style_pref,
             u.preferences->>'intervention_preference' AS intervention_pref,
-            COUNT(DISTINCT il.id) AS total_interactions,
-            SUM(CASE WHEN il.is_correct THEN 1 ELSE 0 END) AS correct_answers,
-            SUM(CASE WHEN il.hint_shown THEN 1 ELSE 0 END) AS hints_used,
-            COUNT(DISTINCT cl.id) AS chat_messages,
+            COALESCE(ia.total_interactions, 0) AS total_interactions,
+            COALESCE(ia.correct_answers, 0) AS correct_answers,
+            COALESCE(ia.hints_used, 0) AS hints_used,
+            COALESCE(ca.chat_messages, 0) AS chat_messages,
             es.exam_start_ms,
             es.exam_duration_ms,
             es.submitted_at,
             p.status AS participant_status
         FROM users u
-        LEFT JOIN interaction_logs il ON il.user_id = u.id
-        LEFT JOIN chat_logs cl ON cl.user_id = u.id
+        LEFT JOIN interaction_agg ia ON ia.user_id = u.id
+        LEFT JOIN chat_agg ca ON ca.user_id = u.id
         LEFT JOIN exam_sessions es ON es.user_id = u.id
         LEFT JOIN participants p ON p.token = u.id
-        GROUP BY u.id, u.created_at, es.exam_start_ms, es.exam_duration_ms, es.submitted_at, p.status
         ORDER BY u.created_at DESC
     """)
-    df = pd.read_sql(query, db.connection())
+    df = pd.read_sql(query, _db.connection())
     if not df.empty:
         df['created_at'] = pd.to_datetime(df['created_at'])
         now_ms = int(time.time() * 1000)
@@ -104,14 +131,16 @@ def get_all_users_summary(db: Session) -> pd.DataFrame:
     return df
 
 
-def get_user_profile(db: Session, user_id: str) -> dict:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_user_profile(_db: Session, user_id: str) -> dict:
     query = text("SELECT id, created_at, preferences, feedback_scores FROM users WHERE id = :user_id")
-    result = db.execute(query, {"user_id": user_id}).first()
+    result = _db.execute(query, {"user_id": user_id}).first()
     return dict(result._mapping) if result else {}
 
 
 # --- Interaction Logs ---
-def get_raw_interaction_history(db: Session, user_id: str) -> pd.DataFrame:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_raw_interaction_history(_db: Session, user_id: str) -> pd.DataFrame:
     query = text("""
         SELECT timestamp, question_id, skill, user_answer, is_correct,
                hint_shown, hint_style_used, hint_text, user_feedback_rating, bkt_change
@@ -119,13 +148,14 @@ def get_raw_interaction_history(db: Session, user_id: str) -> pd.DataFrame:
         WHERE user_id = :user_id
         ORDER BY timestamp ASC
     """)
-    df = pd.read_sql(query, db.connection(), params={"user_id": user_id})
+    df = pd.read_sql(query, _db.connection(), params={"user_id": user_id})
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
 
-def get_interaction_history(db: Session, user_id: str) -> pd.DataFrame:
-    df = get_raw_interaction_history(db, user_id)
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_interaction_history(_db: Session, user_id: str) -> pd.DataFrame:
+    df = get_raw_interaction_history(_db, user_id)
     if not df.empty and not QUESTIONS_DF.empty:
         df['question_id'] = df['question_id'].astype(int)
         merged_df = pd.merge(
@@ -141,7 +171,8 @@ def get_interaction_history(db: Session, user_id: str) -> pd.DataFrame:
     return df.sort_values(by='timestamp', ascending=False) if not df.empty else df
 
 
-def get_all_interaction_logs(db: Session, user_id: str | None = None) -> pd.DataFrame:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_all_interaction_logs(_db: Session, user_id: str | None = None) -> pd.DataFrame:
     """All interaction logs, optionally filtered to a single user. Includes ab_group."""
     where = "WHERE il.user_id = :user_id" if user_id else ""
     params = {"user_id": user_id} if user_id else {}
@@ -156,14 +187,15 @@ def get_all_interaction_logs(db: Session, user_id: str | None = None) -> pd.Data
         {where}
         ORDER BY il.timestamp DESC
     """)
-    df = pd.read_sql(query, db.connection(), params=params)
+    df = pd.read_sql(query, _db.connection(), params=params)
     if not df.empty:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
 
 # --- Chat Logs ---
-def get_chat_logs(db: Session, user_id: str | None = None) -> pd.DataFrame:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_chat_logs(_db: Session, user_id: str | None = None) -> pd.DataFrame:
     where = "WHERE cl.user_id = :user_id" if user_id else ""
     params = {"user_id": user_id} if user_id else {}
     query = text(f"""
@@ -175,14 +207,15 @@ def get_chat_logs(db: Session, user_id: str | None = None) -> pd.DataFrame:
         {where}
         ORDER BY cl.timestamp DESC
     """)
-    df = pd.read_sql(query, db.connection(), params=params)
+    df = pd.read_sql(query, _db.connection(), params=params)
     if not df.empty:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
 
 # --- Intervention Logs ---
-def get_intervention_logs(db: Session, user_id: str | None = None) -> pd.DataFrame:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_intervention_logs(_db: Session, user_id: str | None = None) -> pd.DataFrame:
     where = "WHERE il.user_id = :user_id" if user_id else ""
     params = {"user_id": user_id} if user_id else {}
     query = text(f"""
@@ -195,14 +228,15 @@ def get_intervention_logs(db: Session, user_id: str | None = None) -> pd.DataFra
         {where}
         ORDER BY il.timestamp DESC
     """)
-    df = pd.read_sql(query, db.connection(), params=params)
+    df = pd.read_sql(query, _db.connection(), params=params)
     if not df.empty:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
 
 # --- Action Logs ---
-def get_action_logs(db: Session, user_id: str | None = None,
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_action_logs(_db: Session, user_id: str | None = None,
                     action_type: str | None = None) -> pd.DataFrame:
     conditions = []
     params = {}
@@ -222,25 +256,27 @@ def get_action_logs(db: Session, user_id: str | None = None,
         {where}
         ORDER BY al.timestamp DESC
     """)
-    df = pd.read_sql(query, db.connection(), params=params)
+    df = pd.read_sql(query, _db.connection(), params=params)
     if not df.empty:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
 
 # --- KPIs ---
-def get_skill_mastery(db: Session, user_id: str) -> pd.DataFrame:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_skill_mastery(_db: Session, user_id: str) -> pd.DataFrame:
     query = text("""
         SELECT skill_id, mastery_level, consecutive_errors, last_updated
         FROM skill_mastery
         WHERE user_id = :user_id
         ORDER BY last_updated DESC
     """)
-    return pd.read_sql(query, db.connection(), params={"user_id": user_id})
+    return pd.read_sql(query, _db.connection(), params={"user_id": user_id})
 
 
-def get_skill_mastery_trajectory(db: Session, user_id: str) -> pd.DataFrame:
-    history_df = get_raw_interaction_history(db, user_id)
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_skill_mastery_trajectory(_db: Session, user_id: str) -> pd.DataFrame:
+    history_df = get_raw_interaction_history(_db, user_id)
     if history_df.empty:
         return pd.DataFrame()
     initial_mastery = settings.bkt_p_l0
@@ -262,8 +298,9 @@ def get_skill_mastery_trajectory(db: Session, user_id: str) -> pd.DataFrame:
     return pd.DataFrame(trajectory_data).set_index('Interaction')
 
 
-def get_user_kpis(db: Session, user_id: str) -> dict:
-    history_df = get_raw_interaction_history(db, user_id)
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_user_kpis(_db: Session, user_id: str) -> dict:
+    history_df = get_raw_interaction_history(_db, user_id)
     if history_df.empty:
         return {"overall_correctness": 0, "avg_attempts_to_correct": 0,
                 "total_hints": 0, "avg_hint_rating": "N/A"}
@@ -298,12 +335,14 @@ def reset_user_progress(db: Session, user_id: str):
         {"user_id": user_id},
     )
     db.commit()
+    st.cache_data.clear()
 
 
 def delete_user(db: Session, user_id: str):
     reset_user_progress(db, user_id)
     db.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": user_id})
     db.commit()
+    st.cache_data.clear()
 
 
 def update_user_preferences(db: Session, user_id: str, prefs_update: dict):
@@ -313,6 +352,7 @@ def update_user_preferences(db: Session, user_id: str, prefs_update: dict):
         {"user_id": user_id, "prefs": json.dumps(prefs_update)},
     )
     db.commit()
+    st.cache_data.clear()
 
 
 def reset_exam_timer(db: Session, user_id: str):
@@ -327,6 +367,7 @@ def reset_exam_timer(db: Session, user_id: str):
         {"user_id": user_id},
     )
     db.commit()
+    st.cache_data.clear()
 
 
 def extend_exam_timer(db: Session, user_id: str, extra_minutes: int):
@@ -337,6 +378,7 @@ def extend_exam_timer(db: Session, user_id: str, extra_minutes: int):
         {"extra": extra_ms, "user_id": user_id},
     )
     db.commit()
+    st.cache_data.clear()
 
 
 def clear_session_lock(db: Session, user_id: str):
@@ -346,11 +388,13 @@ def clear_session_lock(db: Session, user_id: str):
         {"user_id": user_id},
     )
     db.commit()
+    st.cache_data.clear()
 
 
-def get_exam_session_info(db: Session, user_id: str) -> dict:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_exam_session_info(_db: Session, user_id: str) -> dict:
     """Returns current timer info for a user."""
-    result = db.execute(
+    result = _db.execute(
         text("SELECT exam_start_ms, exam_duration_ms, submitted_at FROM exam_sessions WHERE user_id=:user_id"),
         {"user_id": user_id},
     ).first()
@@ -368,9 +412,10 @@ def get_exam_session_info(db: Session, user_id: str) -> dict:
     }
 
 
-def get_participant_info(db: Session, user_id: str) -> dict:
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_participant_info(_db: Session, user_id: str) -> dict:
     """Returns participant lock status."""
-    result = db.execute(
+    result = _db.execute(
         text("SELECT status, active_session_id, last_seen_at FROM participants WHERE token=:user_id"),
         {"user_id": user_id},
     ).first()

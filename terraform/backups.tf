@@ -27,15 +27,20 @@ resource "aws_s3_bucket_public_access_block" "backups" {
 resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
 
+  # Retention is deliberately infinite for current objects. This bucket now
+  # holds only on-demand snapshots (the nightly cron was deleted 2026-08-04),
+  # and a snapshot is the exam's research output: interaction, chat,
+  # intervention and mastery data that exists nowhere else once the box is
+  # gone. An expiry rule here would silently delete the one artifact the whole
+  # system exists to produce.
+  #
+  # Noncurrent versions are still pruned. Snapshot keys are timestamped and so
+  # never overwritten, meaning this only reclaims genuinely superseded writes.
   rule {
-    id     = "expire-after-retention"
+    id     = "expire-noncurrent-versions"
     status = "Enabled"
 
     filter {}
-
-    expiration {
-      days = var.backup_retention_days
-    }
 
     noncurrent_version_expiration {
       noncurrent_days = var.backup_retention_days

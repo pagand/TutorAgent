@@ -1,16 +1,19 @@
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+# Pinned, deliberately (F5). This used to be a `most_recent = true` lookup,
+# which meant every AWS release of a new AL2023 image silently changed the
+# resolved AMI id. `ami` forces replacement on aws_instance, so the next
+# `terraform apply` for any unrelated reason would have destroyed the running
+# box and its root volume, taking the Postgres and chroma_data Docker volumes
+# with it. That was caught on 2026-08-05 by a plan for a DNS-only change that
+# came back wanting to replace the instance.
+#
+# This is the AMI the live instance was actually built from, so pinning it
+# is a no-op against current state rather than a migration. Changing it is now
+# an explicit, reviewed decision: bump the value, confirm the new image's root
+# snapshot still fits root_volume_gb, and expect a full instance replacement.
+variable "ami_id" {
+  description = "AMI for the app instance. Pinned so an upstream AL2023 release cannot silently force instance replacement."
+  type        = string
+  default     = "ami-06503266fb468d937"
 }
 
 # Stage 5, F4/D5: it's the CloudFront origin hostname and is already with
@@ -35,7 +38,7 @@ resource "aws_eip_association" "api" {
 }
 
 resource "aws_instance" "app" {
-  ami                    = data.aws_ami.al2023.id
+  ami                    = var.ami_id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.app.id]

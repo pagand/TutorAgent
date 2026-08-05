@@ -46,6 +46,18 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
   }
 }
 
+# The budget below filters on the Project tag, but a tag only carries cost
+# data once it is activated as a cost allocation tag. It was not, so the
+# budget reported $0.00 spend indefinitely no matter what the account was
+# actually billed - a guardrail that could never fire. Activating it here
+# keeps that from silently regressing. Note this is account-wide and applies
+# going forward only; historical months need `aws ce
+# start-cost-allocation-tag-backfill`, and new data takes up to 24h to appear.
+resource "aws_ce_cost_allocation_tag" "project" {
+  tag_key = "Project"
+  status  = "Active"
+}
+
 resource "aws_budgets_budget" "monthly" {
   name         = "aitutor-monthly-budget"
   budget_type  = "COST"

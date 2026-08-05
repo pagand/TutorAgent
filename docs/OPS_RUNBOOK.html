@@ -103,6 +103,14 @@
   </div>
   <p><strong>What's not in Docker:</strong> the Elastic IP, security group, IAM roles, CloudWatch alarms, Cost Anomaly Detection, Budgets, and the CloudFront distribution (frontend origin + the <code>/api/*</code> behavior pointed at the EIP) all live in Terraform (<code>terraform/</code>), applied from a laptop with SSO credentials — never from the box itself. The two monthly EventBridge Scheduler rules that used to boot the box for certificate renewal are gone along with certbot; nothing boots the box automatically anymore.</p>
   <p><strong>Why the Elastic IP still exists</strong> even though <code>api.air.da-tu.ca</code> doesn't: CloudFront's <code>/api/*</code> origin (<code>terraform/frontend.tf</code>) points at <code>aws_eip.api.public_dns</code>, which has to stay stable across every stop/start — a plain EC2 public IP changes on every start, and this box is deliberately stopped between exams. Without the EIP, CloudFront's origin config would go stale on the very first post-exam stop/start. The EIP has <code>prevent_destroy</code> in Terraform for this reason.</p>
+  <div class="callout warn">
+    <strong>The Elastic IP costs money whether the instance is running or not - do not "optimize" it away.</strong>
+    The line item that shows up in Cost Explorer as <strong>"Amazon Virtual Private Cloud"</strong> is not VPC infrastructure at all - it is purely the public IPv4 charge on this EIP, usage types <code>USW2-PublicIPv4:IdleAddress</code> and <code>USW2-PublicIPv4:InUseAddress</code>, $0.005/hr, roughly $3.60/mo, billed continuously including while the instance is stopped. That is the correct tradeoff: it is what keeps the CloudFront origin hostname stable across stop/start (see above). The older rationale for the EIP, a Route 53 A record and a certbot TLS cert, is obsolete - both were deleted in Stage 5. Releasing the EIP to save ~$3.60/mo would break the CloudFront origin the next time the box stops and starts.
+  </div>
+  <div class="callout warn">
+    <strong>DNS / custom domain: currently pending.</strong>
+    The ACM certificate for <code>air.da-tu.ca</code> is <code>PENDING_VALIDATION</code> in us-east-1, and the CloudFront distribution (<code>EAU1TO5IJG1RT</code>) has zero aliases attached - it still serves on the default CloudFront certificate only. Two CNAMEs are outstanding at the registrar: the ACM validation record, and <code>air.da-tu.ca</code> → <code>d2u3k75qofedmd.cloudfront.net</code>. Until both land, <code>air.da-tu.ca</code> does not resolve to this stack at all. This blocks <strong>only</strong> the custom domain and its cert - everything else is fully usable today over <code>https://d2u3k75qofedmd.cloudfront.net</code>, which already has working HTTPS via the default CloudFront cert.
+  </div>
 </section>
 
 <section id="startstop">
@@ -117,7 +125,7 @@ aws ec2 stop-instances  --region us-west-2 --instance-ids &lt;id&gt;</code></pre
   </div>
   <p>Watch it live:</p>
   <pre><code># from a laptop with an active SSM session to the box
-aws ssm start-session --target &lt;instance-id&gt;
+aws ssm start-session --target &lt;instance-id&gt; --region us-west-2
 sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
   <h3>Restart granularity</h3>
   <table>
@@ -133,12 +141,16 @@ sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
 
 <section id="health">
   <h2>3. Health checks</h2>
+  <div class="callout danger">
+    <strong>HTTP 200 from curl is not evidence the site works. This is not a hypothetical - it happened.</strong>
+    The deployed frontend once served a blank white page to every single visitor while every curl-based check in this document reported success. Cause: <code>terraform/frontend.tf</code>'s CloudFront response-headers policy set <code>script-src 'self'</code> with no <code>'unsafe-inline'</code>. Next.js's static export bootstraps through inline <code>&lt;script&gt;self.__next_f.push(...)&lt;/script&gt;</code> tags carrying the RSC flight payload - CSP blocked all of them, React threw <code>Error: Connection closed.</code>, and the server-rendered markup was wiped. <code>curl -sI</code> against the page still returned a clean <code>200</code> the entire time, because curl neither executes JavaScript nor enforces CSP - it only ever saw the initial HTML, not what the browser did with it after. Fixed to <code>script-src 'self' 'unsafe-inline'</code> (see the comment above <code>aws_cloudfront_response_headers_policy.frontend</code> in <code>terraform/frontend.tf</code>), applied, CloudFront invalidated. <strong>Every curl-based check below only verifies that a server responded - none of them can catch a client-side rendering failure like this one.</strong> Load the deployed page in a real browser and confirm visible text is present before trusting any curl result as "the site works."
+  </div>
   <p>One-command "is it up", no interactive session needed:</p>
   <pre><code>aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   --document-name AWS-RunShellScript \
   --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]'
 # then: aws ssm get-command-invocation --command-id &lt;id-from-above&gt; --instance-id &lt;id&gt;</code></pre>
-  <p>Or interactively: <code>aws ssm start-session --target &lt;id&gt;</code>, then <code>cd AITutorApp && docker compose ps</code>. Healthy looks like all four containers <code>Up</code>, with <code>api</code> and <code>db</code> additionally showing <code>(healthy)</code> — <code>nginx</code> and <code>streamlit</code> have no healthcheck defined, so "running" is the only signal for them.</p>
+  <p>Or interactively: <code>aws ssm start-session --target &lt;id&gt; --region us-west-2</code>, then <code>cd AITutorApp && docker compose ps</code>. Healthy looks like all four containers <code>Up</code>, with <code>api</code> and <code>db</code> additionally showing <code>(healthy)</code> — <code>nginx</code> and <code>streamlit</code> have no healthcheck defined, so "running" is the only signal for them.</p>
   <div class="grid2">
     <div class="card">
       <h3>Over the network</h3>
@@ -161,6 +173,27 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/questions/
       <p style="margin:0.4rem 0 0;font-size:0.85rem;">TLS now terminates at CloudFront — there is no cert to check on the box anymore. Nothing renews, nothing expires, on this side.</p>
     </div>
   </div>
+  <h3>Real-browser check (the one curl cannot do)</h3>
+  <p>Run this after any frontend deploy, and again as part of the exam-day smoke test in §10 - not a replacement for the curl checks above, an addition to them:</p>
+  <pre><code># manual, always sufficient: open the URL in an actual browser
+# (https://d2u3k75qofedmd.cloudfront.net until DNS lands, see §1)
+# and confirm the login page text is visible, not a blank page.
+
+# scriptable alternative, using the Playwright install already in
+# frontend/ (no test suite wiring needed, just the browser binary):
+cd frontend
+node -e "
+const { chromium } = require('@playwright/test');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('https://d2u3k75qofedmd.cloudfront.net/login');
+  const text = (await page.textContent('body')) || '';
+  if (text.trim().length &lt; 20) { console.error('BLANK PAGE - visible text missing'); process.exit(1); }
+  console.log('OK - visible text found:', text.trim().slice(0, 60));
+  await browser.close();
+})();
+"</code></pre>
   <p>App-level logs to watch on a slow or failing boot: <code>docker compose logs api</code> — the healthcheck's <code>start_period: 120s</code> exists because RAG singleton init can take a moment; a <code>curl</code> against <code>/</code> failing in the first two minutes after a build is expected, not a bug.</p>
   <div class="callout ok">
     <strong>502/504 debugging matrix</strong>, empirically confirmed live during Stage 5 by deliberately stopping the <code>api</code> container and, separately, the whole instance:
@@ -245,6 +278,10 @@ aws ssm send-command --region us-west-2 --instance-ids &lt;id&gt; \
   <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan): <code>BACKUP_S3_URI</code> now correctly points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every nightly `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>, and the failure landed only in <code>backups/cron.log</code>, which nothing monitors. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
   <p>Verify a dump actually landed:</p>
   <pre><code>aws s3 ls s3://aitutor-backups-&lt;account-id&gt;/backups/ --region us-west-2</code></pre>
+  <div class="callout danger">
+    <strong>Verified live, 2026-08-04: the backups bucket is empty. No off-box copy of production data exists right now.</strong>
+    <code>s3://aitutor-backups-434195712367</code> contains zero objects. The nightly cron mechanism is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - it has simply never had the chance to fire, because the box has not been left running across a <code>02:00</code> boundary since the fix landed. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the cron is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10: run <code>scripts/backup.sh</code> and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
+  </div>
 </section>
 
 <section id="logs">
@@ -276,6 +313,10 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <tr><td>Monthly budget</td><td>80% of $15 actual, 100% of $15 forecasted</td><td>AWS Budgets, scoped to the <code>Project=AITutorApp</code> tag</td></tr>
     <tr><td>Cost anomaly</td><td>Any day's anomalous spend ≥ $1 total impact</td><td>Cost Explorer Anomaly Detection, daily frequency</td></tr>
   </table>
+  <div class="callout danger">
+    <strong>The monthly budget alarm was dead from the day it was created, and the fix has not yet proven itself.</strong>
+    <code>aitutor-monthly-budget</code> filters on tag <code>user:Project$AITutorApp</code>, but the <code>Project</code> cost allocation tag key was <strong>Inactive</strong> account-wide - so the budget read $0.00 forever regardless of real spend, silently, with no error anywhere. Fixed via <code>aws_ce_cost_allocation_tag.project</code> in <code>terraform/guardrails.tf</code>, applied 2026-08-04. This only affects spend going forward - it can take up to 24h to start populating, and historical months need an explicit <code>aws ce start-cost-allocation-tag-backfill</code> to backfill. <strong>Do not treat this budget as a working cost signal until it has actually been observed reporting a non-zero figure at least once.</strong> Cross-check real spend in Cost Explorer directly (untagged/unfiltered) until then.
+  </div>
   <p><strong>In-app LLM caps</strong> — not a CloudWatch alarm, but the thing most likely to actually bind during an exam: 150 calls/user/day, 10,000 calls/day globally (<code>app/services/llm_quota.py</code>). Watch live in Streamlit's <em>System-Wide Analytics → LLM Usage (last 24h)</em> panel — shows the rolling global count and headroom remaining, plus top consumers. No alert fires when the cap is approached; it just starts rejecting hint/chat requests. Worth a manual glance mid-exam if usage looks unusually heavy.</p>
 </section>
 
@@ -301,8 +342,15 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
   <p>Reach it (never exposed publicly — <code>127.0.0.1:8501</code> on the host):</p>
   <pre><code>aws ssm start-session --target &lt;id&gt; \
   --document-name AWS-StartPortForwardingSession \
-  --parameters portNumber=8501,localPortNumber=8501
+  --parameters portNumber=8501,localPortNumber=8501 \
+  --region us-west-2
 # then open http://localhost:8501</code></pre>
+  <div class="callout warn">
+    <strong>Two prerequisites that are easy to miss, and both fail confusingly</strong>
+    <p>Every <code>aws</code> command in this runbook needs a region and valid credentials. Without a region the CLI fails with <code>NoRegion</code> before it does anything else, which is why <code>--region us-west-2</code> is written out on every command here. If you authenticate through SSO rather than a default profile, add <code>--profile &lt;your-sso-profile&gt;</code> too, or export <code>AWS_PROFILE</code> once for the shell.</p>
+    <p><code>start-session</code> additionally needs the <strong>Session Manager plugin</strong>, a separate binary the AWS CLI shells out to. It is not bundled with the CLI and not installed by anything in this repo. Without it you get <code>SessionManagerPlugin is not found</code>, which looks like a permissions or SSM problem but is purely a missing local binary. On macOS: <code>brew install --cask session-manager-plugin</code>. No shell restart is needed, the CLI resolves it on <code>PATH</code> at call time.</p>
+    <p>Both of these were hit live on 2026-08-04 while opening Streamlit, in that order. Anything in this runbook that depends on <code>start-session</code>, including the exam-day Streamlit tunnel, is blocked until the plugin is installed, so install it well before exam day rather than discovering it under time pressure.</p>
+  </div>
   <div class="callout danger">
     <strong>It bypasses the API entirely</strong>
     Streamlit talks straight to Postgres (<code>streamlit_app/app.py</code>), not through FastAPI — none of the API's row-level authorization applies here. That's by design (it's the trusted admin path), but it means every action below is <strong>unguarded</strong>: no confirmation dialogs on destructive buttons beyond Streamlit's own click-to-submit.
@@ -334,6 +382,15 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
       </ul>
     </div>
   </div>
+  <div class="callout warn">
+    <strong>Research data export gap: there is no one-command way to get all research data off the box.</strong>
+    Two partial paths only, verified against <code>streamlit_app/app.py</code>:
+    <ul style="margin:0.4rem 0 0;">
+      <li>A full <code>pg_dump</code> via <code>scripts/backup.sh</code> - complete, but the output is a Postgres dump; you need a Postgres to restore it into before you can query anything out of it.</li>
+      <li>Streamlit's <em>Export Data</em> view - CSV export, filtered by user/date, but only for <strong>Interaction Logs, Chat Logs, Intervention Logs, and Action Logs</strong> (the exact four options in its <code>log_type</code> selectbox), one type at a time, and it needs an SSM port-forward to a currently-running box.</li>
+    </ul>
+    <p style="margin:0.5rem 0 0;"><strong>SkillMastery has no bulk export at all</strong> - confirmed by reading the export view's code: it is not one of the four <code>log_type</code> options. It is only viewable per student, in that student's <em>Skill Mastery</em> tab, as an on-screen line chart plus a raw-data table inside an expander - and that per-student view has no <code>st.download_button</code> either, unlike the Interaction History and Chat Log tabs next to it. The only way to get <code>skill_mastery</code> rows out today is a direct Postgres query - either <code>docker compose exec db psql -U aitutor -d aitutor_db -c "SELECT * FROM skill_mastery;"</code> over an SSM session, or restoring a <code>pg_dump</code> and querying the table there.</p>
+  </div>
 </section>
 
 <section id="examday">
@@ -363,6 +420,8 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
     <tr><td>5</td><td>Graceful LLM failure handling — a clear "hint unavailable, try again" instead of a raw error on Gemini downtime/429</td><td>Small, contained to <code>hints.py</code>/<code>chat.py</code> error paths</td><td>Currently an open gap (§8) with no student-facing fallback.</td></tr>
     <tr><td>6</td><td>An admin-UI toggle for the LLM caps, instead of an <code>.env</code> edit + restart</td><td>Small — one Streamlit form + a settings write path</td><td>Right now, hitting the global cap mid-exam means an SSM session and a restart under time pressure. See §8.</td></tr>
     <tr><td>7</td><td>Error alerting — page or email on an unhandled 500</td><td>Small, e.g. a CloudWatch Logs metric filter + alarm on the existing SNS topic</td><td>Currently a 500 goes to stdout and nowhere else. Acceptable only if a proctor is actively watching Streamlit.</td></tr>
+    <tr><td>8</td><td>Preflight check for the five required SSM parameters before bootstrap runs</td><td>Small - a loop of <code>aws ssm get-parameter --name ... || echo missing</code> at the top of <code>ec2-bootstrap.sh</code>, failing loudly with a clear list</td><td>Nothing today creates <code>/github/deploy-key</code>, <code>/aitutor/prod/google_api_key</code>, <code>/aitutor/prod/postgres_password</code>, <code>/aitutor/prod/api_key</code>, or <code>/aitutor/prod/origin_secret</code>. A fresh AWS account bootstrap dies opaquely partway through with no indication which parameter is missing.</td></tr>
+    <tr><td>9</td><td>Actually run <code>terraform destroy</code> and re-apply once, in a scratch account or off-hours, to prove the stack is reproducible</td><td>Time only - roughly one full apply cycle</td><td>This has never been done. The current box is not proven to be recreatable from Terraform alone; everything above assumes it is.</td></tr>
   </table>
   <div class="callout ok">
     <strong>A process note worth keeping, not just a code recommendation</strong>

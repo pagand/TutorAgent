@@ -82,8 +82,19 @@ resource "aws_cloudfront_function" "index_rewrite" {
 # none. Cost: $0. connect-src is 'self' - Stage 5 moved the API behind this
 # same distribution at /api/*, so it's same-origin now, not a separate
 # domain. style-src allows 'unsafe-inline' because Tailwind's compiled
-# output and Next's static export rely on it; there is no inline script
-# anywhere in the export, so script-src stays strict.
+# output and Next's static export rely on it.
+#
+# script-src must also allow 'unsafe-inline'. An earlier version of this
+# policy asserted "there is no inline script anywhere in the export" and
+# kept script-src strict. That was wrong, and it broke the site completely:
+# Next's static export bootstraps through inline
+# <script>self.__next_f.push(...)</script> tags carrying the RSC flight
+# payload. Blocking them means React never receives the stream, throws
+# "Connection closed.", and wipes the server-rendered markup, leaving every
+# visitor a blank white page. Nonces are the strict alternative but need a
+# server to generate them per-request, which output:'export' does not have.
+# Verified by loading the deployed page in a real browser, which is the only
+# check that catches this; curl neither executes JS nor enforces CSP.
 resource "aws_cloudfront_response_headers_policy" "frontend" {
   name = "aitutor-frontend-security-headers"
 
@@ -106,7 +117,7 @@ resource "aws_cloudfront_response_headers_policy" "frontend" {
       override                   = true
     }
     content_security_policy {
-      content_security_policy = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
+      content_security_policy = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'none'"
       override                = true
     }
   }

@@ -60,3 +60,7 @@ Plan_Profile-Centric_FrontEnd.md
 CLAUDE.md
 progress.md
 
+
+# Claude Code local config, skills and agent scratch - never tracked,
+# same rule as CLAUDE.md and the other local planning docs above.
+.claude/

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getUserProfile, getQuestions } from '@/services/apiClient'
+import { examResultsKey } from '@/services/localSession'
 import type { Question, QuestionStatus } from '@/types'
 
 interface ExamResults {
@@ -70,9 +71,13 @@ export default function ResultsPage() {
 
   useEffect(() => {
     async function load() {
-      // Fast path: fresh from quiz session
+      const storedUserId = localStorage.getItem('userId')
+      if (!storedUserId) { router.replace('/login'); return }
+
+      // Fast path: fresh from quiz session. Keyed per student so a shared exam
+      // machine cannot serve the previous student's results and answer key.
       try {
-        const raw = localStorage.getItem('examResults')
+        const raw = localStorage.getItem(examResultsKey(storedUserId))
         if (raw) {
           const parsed: ExamResults = JSON.parse(raw)
           setResults(parsed)
@@ -84,22 +89,17 @@ export default function ResultsPage() {
             (s) => s === 'correct' || s === 'wrong_2'
           )
           if (hasGraded && Object.keys(parsed.correctAnswers).length === 0) {
-            const userId = localStorage.getItem('userId')
-            if (userId) {
-              try {
-                const correctAnswers = await fetchCorrectAnswers(userId, localStorage.getItem('sessionId') || undefined)
-                setResults((prev) => (prev ? { ...prev, correctAnswers } : prev))
-              } catch { /* leave the answer key blank rather than block the page */ }
-            }
+            try {
+              const correctAnswers = await fetchCorrectAnswers(storedUserId, localStorage.getItem('sessionId') || undefined)
+              setResults((prev) => (prev ? { ...prev, correctAnswers } : prev))
+            } catch { /* leave the answer key blank rather than block the page */ }
           }
           return
         }
       } catch { /* ignore parse error, fall through */ }
 
       // Slow path: arriving from login with a completed token
-      const userId = localStorage.getItem('userId')
-      if (!userId) { router.replace('/login'); return }
-      const fetched = await fetchResultsFromBackend(userId, localStorage.getItem('sessionId') || undefined)
+      const fetched = await fetchResultsFromBackend(storedUserId, localStorage.getItem('sessionId') || undefined)
       if (fetched) {
         setResults(fetched)
       } else {

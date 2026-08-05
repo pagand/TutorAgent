@@ -10,6 +10,7 @@ import {
   checkIntervention, logAction, logIntervention, getUserProfile,
   sessionHeartbeat, submitSession,
 } from '@/services/apiClient'
+import { examResultsKey } from '@/services/localSession'
 import type { QuestionStatus, HintData, ChatMessage } from '@/types'
 import TimerBar from './TimerBar'
 import QuestionNavStrip from './QuestionNavStrip'
@@ -123,8 +124,13 @@ export default function QuizPageContent() {
 
   const saveAndRedirect = useCallback((byTimer: boolean) => {
     if (hasRedirectedRef.current) return
-    hasRedirectedRef.current = true
     const s = stateRef.current
+    // A snapshot with no questions can only come from state that was never
+    // loaded for this student. Writing it would clobber a real result set with
+    // an empty one, which is what made a returning student's results read as
+    // zero answered.
+    if (!s.userId || s.questions.length === 0) return
+    hasRedirectedRef.current = true
     // correctAnswers is intentionally left empty here — /answer/ no longer
     // returns it (Stage 1a leak fix), and fetching it from GET /users/{id}/profile
     // is a network call that must never block this redirect: at 0:00 the quiz
@@ -138,7 +144,7 @@ export default function QuizPageContent() {
       retryCount: s.retryCount,
       triggeredByTimer: byTimer,
     }
-    try { localStorage.setItem('examResults', JSON.stringify(results)) } catch { /* ignore */ }
+    try { localStorage.setItem(examResultsKey(s.userId), JSON.stringify(results)) } catch { /* ignore */ }
     router.replace('/results')
   }, [router])
 
@@ -162,16 +168,30 @@ export default function QuizPageContent() {
     const storedUserId = localStorage.getItem('userId')
     if (!storedUserId) { router.replace('/login'); return }
 
-    if (state.userId === storedUserId && state.questions.length > 0) {
+    const storedSessionId = localStorage.getItem('sessionId') || generateSessionId()
+    localStorage.setItem('sessionId', storedSessionId)
+
+    // The provider outlives this component, so its state may still describe a
+    // previous login. Matching on sessionId as well as userId matters: logging
+    // out and back in on the SAME token mints a fresh sessionId, and skipping
+    // init there would leave the stale sessionId in context, never call
+    // startSession to claim the device lock for the new one, and 403 every
+    // subsequent answer/hint until a hard reload rebuilt the provider.
+    const isSameSession = state.userId === storedUserId && state.sessionId === storedSessionId
+    if (isSameSession && state.questions.length > 0) {
       setInitializing(false)
       return
     }
 
+    // Identity changed. Drop the previous student's state before init can
+    // finish, otherwise a stale isComplete=true redirects this student
+    // straight to /results the moment initializing flips false.
+    if (state.userId && !isSameSession) {
+      dispatch({ type: 'RESET' })
+    }
+
     if (initCalledRef.current) return
     initCalledRef.current = true
-
-    const storedSessionId = localStorage.getItem('sessionId') || generateSessionId()
-    localStorage.setItem('sessionId', storedSessionId)
 
     let isMounted = true
 
@@ -259,7 +279,7 @@ export default function QuizPageContent() {
             correctAnswers, userAnswers, retryCount,
             triggeredByTimer: isExpired,
           }
-          try { localStorage.setItem('examResults', JSON.stringify(results)) } catch { /* ignore */ }
+          try { localStorage.setItem(examResultsKey(storedUserId!), JSON.stringify(results)) } catch { /* ignore */ }
           router.replace('/results')
           return
         }

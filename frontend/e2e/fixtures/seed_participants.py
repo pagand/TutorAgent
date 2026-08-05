@@ -32,6 +32,9 @@ FIXTURE_PARTICIPANTS = [
     {"token": "E2ELOCK", "name": "E2E Second Device Lock", "identifier": "e2e-lock", "group": "free_choice", "intervention": "manual"},
     {"token": "E2ETIMER", "name": "E2E Timer Expiry", "identifier": "e2e-timer", "group": "free_choice", "intervention": "manual"},
     {"token": "E2EXDEVICE", "name": "E2E Cross Device Results", "identifier": "e2e-xdevice", "group": "free_choice", "intervention": "manual"},
+    {"token": "E2ESWITCHA", "name": "E2E Token Switch A", "identifier": "e2e-switch-a", "group": "free_choice", "intervention": "manual"},
+    {"token": "E2ESWITCHB", "name": "E2E Token Switch B", "identifier": "e2e-switch-b", "group": "free_choice", "intervention": "manual"},
+    {"token": "E2ESWITCHC", "name": "E2E Token Switch C", "identifier": "e2e-switch-c", "group": "free_choice", "intervention": "manual"},
 ]
 
 

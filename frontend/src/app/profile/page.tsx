@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { getUserProfile, setUserPreference, logAction, logoutSession } from '@/services/apiClient'
+import { clearLocalSession } from '@/services/localSession'
+import { useQuiz } from '@/context/QuizContext'
 
 // Values must match backend HintStyle enum exactly
 const HINT_STYLES = [
@@ -15,6 +17,7 @@ const HINT_STYLES = [
 
 export default function ProfilePage() {
   const router = useRouter()
+  const { dispatch } = useQuiz()
   const [userId, setUserId] = useState<string | null>(null)
   const [abGroup, setAbGroup] = useState<string | null>(null)
   const [hintStyle, setHintStyle] = useState<string>('Conceptual')
@@ -73,9 +76,8 @@ export default function ProfilePage() {
     // Release the session lock so the student can re-enter from any device immediately.
     const uid = localStorage.getItem('userId')
     if (uid) logoutSession(uid, localStorage.getItem('sessionId') || undefined)
-    localStorage.removeItem('userId')
-    localStorage.removeItem('sessionId')
-    localStorage.removeItem('examStartMs')
+    clearLocalSession()
+    dispatch({ type: 'RESET' })
     router.replace('/login')
   }
 

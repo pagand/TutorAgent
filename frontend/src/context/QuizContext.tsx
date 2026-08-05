@@ -15,6 +15,7 @@ type QuizAction =
   | { type: 'COMPLETE' }
   | { type: 'RESTORE_STATE'; questionStates: Record<number, QuestionStatus>; retryCount: Record<number, number>; userAnswers: Record<number, string>; correctAnswers: Record<number, string> }
   | { type: 'SYNC_TIMER'; examStartMs: number; examDurationMs: number }
+  | { type: 'RESET' }
 
 const initialState: QuizState = {
   userId: '',
@@ -203,6 +204,14 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
 
     case 'SYNC_TIMER': {
       return { ...state, examStartMs: action.examStartMs, examDurationMs: action.examDurationMs }
+    }
+
+    // The provider lives in the root layout, so its state survives every
+    // client-side navigation. Without an explicit reset, a logout leaves the
+    // previous student's userId/sessionId/isComplete in memory and the next
+    // login inherits them.
+    case 'RESET': {
+      return initialState
     }
 
     default:

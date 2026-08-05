@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { participantLogin, createUser, logoutSession, apiHealth } from '@/services/apiClient'
+import { clearLocalSession } from '@/services/localSession'
+import { useQuiz } from '@/context/QuizContext'
 
 type LoginState = 'idle' | 'not_started' | 'resumable' | 'active_elsewhere' | 'completed' | 'invalid'
 type ProbeStatus = 'checking' | 'open' | 'closed'
@@ -13,6 +15,7 @@ function generateSessionId(): string {
 
 export default function LoginPage() {
   const router = useRouter()
+  const { dispatch } = useQuiz()
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [loginState, setLoginState] = useState<LoginState>('idle')
@@ -125,9 +128,8 @@ export default function LoginPage() {
     if (savedUserId) {
       logoutSession(savedUserId, localStorage.getItem('sessionId') || undefined)
     }
-    localStorage.removeItem('userId')
-    localStorage.removeItem('sessionId')
-    localStorage.removeItem('examStartMs')
+    clearLocalSession()
+    dispatch({ type: 'RESET' })
     setSavedUserId(null)
     setShowNewToken(true)
     setLoginState('idle')

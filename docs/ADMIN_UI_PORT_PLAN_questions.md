@@ -21,6 +21,47 @@ Write Phase 5 tests, but read A5 first - there is a trap there that will otherwi
 
 ---
 
+## A0. How to hand the work back (read before writing any code)
+
+You are the first half of a two-stage handoff. You write the code with no repo access; a second agent
+running inside the repo pastes it in, runs `pytest`, fixes what does not compile, and verifies it in a
+browser. That second stage is on a very tight token budget, so **your output format decides whether this
+works.**
+
+**Emit complete files. Never diffs, patches, snippets, or "add this near line 40".**
+Applying a diff requires reasoning about surrounding context, which is exactly the expensive thing the
+second stage cannot afford. A whole file is a mechanical paste.
+
+Format every file as its own fenced block preceded by its exact repo path:
+
+````
+### FILE: app/admin/queries.py
+```python
+<the complete file, top to bottom>
+```
+````
+
+Deliver, in this order:
+
+1. `app/admin/__init__.py`
+2. `app/admin/queries.py` (Phase 1, complete)
+3. `app/endpoints/admin_ui.py` (Phase 2, complete)
+4. `tests/test_admin_ui.py` (Phase 5, complete, honouring A5)
+
+For the three Phase 3 files that already exist and are only being edited
+(`app/main.py`, `nginx/available/app.conf`, `docker-compose.yml`), do **not** reproduce them whole - you do
+not have their full contents and would fabricate the parts you cannot see. Instead give, for each, the exact
+old block and the exact new block using the excerpts in A1, clearly labelled `REPLACE THIS` / `WITH THIS`.
+Those are small, bounded edits and are safe to hand over that way.
+
+Finish with a short **ASSUMPTIONS** list: every place you guessed at a column name, a model attribute, or a
+return shape. That list tells the second stage where to look first when something fails, instead of it
+re-reading everything. Be specific and honest; an unlisted guess costs far more than a listed one.
+
+Do not apologise for or narrate the guesses. Just list them.
+
+---
+
 ## A1. The integration files
 
 ### `app/utils/db.py` (complete)

@@ -114,7 +114,18 @@ services:
     # dashboard talks straight to Postgres with none of the API's authz.
     expose:
       - "8501"
-    mem_limit: 384m
+    # Raised from 384m. Streamlit idles at ~223MB, and it holds a live session
+    # (widget state, ForwardMsg cache, media cache) per *browser connection*,
+    # not per user. A dropped websocket makes the client reconnect, which opens
+    # a fresh session while the old one is still held, so a reconnect storm
+    # walks memory up until the cgroup kills the process - which drops every
+    # websocket at once and starts the next storm. That spiral killed this
+    # container 5 times between 07:44 and 07:53 on 2026-08-07, each death
+    # logging no traceback (a Python exception would log one; a cgroup SIGKILL
+    # logs nothing), and it is what made the dashboard take minutes and made
+    # admin actions silently do nothing. Headroom is cheap here: the host has
+    # ~2.9GB free and these are caps, not reservations.
+    mem_limit: 1g
     logging: *default-logging
 
 volumes:

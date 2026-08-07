@@ -74,7 +74,17 @@ services:
     build: .
     restart: unless-stopped
     entrypoint: []
-    command: ["streamlit", "run", "streamlit_app/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    # gatherUsageStats=false: Streamlit's telemetry posts to segment.io on
+    # startup and on interactions, which buys the exam nothing. fileWatcherType
+    # =none stops it rescanning the app tree on every rerun; nothing edits
+    # source on the box. XSRF protection deliberately stays ON: the port is
+    # published on loopback and reached through an SSM tunnel, but that tunnel
+    # makes localhost:8501 reachable from any page the admin's browser has
+    # open, and this dashboard can delete users and reset exam timers.
+    command: ["streamlit", "run", "streamlit_app/app.py",
+              "--server.address=0.0.0.0", "--server.port=8501",
+              "--browser.gatherUsageStats=false",
+              "--server.fileWatcherType=none"]
     # Overrides the Dockerfile's HEALTHCHECK, which probes port 8000 because the
     # image is built for the api service. Nothing listens on 8000 in this
     # container, so the inherited probe always failed and the container sat

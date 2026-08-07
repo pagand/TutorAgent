@@ -25,7 +25,22 @@ st.set_page_config(layout="wide", page_title="DaTu AIR Admin Dashboard")
 def get_db_engine():
     db_url = settings.database_url
     sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-    return create_engine(sync_url)
+    # Streamlit runs each browser session's script in its own thread, and the
+    # scoped_session below is thread-local and never .remove()d, so every new
+    # script-runner thread checks out its own connection and holds it. On
+    # SQLAlchemy's defaults (pool_size=5, max_overflow=10) the 16th thread
+    # blocks for pool_timeout=30s before it can even start rendering, which is
+    # the multi-minute stall the dashboard showed during an exam. pool_pre_ping
+    # also turns a connection that died while parked in the pool into a silent
+    # reconnect instead of a hang.
+    return create_engine(
+        sync_url,
+        pool_size=20,
+        max_overflow=10,
+        pool_timeout=5,
+        pool_recycle=300,
+        pool_pre_ping=True,
+    )
 
 @st.cache_resource
 def get_db_session_registry():

@@ -35,6 +35,14 @@ Three defects were found and fixed, a fourth is diagnosed but unfixed, and one o
   The S3 sync ran *first* and succeeded, so a roster edit looked applied while the live box was never re-seeded.
   **Fixed** by passing the SSM command through a JSON file instead of inline shorthand.
   Re-ran clean: `2 inserted, 3 updated`.
+- [x] **P0. A long hint made the question permanently unanswerable.**
+  Reported from a real bug-bash session on token `6M6JMPCV`: take a hint, then neither Submit nor Skip works, `Failed to submit. Please try again.`, until the student leaves the quiz and comes back.
+  **Found in the logs, not by reasoning:** a long run of `POST /answer/ 422` with 2.3-2.7KB response bodies, the body size tracking the hint length.
+  `AnswerRequest.hint_text` was `Field(None, max_length=2000)` (`app/endpoints/answer.py`), so any hint over 2000 characters failed validation and rejected the **entire** submission.
+  Both Submit and Skip send the field, which is why neither worked; navigating away cleared `activeHint` so the payload dropped `hint_text`, which is exactly the workaround that was found by hand.
+  **Fixed** (`92008ad`) by truncating in a `field_validator` instead of rejecting - `hint_text` is telemetry the client echoes back for logging, never exam data, so it must never be able to fail an answer.
+  Hints are also now capped at 200 words in all four style prompts, but that is a mitigation, not the fix: a prompt is not a guarantee, and the truncation is what makes the failure impossible.
+  **Why every prior gate missed it:** the E2E suite and `tests/test_answer.py` only ever submit with short or absent hints, so nothing exercised the one input that breaks it. Worth a regression test with an over-long `hint_text` on both the submit and skip paths.
 - [ ] **P1. The admin dashboard is still slow on first load (~40-60s), and that is not yet explained.**
   Ruled out by measurement, not by argument: **not** tunnel bandwidth (620 KB/s, 242 KB bundle in 0.39s), **not** OOM (`oom_kill 0`, peak 171 MB of a 384 MB limit), **not** CPU (0.34%), **not** a restart loop (zero die events over 40 minutes), and **not** slow queries (Streamlit answers `/_stcore/health` in 1.8ms on the box).
   Fixed along the way: the engine ran on SQLAlchemy's defaults (`pool_size=5, max_overflow=10`) while Streamlit gives each browser session its own thread and the `scoped_session` is never `.remove()`d, so threads leak connections and later reruns sat on the 30s `pool_timeout`; telemetry and the file watcher were also dropped.

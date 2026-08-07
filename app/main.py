@@ -26,6 +26,7 @@ from app.endpoints.session import router as session_router
 from app.endpoints.chat import router as chat_router
 from app.endpoints.action_log import router as action_log_router
 from app.endpoints.participants import router as participants_router
+from app.endpoints.admin_ui import router as admin_ui_router
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized
 from app.services.question_service import question_service
@@ -117,6 +118,13 @@ async def api_key_middleware(request: Request, call_next):
         return await call_next(request)
     if request.url.path == "/":
         return await call_next(request)
+    # Reachable only on the loopback-published 8501 port through the SSM
+    # tunnel (docker-compose publishes nginx's 8501 on 127.0.0.1, and the
+    # listen-80 block CloudFront talks to returns 404 for /admin). AWS IAM
+    # plus SSM is the auth boundary here, the same trust model the
+    # Streamlit dashboard had.
+    if request.url.path.startswith("/admin"):
+        return await call_next(request)
     provided = request.headers.get("X-API-Key", "")
     # Compare as bytes — hmac.compare_digest raises TypeError on a str containing
     # non-ASCII characters, which would otherwise turn a scanner probing with a
@@ -158,6 +166,7 @@ app.include_router(session_router)
 app.include_router(chat_router)
 app.include_router(action_log_router)
 app.include_router(participants_router)
+app.include_router(admin_ui_router)
 
 # --- Root Endpoint ---
 @app.get("/")

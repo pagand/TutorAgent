@@ -57,10 +57,7 @@ front end:
 npm run dev
 ```
 
-admin dashboard:
-```bash
-streamlit run streamlit_app/app.py
-```
+admin dashboard: served by the FastAPI app itself at `/admin` once the backend above is running, e.g. `http://127.0.0.1:8000/admin/`.
 
 
 ## Running Tests

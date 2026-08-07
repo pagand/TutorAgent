@@ -54,10 +54,9 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      # Admin dashboard. Published here rather than on the streamlit service so
-      # nginx can gzip and cache Streamlit's ~85 per-load module requests before
-      # they cross the SSM tunnel. Still 127.0.0.1 only, so the existing
-      # `aws ssm start-session ... portNumber=8501` command is unchanged.
+      # Admin dashboard. nginx fronts the FastAPI /admin router here, loopback
+      # only, so the existing `aws ssm start-session ... portNumber=8501`
+      # command is unchanged.
       - "127.0.0.1:8501:8501"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -66,66 +65,6 @@ services:
     depends_on:
       - api
     mem_limit: 128m
-    logging: *default-logging
-
-  # Admin dashboard. Bound to the host's loopback only (127.0.0.1:8501,
-  # not 0.0.0.0) - reached via `ssh -L 8501:localhost:8501`, never exposed
-  # to the internet. Same image as `api`, overriding entrypoint.sh's
-  # migrate-then-uvicorn default with the Streamlit command instead. Talks
-  # to Postgres directly (see streamlit_app/app.py), not through the API,
-  # so none of the API's own auth/RLS applies here - that's expected, this
-  # is the trusted admin path, not a second student-facing surface.
-  streamlit:
-    build: .
-    restart: unless-stopped
-    entrypoint: []
-    # gatherUsageStats=false: Streamlit's telemetry posts to segment.io on
-    # startup and on interactions, which buys the exam nothing. fileWatcherType
-    # =none stops it rescanning the app tree on every rerun; nothing edits
-    # source on the box. XSRF protection deliberately stays ON: the port is
-    # published on loopback and reached through an SSM tunnel, but that tunnel
-    # makes localhost:8501 reachable from any page the admin's browser has
-    # open, and this dashboard can delete users and reset exam timers.
-    command: ["streamlit", "run", "streamlit_app/app.py",
-              "--server.address=0.0.0.0", "--server.port=8501",
-              "--browser.gatherUsageStats=false",
-              "--server.fileWatcherType=none"]
-    # Overrides the Dockerfile's HEALTHCHECK, which probes port 8000 because the
-    # image is built for the api service. Nothing listens on 8000 in this
-    # container, so the inherited probe always failed and the container sat
-    # permanently "unhealthy" while Streamlit was serving fine on 8501.
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aitutor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-aitutor_db}
-    volumes:
-      - ./prod/data:/app/prod/data:ro
-    depends_on:
-      db:
-        condition: service_healthy
-    # No published port: nginx now fronts this (see its 8501 mapping and the
-    # 8501 server block in nginx/available/app.conf). Reachable only from
-    # inside the compose network, which is a small tightening too - the
-    # dashboard talks straight to Postgres with none of the API's authz.
-    expose:
-      - "8501"
-    # Raised from 384m. Streamlit idles at ~223MB, and it holds a live session
-    # (widget state, ForwardMsg cache, media cache) per *browser connection*,
-    # not per user. A dropped websocket makes the client reconnect, which opens
-    # a fresh session while the old one is still held, so a reconnect storm
-    # walks memory up until the cgroup kills the process - which drops every
-    # websocket at once and starts the next storm. That spiral killed this
-    # container 5 times between 07:44 and 07:53 on 2026-08-07, each death
-    # logging no traceback (a Python exception would log one; a cgroup SIGKILL
-    # logs nothing), and it is what made the dashboard take minutes and made
-    # admin actions silently do nothing. Headroom is cheap here: the host has
-    # ~2.9GB free and these are caps, not reservations.
-    mem_limit: 1g
     logging: *default-logging
 
 volumes:

@@ -355,4 +355,107 @@ point of the test, so do not let it pass vacuously.
 - **Every page must survive a refresh.** That property is the entire reason this port exists. No page may
   depend on prior state, and every POST must redirect (303) so a refresh never re-submits.
 - **Report honestly.** Give the real `pytest` output with pass/fail counts. If something does not work, say
+
+
+---
+
+# agent response
+
+## Phase 3 edit blocks
+
+### FILE: app/main.py (edit 1 of 2, middleware exemption)
+```
+REPLACE THIS:
+    if request.url.path == "/":
+        return await call_next(request)
+    provided = request.headers.get("X-API-Key", "")
+
+WITH THIS:
+    if request.url.path == "/":
+        return await call_next(request)
+    # Reachable only on the loopback-published 8501 port through the SSM
+    # tunnel (docker-compose publishes nginx's 8501 on 127.0.0.1, and the
+    # listen-80 block CloudFront talks to returns 404 for /admin). AWS IAM
+    # plus SSM is the auth boundary here, the same trust model the
+    # Streamlit dashboard had. Must stay a prefix match on /admin only.
+    if request.url.path.startswith("/admin"):
+        return await call_next(request)
+    provided = request.headers.get("X-API-Key", "")
+```
+This edit anchors on the middleware you pasted verbatim, so `old_str` is an exact match.
+
+### FILE: app/main.py (edit 2 of 2, router registration)
+```
+REPLACE THIS:
+app.include_router(action_log_router)
+app.include_router(participants_router)
+
+WITH THIS:
+app.include_router(action_log_router)
+app.include_router(participants_router)
+from app.endpoints.admin_ui import router as admin_ui_router
+app.include_router(admin_ui_router)
+```
+Also an exact match on text you pasted verbatim. The import is placed right before its use rather than moved up to the top-of-file import block, since I can't see that block - safe to relocate for style, functionally identical either way.
+
+### FILE: nginx/available/app.conf (two edits, best-effort anchors)
+```
+EDIT 1, inside the listen 80 block, right after the location /health block:
+
+I was not given the literal text of that block (only that it exists), so
+I cannot give an exact old_str for it without fabricating content I have
+not seen. Insert this new location block immediately after location
+/health closes:
+
+    # Defense in depth. The admin UI is served on the loopback-only 8501
+    # listener below, never to CloudFront. There is no `location /` here
+    # today so /admin would already 404, but this makes that a decision
+    # rather than an accident if a catch-all is ever added.
+    location /admin {
+        return 404;
+    }
+
+EDIT 2, inside the listen 8501 block:
+
+I was told this block currently has two location blocks (one proxying to
+Streamlit with websocket/Upgrade headers, one for /static/), but not given
+their literal text, so again no exact old_str. Replace both of that
+block's location blocks with this single one, keeping the existing gzip
+directives and `listen 8501;` untouched:
+
+    location / {
+        proxy_pass         http://$api_upstream/admin/;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+        proxy_set_header   Host       $host;
+        proxy_set_header   X-Real-IP  $remote_addr;
+    }
+```
+Both `app/main.py` edits are exact, since that source was pasted to me verbatim. These two nginx edits are not - flagged in ASSUMPTIONS, and the second-stage agent should confirm placement against the real file rather than trust a mechanical `old_str` match here.
+
+### FILE: docker-compose.yml
+No edit this pass. Per your note, the nginx port mapping (`127.0.0.1:8501:8501`) must not change, and the `streamlit` service must stay running until the new UI is verified in a browser (Phase 4 deferred). There is nothing to change in `docker-compose.yml` yet - that comes in the Phase 4 follow-up.
+
+## ASSUMPTIONS
+
+- `DEFAULT_BKT_P_L0 = 0.1` in `app/admin/queries.py` - `settings` has no `bkt_p_l0`. This is display-only (replays a trajectory chart, never writes `skill_mastery`), but confirm whether production sources the real initial-mastery prior somewhere else before trusting the constant.
+- `question_service.get_question_by_id(row["question_id"])` is assumed to accept `interaction_logs.question_id` directly and that it lines up with `Question.question_number`'s type. If the types differ (str vs int), the question-text join in `get_interaction_history` will silently return `None` for every row instead of erroring.
+- Test seeding deliberately deviates from the "seed via ORM models" instruction. I only have confirmed model names for `User`, `ExamSession`, `UserActionLog`, `InterventionLog` (from the `action_log.py` import you showed); I'd have had to guess `InteractionLog`, `ChatLog`, `SkillMastery`, `Participant`, and all their field names. `tests/test_admin_ui.py` seeds with raw `INSERT` statements using the exact table/column names already present in the ported SQL instead, which I have high confidence in. If the real schema has additional NOT NULL columns with no default that the admin queries never touch, these inserts will need those columns added.
+- Beyond the two Postgres-only constructs you flagged, `preferences->>'ab_group'` (used in `get_all_users_summary`, `get_all_interaction_logs`, `get_chat_logs`, `get_intervention_logs`, `get_action_logs`) is a third one. Modern SQLite (3.38+) supports the same `->>` syntax, so I gated the affected tests on `sqlite3.sqlite_version_info >= (3, 38, 0)` instead of an outright skip. I haven't verified the CI's actual SQLite version, or that `aiosqlite` links the same libsqlite3 the stdlib `sqlite3` module reports. If it's older, most GET-route tests here will skip, including the full user-detail page test, since that route calls `get_chat_logs`/`get_intervention_logs`/`get_action_logs` internally regardless of what's rendered.
+- `EXTEND_ALL_TIMERS_SQL` now exists in `app/admin/queries.py`, but I did not update `frontend/e2e/fixtures/extend_all_timers.py` or `tests/test_admin_bulk_timer.py` to import from there - neither file was in the requested deliverable list and I don't have their contents. Since `streamlit_app/` is untouched this pass, nothing is currently broken, but the plan's "single source of truth" is duplicated until that follow-up happens.
+- SQLAlchemy async result handling: I assumed `result.mappings().all()` / `.mappings().first()` return dict-like `RowMapping` objects that `dict()` cleanly, and `result.scalar_one()` / `.rowcount` behave the same as sync SQLAlchemy. Matches the `get_db()` you gave me, but I haven't seen the pinned SQLAlchemy version.
+- Timestamp columns (`created_at`, `timestamp`, `last_updated`) are assumed to come back as Python `datetime.datetime` objects, so `.strftime()` / `.date()` work directly in `admin_ui.py`. If a driver path returns strings instead, display formatting and the export date-range filter break.
+- `exam_start_ms` / `exam_duration_ms` are assumed to be plain integers usable in millisecond arithmetic, matching the original `int(...)` casts.
+- I read "strict CSP" plus the explicit "No JS" callout on auto-refresh as intent for the whole admin surface, not just that one meta tag, so there is zero inline `<script>` or `onchange=` anywhere in `admin_ui.py` (e.g. the action-type filter is a plain select-plus-submit-button, not an auto-submitting one). If real interactivity is wanted somewhere, that's a deliberate addition, not something I left out by accident.
+- I dropped Streamlit's export preview step (first-100-rows preview, per-column checkbox picker) and export a fixed column set per log type instead. The plan's Phase 2 route list only specifies `GET /admin/export` and `GET|POST /admin/export/download`, no preview route, so I read that as intentional for the stateless redesign rather than an oversight.
+- Confirmation-mismatch on Reset Progress / Delete User returns a rendered HTML page with status 400, not FastAPI's default JSON error body, since a proctor needs to see it in-browser, not raw JSON.
+- The two `nginx/available/app.conf` edit anchors are best-effort reconstructions, not verified literal matches, since I was told what surrounds them but not given their exact text. Both `app/main.py` edits are exact, since that source was pasted to me verbatim.
+
+## Review
+
+What I'm confident in: Phase 1 (`app/admin/queries.py`) is a faithful, semantics-preserving port - every SQL string is byte-identical to what you gave me except sync-to-async mechanics, and the Python-side KPI/trajectory math was worked through by hand against the pandas original rather than eyeballed. Phase 2 follows the plan's own decisions (stateless, POST-Redirect-GET, per-action confirm inputs, no JS) without improvising new ones. The two `app/main.py` edits are exact matches against text you pasted, so they should paste in cleanly.
+
+The one real risk: the `preferences->>'ab_group'` operator touches almost every list/log query, which means almost every GET-route test in this file is conditional on the test SQLite build. First thing to check when `pytest` runs is whether `SQLITE_SUPPORTS_JSON_ARROW` evaluates true - if it's false, most of the coverage here goes gray (skipped) rather than red or green, which looks like less coverage than it is. Second thing to check is the raw-SQL seed helpers against the actual schema - if any table has a NOT NULL column the ported queries never reference, those inserts will fail loudly and the fix is just adding the column to the seed helper, not a design problem.
+
+Not done, on purpose: `docker-compose.yml` is untouched (nothing to change while Streamlit stays up), `frontend/e2e/fixtures/extend_all_timers.py` and `tests/test_admin_bulk_timer.py` still point at `streamlit_app.admin_ops` (still works, just duplicated), and Phase 4 (deleting `streamlit_app/`) hasn't been touched at all. The plan itself says verification has to be a real browser through the tunnel, not curl - that step obviously can't happen from this side of the handoff.
   so. Do not report success you have not verified.

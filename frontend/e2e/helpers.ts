@@ -31,7 +31,7 @@ export function expireSession(userId: string, secondsRemaining = 3) {
   })
 }
 
-/** Bulk-extends every unsubmitted session's timer, mirroring the Streamlit "Exam Control" action. */
+/** Bulk-extends every unsubmitted session's timer, mirroring the admin UI's "Exam Control" action. */
 export function extendAllTimers(extraMinutes: number) {
   const script = path.join(__dirname, 'fixtures', 'extend_all_timers.py')
   const dbUser = process.env.E2E_DB_USER || process.env.USER || 'postgres'

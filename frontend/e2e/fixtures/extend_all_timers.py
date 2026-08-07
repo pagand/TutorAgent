@@ -1,12 +1,11 @@
 """
 frontend/e2e/fixtures/extend_all_timers.py
 
-Exercises the same bulk timer extension the Streamlit "Exam Control" section
-calls — imports EXTEND_ALL_TIMERS_SQL from streamlit_app/admin_ops.py so the
-two paths can't drift apart, but runs it through the async engine already
-used by this E2E fixture ecosystem (see expire_session.py) rather than
-admin_ops's sync Session, since Streamlit and this fixture script use
-different SQLAlchemy engines.
+Exercises the same bulk timer extension the admin UI's "Exam Control" section
+calls — imports EXTEND_ALL_TIMERS_SQL from app/admin/queries.py so the two
+paths can't drift apart, but runs it through the async engine already used
+by this E2E fixture ecosystem (see expire_session.py) rather than going
+through the admin router.
 
 Usage:
     DATABASE_URL=postgresql+asyncpg://<user>@localhost:5432/aitutor_e2e_db \
@@ -20,7 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from sqlalchemy import text
 from app.utils.db import AsyncSessionLocal
-from streamlit_app.admin_ops import EXTEND_ALL_TIMERS_SQL
+from app.admin.queries import EXTEND_ALL_TIMERS_SQL
 
 
 async def run(extra_minutes: int) -> int:

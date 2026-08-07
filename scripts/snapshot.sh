@@ -46,7 +46,7 @@ mkdir -p "$BUNDLE_ROOT"/{dump,csv,logs,prod_data}
 
 # --- 1. Container logs first, before anything below touches the stack ---
 log "Capturing container logs"
-for svc in api db nginx streamlit; do
+for svc in api db nginx; do
   docker compose logs --no-color "$svc" > "${BUNDLE_ROOT}/logs/${svc}.log" 2>&1 || \
     log "WARNING: could not capture logs for $svc (continuing)"
 done
@@ -92,7 +92,7 @@ Captured by scripts/snapshot.sh. Contents:
                            as actually served at capture time. Record only - NOT the restore
                            path for prod/data on a rebuilt box (that is ec2-bootstrap.sh's S3
                            sync from the ops bucket; see PRELAUNCH_CHECKLIST.md).
-- logs/*.log                docker compose logs for api/db/nginx/streamlit at capture time,
+- logs/*.log                docker compose logs for api/db/nginx at capture time,
                            capped at whatever the 10MB x 3 file x-logging retention held.
 
 ## CSV column notes

@@ -1,6 +1,6 @@
 # app/endpoints/answer.py
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -18,6 +18,12 @@ from app.utils.db import get_db
 
 router = APIRouter()
 
+# Matches the InteractionLog.hint_text column width; hints are also capped at
+# 200 words in the prompts (app/services/prompt_library.py), so this is the
+# backstop for when the model overshoots, not the primary control.
+HINT_TEXT_MAX_CHARS = 2000
+
+
 class AnswerRequest(BaseModel):
     user_id: str = Field(max_length=64)
     session_id: str | None = Field(None, max_length=64)
@@ -30,9 +36,24 @@ class AnswerRequest(BaseModel):
     # Hint-related fields, only present if a hint was shown
     hint_shown: bool = False
     hint_style_used: str | None = None
-    hint_text: str | None = Field(None, max_length=2000)
+    hint_text: str | None = None
     pre_hint_mastery: float | None = None
     feedback_rating: int | None = Field(None, ge=1, le=5)
+
+    @field_validator("hint_text")
+    @classmethod
+    def _truncate_hint_text(cls, v: str | None) -> str | None:
+        """Truncates instead of rejecting an over-long hint.
+
+        This was `Field(None, max_length=2000)`, which 422'd the entire
+        submission whenever the LLM produced a hint longer than that. The
+        student had taken a hint and then could neither Submit nor Skip -
+        both send this field - so the question was unanswerable until they
+        reloaded, which dropped the hint from the payload and let it through.
+        hint_text is telemetry the client echoes back for logging, never
+        exam data, so an answer must never fail because of its length.
+        """
+        return v if v is None or len(v) <= HINT_TEXT_MAX_CHARS else v[:HINT_TEXT_MAX_CHARS]
 
 class AnswerResponse(BaseModel):
     correct: bool

@@ -42,10 +42,29 @@ if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
 fi
 
 log "Re-seeding participants on running instance $INSTANCE_ID (no reboot)"
+# The command goes through a JSON file rather than `--parameters commands="..."`.
+# Inline, the single quotes needed for `bash -c` collide with the AWS CLI's own
+# shorthand parser, which reads the `'` as a syntax error and aborts:
+#   Error parsing parameter '--parameters': Expected: ',', received: '''
+# That made this whole script exit 1 at the point where it re-seeds, so the S3
+# sync above landed but the live box was never updated - a roster edit looked
+# like it had been applied when it had not.
+PARAMS_FILE="$(mktemp)"
+trap 'rm -f "$PARAMS_FILE"' EXIT
+cat > "$PARAMS_FILE" <<JSON
+{
+  "commands": [
+    "cd /home/ec2-user/AITutorApp",
+    "sudo -u ec2-user aws s3 sync s3://${OPS_BUCKET}/artifacts/prod-data/ prod/data/ --delete --region ${AWS_REGION}",
+    "docker compose exec -T api python prod/seed_participants.py"
+  ]
+}
+JSON
+
 CMD_ID="$(aws ssm send-command --region "$AWS_REGION" \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
-  --parameters commands="cd /home/ec2-user/AITutorApp && sudo -u ec2-user bash -c 'aws s3 sync s3://${OPS_BUCKET}/artifacts/prod-data/ prod/data/ --delete --region ${AWS_REGION} && docker compose exec -T api python prod/seed_participants.py'" \
+  --parameters "file://$PARAMS_FILE" \
   --query 'Command.CommandId' --output text)"
 
 log "Command $CMD_ID sent, waiting for result..."

@@ -8,6 +8,48 @@ Findings are recorded with the file and line that produced them so nothing has t
 
 ---
 
+## Next round, pick up here (added 2026-08-07)
+
+The exam went fully dark on 2026-08-06 and the cause was not in this document.
+Three defects were found and fixed, a fourth is diagnosed but unfixed, and one open question remains.
+
+- [x] **P0. The API returned 502 to every student and the login page told them the exam was closed.**
+  nginx resolves the `api` upstream hostname **once, at config load**, and caches that IP for the life of the process (runtime re-resolution is nginx-*plus* only).
+  The api container came back on a new bridge IP, `172.18.0.2` went to the **streamlit** container instead, and streamlit runs the same image so it advertises 8000 with nothing listening.
+  Every `/api/*` request got `connect() failed (111: Connection refused)`.
+  Only a manual nginx restart cleared it.
+  **This is worse than a one-off outage:** any api restart reproduces it, including the `docker compose up -d api` this document recommends for raising the LLM quota mid-exam, so the documented remedy would itself have taken the exam down.
+  **Fixed** (`6656852`) with `resolver 127.0.0.11 valid=10s` plus a variable `proxy_pass`, so nginx re-resolves and self-heals within 10s.
+  **Why every prior gate missed it:** the same blind spot as the CSP finding - every check was `curl` or code reading against a box whose containers happened to hold the IPs nginx had cached at boot. Nothing ever restarted a container and re-checked.
+- [ ] **P0. The self-heal is NOT yet proven end to end.**
+  The test - stop api, let it take a new IP, confirm nginx recovers with no restart - has not been run.
+  Until it is, the fix above is reasoned-and-deployed, not verified. Run it before exam day, never during.
+- [x] **P0. A config change could silently half-apply on deploy.**
+  `docker-compose.yml` bind-mounts `./nginx/nginx.conf` as a **single file**, and single-file bind mounts bind the *inode*, not the path.
+  `git pull` replaces the inode, so a container started before the pull keeps serving the old config, and compose never recreates it because the service definition did not change.
+  Observed directly: the container reported `0` occurrences of `api_upstream` while the host file had `2`, and `nginx -s reload` died with `unknown "api_upstream" variable` - `conf.d/` (a *directory* mount, resolved by path) had updated while `nginx.conf` had not.
+  A fresh box was never affected, since its containers are created after the clone; this only bites the in-place re-run, which is what `ec2-bootstrap.sh` does on every boot.
+  **Fixed** by adding `docker compose up -d --force-recreate nginx` to `scripts/ec2-bootstrap.sh`.
+- [x] **P0. `scripts/update-prod-data.sh` was broken and failed silently in the dangerous direction.**
+  The documented one-command roster refresh aborted with `Error parsing parameter '--parameters': Expected: ',', received: '''` - the single quotes needed for `bash -c` collide with the AWS CLI's shorthand parser.
+  The S3 sync ran *first* and succeeded, so a roster edit looked applied while the live box was never re-seeded.
+  **Fixed** by passing the SSM command through a JSON file instead of inline shorthand.
+  Re-ran clean: `2 inserted, 3 updated`.
+- [ ] **P1. The admin dashboard is still slow on first load (~40-60s), and that is not yet explained.**
+  Ruled out by measurement, not by argument: **not** tunnel bandwidth (620 KB/s, 242 KB bundle in 0.39s), **not** OOM (`oom_kill 0`, peak 171 MB of a 384 MB limit), **not** CPU (0.34%), **not** a restart loop (zero die events over 40 minutes), and **not** slow queries (Streamlit answers `/_stcore/health` in 1.8ms on the box).
+  Fixed along the way: the engine ran on SQLAlchemy's defaults (`pool_size=5, max_overflow=10`) while Streamlit gives each browser session its own thread and the `scoped_session` is never `.remove()`d, so threads leak connections and later reruns sat on the 30s `pool_timeout`; telemetry and the file watcher were also dropped.
+  **Remaining suspect, unproven:** the SSM tunnel serializes concurrent connections (measured: 6 parallel = 2.1s vs 0.39s serial) and Streamlit's first load pulls several MB of assets the browser then caches, which fits "slow once, fine after".
+  **Proposed fix, not yet done:** gzip in front of Streamlit using the nginx already on the box, still loopback-only and still reached over the SSM tunnel - no new service, no internet exposure.
+  **Decision recorded:** putting the admin dashboard behind CloudFront was considered and **rejected** on security grounds.
+- [ ] **P1. Only one SSM port-forward session can hold instance port 8501 at a time.**
+  A second concurrent session fails with `Connection to destination port failed, check SSM Agent logs.` while the first is open, and this was observed being mistaken for the dashboard being down.
+  Worth a line in the ops runbook: if the tunnel refuses to connect, check for another open session before assuming the box is broken.
+- [x] **Roster now has 5 participants.** `Carol Diaz` (`sid_004`, adaptive/manual) and `Dan Okafor` (`sid_005`, free_choice/proactive) added and seeded live.
+  Verified on the deployed site, not by curl: entering Carol's token at `https://air.da-tu.ca/login` renders "Welcome, Carol Diaz - Ready to begin?".
+  **Tokens deliberately stay out of git** - `prod/data/` remains gitignored per the Section 0 decision that the answer key and participant tokens must never enter git history. The roster travels through the ops S3 bucket via `scripts/update-prod-data.sh`.
+
+---
+
 ## Next round, pick up here (added 2026-08-04)
 
 The three items below are the immediate next actions for the next session.

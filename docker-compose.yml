@@ -54,6 +54,11 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      # Admin dashboard. Published here rather than on the streamlit service so
+      # nginx can gzip and cache Streamlit's ~85 per-load module requests before
+      # they cross the SSM tunnel. Still 127.0.0.1 only, so the existing
+      # `aws ssm start-session ... portNumber=8501` command is unchanged.
+      - "127.0.0.1:8501:8501"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -103,8 +108,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:8501:8501"
+    # No published port: nginx now fronts this (see its 8501 mapping and the
+    # 8501 server block in nginx/available/app.conf). Reachable only from
+    # inside the compose network, which is a small tightening too - the
+    # dashboard talks straight to Postgres with none of the API's authz.
+    expose:
+      - "8501"
     mem_limit: 384m
     logging: *default-logging
 

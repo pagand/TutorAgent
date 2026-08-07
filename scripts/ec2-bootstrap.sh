@@ -120,6 +120,20 @@ fi
 
 log "docker compose up"
 docker compose up -d --build
+
+# nginx.conf is bind-mounted as a single *file*, and a single-file bind mount
+# binds the inode, not the path. `git pull` writes a new file and renames it
+# over the old one, so a container started before the pull keeps serving the
+# old config forever - and compose won't recreate nginx on its own, because
+# the service definition didn't change, only a file it mounts. On 2026-08-05
+# that produced a half-applied deploy: conf.d/app.conf (a *directory* mount,
+# resolved by path) picked up the new config while nginx.conf did not, and
+# `nginx -s reload` failed with `unknown "api_upstream" variable`. A fresh box
+# is unaffected, since its containers are created after the clone - this only
+# bites in-place updates, which is exactly what this script does on re-run.
+log "Recreating nginx so it picks up any config change from this run"
+docker compose up -d --force-recreate nginx
+
 docker image prune -f
 
 log "Waiting for api to report healthy"

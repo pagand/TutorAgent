@@ -215,7 +215,7 @@ async def test_admin_user_detail_action_type_filter(client, db_session, seeded_u
 async def test_timer_reset(client, db_session, seeded_user):
     await _insert_exam_session(db_session, seeded_user, exam_start_ms=1000, exam_duration_ms=600000,
                                 submitted_at=datetime.datetime.utcnow())
-    response = await client.post(f"/admin/user/{seeded_user}/timer/reset")
+    response = await client.post(f"/admin/user/{seeded_user}/timer/reset", headers={"Origin": "http://test"})
     assert response.status_code == 303
     row = (await db_session.execute(
         text("SELECT exam_start_ms, submitted_at FROM exam_sessions WHERE user_id=:uid"),
@@ -228,7 +228,8 @@ async def test_timer_reset(client, db_session, seeded_user):
 @pytest.mark.asyncio
 async def test_timer_extend(client, db_session, seeded_user):
     await _insert_exam_session(db_session, seeded_user, exam_start_ms=1000, exam_duration_ms=600000)
-    response = await client.post(f"/admin/user/{seeded_user}/timer/extend", data={"extra_minutes": "10"})
+    response = await client.post(f"/admin/user/{seeded_user}/timer/extend", data={"extra_minutes": "10"},
+                                  headers={"Origin": "http://test"})
     assert response.status_code == 303
     row = (await db_session.execute(
         text("SELECT exam_duration_ms FROM exam_sessions WHERE user_id=:uid"), {"uid": seeded_user}
@@ -240,7 +241,7 @@ async def test_timer_extend(client, db_session, seeded_user):
 async def test_session_lock_clear(client, db_session, seeded_user):
     await _insert_participant(db_session, seeded_user, status="active", active_session_id="dev-123",
                                last_seen_at=datetime.datetime.utcnow())
-    response = await client.post(f"/admin/user/{seeded_user}/session-lock/clear")
+    response = await client.post(f"/admin/user/{seeded_user}/session-lock/clear", headers={"Origin": "http://test"})
     assert response.status_code == 303
     row = (await db_session.execute(
         text("SELECT active_session_id, last_seen_at FROM participants WHERE token=:uid"), {"uid": seeded_user}
@@ -255,7 +256,8 @@ async def test_session_lock_clear(client, db_session, seeded_user):
 async def test_reset_progress_rejects_mismatched_confirm(client, db_session, seeded_user):
     await _insert_interaction(db_session, seeded_user)
     response = await client.post(
-        f"/admin/user/{seeded_user}/progress/reset", data={"confirm_token": "wrong-token"}
+        f"/admin/user/{seeded_user}/progress/reset", data={"confirm_token": "wrong-token"},
+        headers={"Origin": "http://test"},
     )
     assert response.status_code == 400
     count = (await db_session.execute(
@@ -268,7 +270,8 @@ async def test_reset_progress_rejects_mismatched_confirm(client, db_session, see
 async def test_reset_progress_succeeds_on_match(client, db_session, seeded_user):
     await _insert_interaction(db_session, seeded_user)
     response = await client.post(
-        f"/admin/user/{seeded_user}/progress/reset", data={"confirm_token": seeded_user}
+        f"/admin/user/{seeded_user}/progress/reset", data={"confirm_token": seeded_user},
+        headers={"Origin": "http://test"},
     )
     assert response.status_code == 303
     count = (await db_session.execute(
@@ -280,7 +283,8 @@ async def test_reset_progress_succeeds_on_match(client, db_session, seeded_user)
 @pytest.mark.asyncio
 async def test_delete_user_rejects_mismatched_confirm(client, db_session, seeded_user):
     response = await client.post(
-        f"/admin/user/{seeded_user}/delete", data={"confirm_token": "wrong-token"}
+        f"/admin/user/{seeded_user}/delete", data={"confirm_token": "wrong-token"},
+        headers={"Origin": "http://test"},
     )
     assert response.status_code == 400
     exists = (await db_session.execute(
@@ -292,7 +296,8 @@ async def test_delete_user_rejects_mismatched_confirm(client, db_session, seeded
 @pytest.mark.asyncio
 async def test_delete_user_succeeds_on_match(client, db_session, seeded_user):
     response = await client.post(
-        f"/admin/user/{seeded_user}/delete", data={"confirm_token": seeded_user}
+        f"/admin/user/{seeded_user}/delete", data={"confirm_token": seeded_user},
+        headers={"Origin": "http://test"},
     )
     assert response.status_code == 303
     exists = (await db_session.execute(
@@ -318,7 +323,8 @@ async def test_extend_all_exam_timers_skips_submitted(client, db_session):
     await _insert_exam_session(db_session, "submitted-user", exam_start_ms=1000, exam_duration_ms=600000,
                                 submitted_at=datetime.datetime.utcnow())
 
-    response = await client.post("/admin/exam/extend-all", data={"extra_minutes": "5"})
+    response = await client.post("/admin/exam/extend-all", data={"extra_minutes": "5"},
+                                  headers={"Origin": "http://test"})
     assert response.status_code == 303
 
     active_row = (await db_session.execute(
@@ -329,6 +335,70 @@ async def test_extend_all_exam_timers_skips_submitted(client, db_session):
     )).mappings().first()
     assert active_row["exam_duration_ms"] == 600000 + 5 * 60 * 1000
     assert submitted_row["exam_duration_ms"] == 600000
+
+
+# --- CSRF / same-origin protection ---
+
+@pytest.mark.asyncio
+async def test_csrf_matching_origin_succeeds(client, db_session):
+    await _insert_user(db_session, "csrf-ok-user")
+    await _insert_exam_session(db_session, "csrf-ok-user", exam_start_ms=1000, exam_duration_ms=600000)
+    response = await client.post("/admin/exam/extend-all", data={"extra_minutes": "5"},
+                                  headers={"Origin": "http://test"})
+    assert response.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_csrf_no_origin_no_referer_succeeds(client, db_session):
+    """The documented ops-script path: a non-browser client sends neither header."""
+    await _insert_user(db_session, "csrf-noheader-user")
+    await _insert_exam_session(db_session, "csrf-noheader-user", exam_start_ms=1000, exam_duration_ms=600000)
+    response = await client.post("/admin/exam/extend-all", data={"extra_minutes": "5"})
+    assert response.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_csrf_foreign_origin_rejects_extend_all(client, db_session):
+    await _insert_user(db_session, "csrf-victim-user")
+    await _insert_exam_session(db_session, "csrf-victim-user", exam_start_ms=1000, exam_duration_ms=600000)
+    response = await client.post("/admin/exam/extend-all", data={"extra_minutes": "5"},
+                                  headers={"Origin": "http://evil.example"})
+    assert response.status_code == 403
+    row = (await db_session.execute(
+        text("SELECT exam_duration_ms FROM exam_sessions WHERE user_id='csrf-victim-user'")
+    )).mappings().first()
+    assert row["exam_duration_ms"] == 600000
+
+
+@pytest.mark.asyncio
+async def test_csrf_foreign_origin_rejects_delete_user(client, db_session, seeded_user):
+    response = await client.post(
+        f"/admin/user/{seeded_user}/delete", data={"confirm_token": seeded_user},
+        headers={"Origin": "http://evil.example"},
+    )
+    assert response.status_code == 403
+    exists = (await db_session.execute(
+        text("SELECT COUNT(*) FROM users WHERE id=:uid"), {"uid": seeded_user}
+    )).scalar_one()
+    assert exists == 1
+
+
+@pytest.mark.asyncio
+async def test_csrf_foreign_referer_rejects_timer_reset(client, db_session, seeded_user):
+    """Referer is checked when Origin is absent (older browsers / some POSTs omit Origin)."""
+    await _insert_exam_session(db_session, seeded_user, exam_start_ms=1000, exam_duration_ms=600000,
+                                submitted_at=datetime.datetime.utcnow())
+    response = await client.post(
+        f"/admin/user/{seeded_user}/timer/reset",
+        headers={"Referer": "http://evil.example/attack.html"},
+    )
+    assert response.status_code == 403
+    row = (await db_session.execute(
+        text("SELECT exam_start_ms, submitted_at FROM exam_sessions WHERE user_id=:uid"),
+        {"uid": seeded_user},
+    )).mappings().first()
+    assert row["exam_start_ms"] == 1000
+    assert row["submitted_at"] is not None
 
 
 # --- Export ---

@@ -26,7 +26,7 @@ from app.endpoints.session import router as session_router
 from app.endpoints.chat import router as chat_router
 from app.endpoints.action_log import router as action_log_router
 from app.endpoints.participants import router as participants_router
-from app.endpoints.admin_ui import router as admin_ui_router
+from app.endpoints.admin_ui import router as admin_ui_router, CSRFOriginMismatch, render_csrf_rejected_page
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized
 from app.services.question_service import question_service
@@ -167,6 +167,12 @@ app.include_router(chat_router)
 app.include_router(action_log_router)
 app.include_router(participants_router)
 app.include_router(admin_ui_router)
+
+
+@app.exception_handler(CSRFOriginMismatch)
+async def _handle_csrf_origin_mismatch(request: Request, exc: CSRFOriginMismatch):
+    return render_csrf_rejected_page()
+
 
 # --- Root Endpoint ---
 @app.get("/")

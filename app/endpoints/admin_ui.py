@@ -13,7 +13,7 @@ import datetime
 import html
 import io
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -23,7 +23,44 @@ from app.admin import queries
 from app.utils.config import settings
 from app.utils.db import get_db
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+
+class CSRFOriginMismatch(Exception):
+    """Raised by _verify_same_origin; app.main registers the HTML handler for it."""
+
+
+def render_csrf_rejected_page() -> HTMLResponse:
+    body = (
+        '<p class="error">Request rejected: its Origin/Referer did not match this site. '
+        'A cross-site page cannot use this form to change admin data.</p>'
+        '<p><a href="/admin/">Back to overview</a></p>'
+    )
+    return _page("Request rejected", body, status_code=403)
+
+
+# CSRF protection: the SSM tunnel that puts this admin UI on 127.0.0.1:8501
+# makes that origin reachable from ANY tab the admin's browser has open, not
+# just this app - so any web page the admin happens to have open while the
+# tunnel is up could silently POST a form to e.g. /admin/exam/extend-all or
+# /admin/user/X/delete. This UI is stateless (no cookies, no session, no CSRF
+# token) by design, so instead we require that mutating requests carry an
+# Origin or Referer that matches this site's own Host - this is the same
+# protection the retired Streamlit dashboard's XSRF setting gave us. A request
+# with neither header is not a browser cross-site POST (browsers always send
+# Origin on a cross-origin form submission); it's a non-browser client such as
+# curl from inside an SSM session, which already required network access to
+# the box and gains nothing from being blocked here, so it is allowed through
+# to keep ops scripts working.
+async def _verify_same_origin(request: Request) -> None:
+    if request.method != "POST":
+        return
+    header_value = request.headers.get("origin") or request.headers.get("referer")
+    if header_value is None:
+        return
+    if urlparse(header_value).netloc != request.headers.get("host", ""):
+        raise CSRFOriginMismatch()
+
+
+router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(_verify_same_origin)])
 
 HINT_STYLES = ["adaptive", "Conceptual", "Analogy", "Socratic Question", "Worked Example"]
 
@@ -76,9 +113,12 @@ body {
   font-size: 14px;
   line-height: 1.45;
 }
-.topbar { background: var(--slate-900); color: white; padding: 12px 24px; }
+.topbar { background: var(--slate-900); color: white; }
+.topbar-inner { max-width: 1100px; margin: 0 auto; padding: 12px 24px; }
 .topbar .brand { color: white; text-decoration: none; font-weight: bold; letter-spacing: 0.02em; }
 main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+a { color: var(--indigo-600); text-decoration: none; }
+a:hover { text-decoration: underline; }
 h1, h2, h3, h4 { color: var(--slate-900); font-family: Georgia, serif; }
 h1 { font-size: 22px; border-bottom: 2px solid var(--slate-900); padding-bottom: 8px; }
 h2 { font-size: 17px; margin-top: 32px; border-bottom: 1px solid var(--slate-200); padding-bottom: 4px; }
@@ -100,7 +140,7 @@ table.data-table { border-collapse: collapse; width: 100%; font-size: 12px; back
 table.data-table th, table.data-table td { border: 1px solid var(--slate-200); padding: 6px 8px; text-align: left; vertical-align: top; }
 table.data-table th { background: var(--slate-900); color: white; font-weight: normal; }
 table.data-table tr:nth-child(even) { background: var(--slate-50); }
-.chart { width: 100%; height: auto; margin: 12px 0; }
+.chart { width: 100%; max-width: 640px; height: auto; margin: 12px 0; }
 .chart-bar { fill: var(--indigo-600); }
 .chart-label { font-size: 11px; fill: var(--slate-700); }
 .chart-value { font-size: 11px; fill: var(--slate-500); }
@@ -144,7 +184,7 @@ def _page(title: str, body: str, refresh: int | None = None, status_code: int = 
 <style>{_STYLE}</style>
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/admin/">DaTu AIR Admin</a></header>
+<header class="topbar"><div class="topbar-inner"><a class="brand" href="/admin/">DaTu AIR Admin</a></div></header>
 <main>
 {body}
 </main>
@@ -266,11 +306,25 @@ def _line_chart(trajectory: list[dict], width: int = 640, height: int = 240) -> 
     return f'<div class="legend">{legend}</div>{svg}'
 
 
+class _RawHTML(str):
+    """Marker: _simple_table renders this cell's content as-is, skipping html.escape."""
+
+
+def _correctness_cell(is_correct) -> _RawHTML:
+    if is_correct is None:
+        return _RawHTML("-")
+    cls = "correct" if is_correct else "wrong"
+    return _RawHTML(f'<span class="{cls}">{"Yes" if is_correct else "No"}</span>')
+
+
 def _simple_table(headers: list[str], rows: list[list]) -> str:
     thead = "".join(f"<th>{html.escape(str(h))}</th>" for h in headers)
     trs = []
     for row in rows:
-        tds = "".join(f"<td>{html.escape('' if v is None else str(v))}</td>" for v in row)
+        tds = "".join(
+            f"<td>{v if isinstance(v, _RawHTML) else html.escape('' if v is None else str(v))}</td>"
+            for v in row
+        )
         trs.append(f"<tr>{tds}</tr>")
     return f'<table class="data-table"><thead><tr>{thead}</tr></thead><tbody>{"".join(trs)}</tbody></table>'
 
@@ -558,7 +612,7 @@ async def admin_user_detail(user_id: str, db: AsyncSession = Depends(get_db),
             ["timestamp", "question_id", "question", "user_answer", "is_correct", "skill",
              "hint_shown", "hint_style_used", "user_feedback_rating", "bkt_change"],
             [[_fmt_ts(r["timestamp"]), r["question_id"], _truncate(r.get("question")),
-              r["user_answer"], _yn(r["is_correct"]), r["skill"], _yn(r["hint_shown"]),
+              r["user_answer"], _correctness_cell(r["is_correct"]), r["skill"], _yn(r["hint_shown"]),
               r["hint_style_used"], r["user_feedback_rating"],
               None if r["bkt_change"] is None else f"{r['bkt_change']:.4f}"]
              for r in history],

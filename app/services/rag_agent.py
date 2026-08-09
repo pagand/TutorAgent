@@ -11,10 +11,12 @@ from langchain_core.runnables import RunnablePassthrough, RunnableParallel, Runn
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.vectorstores import VectorStoreRetriever
 
+from app.services import metrics
 from app.utils.config import settings
 from app.utils.logger import logger
 import threading
 import os
+import time
 
 from operator import itemgetter
 from app.services.prompt_library import PROMPT_LIBRARY
@@ -243,8 +245,12 @@ async def get_rag_hint(question_id: int, user_answer: str | None, user_id: str, 
             "user_history": user_history,
         }
         
+        # Retrieval and the Gemini call are fused inside this one chain, so
+        # unlike chat.py they cannot be timed apart. Recorded as one series.
+        _t0 = time.perf_counter()
         result = await rag_chain.ainvoke(input_data)
-        
+        metrics.record_llm("hint chain", (time.perf_counter() - _t0) * 1000.0)
+
         final_prompt_str = result['final_prompt'].to_string()
         # Length only, not the full text - the prompt embeds per-user history
         # and BKT mastery, and LOG_LEVEL=DEBUG should be verbose, not a leak.

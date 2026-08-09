@@ -1,10 +1,13 @@
 # app/endpoints/chat.py
+import time
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.models.user import User, ChatLog
+from app.services import metrics
 from app.services.question_service import question_service
 import app.services.rag_agent as rag_agent
 from app.services.rag_agent import get_user_history_summary, format_docs
@@ -129,12 +132,20 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
 
     try:
         query = f"Question: {question_obj.question}\nStudent message: {request.message}"
+        # Timed separately from the LLM call below: langchain_chroma has no native
+        # async, so this falls through to run_in_executor with a synchronous Google
+        # embedding HTTP call inside each of its 6 slots. That is one of the two
+        # documented single-worker throughput suspects (PRELAUNCH_CHECKLIST.md
+        # section C), so it needs its own number, not one merged with Gemini's.
+        _t0 = time.perf_counter()
         docs = await rag_agent._retriever.ainvoke(query)
+        metrics.record_llm("chat retrieval", (time.perf_counter() - _t0) * 1000.0)
         context = format_docs(docs)
 
         options_text = "\n".join(f"- {opt}" for opt in question_obj.options) if question_obj.options else "Open-ended question"
 
         chain = CHAT_PROMPT_TEMPLATE | rag_agent._llm_client | StrOutputParser()
+        _t0 = time.perf_counter()
         response_text = await chain.ainvoke({
             "question": question_obj.question,
             "options": options_text,
@@ -144,6 +155,7 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
             "chat_history": chat_history_text,
             "user_message": request.message,
         })
+        metrics.record_llm("chat LLM", (time.perf_counter() - _t0) * 1000.0)
 
         # Re-acquire a connection only for the write
         log_entry = ChatLog(

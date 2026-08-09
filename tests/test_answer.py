@@ -175,6 +175,60 @@ async def test_already_correct_question_rejects_further_submissions(client, db_s
     assert len(logs) == 1  # no further row inserted by the rejected attempts
 
 
+async def test_void_question_attempts_restores_locked_question(client, db_session):
+    """Regression test for the admin 'Unlock question' repair (CLAUDE.md Phase 3,
+    PRELAUNCH_CHECKLIST.md section 0). Voiding a locked question's attempts must
+    let the student submit again, and the voided rows must remain in the DB
+    (voided, not deleted) so the CSV export and research record still show them."""
+    from app.admin.queries import void_question_attempts
+
+    user_id = "ans_void_01"
+    await _create_user(client, user_id)
+
+    await client.post("/answer/", json=_payload(user_id, 1, "key-1", user_answer="1"))
+    await client.post("/answer/", json=_payload(user_id, 1, "key-2", user_answer="3"))
+    blocked = await client.post("/answer/", json=_payload(user_id, 1, "key-3", user_answer="4"))
+    assert blocked.status_code == 409
+
+    voided_count = await void_question_attempts(db_session, user_id, 1)
+    assert voided_count == 2
+
+    # expire_all forces a fresh read of the rows the void's raw-SQL UPDATE just
+    # changed - in production each request gets its own session, so this mirrors
+    # that rather than relying on this test's single long-lived session's cache.
+    db_session.expire_all()
+    result = await db_session.execute(select(InteractionLog).filter_by(user_id=user_id, question_id=1))
+    logs = result.scalars().all()
+    assert len(logs) == 2  # rows still exist, not deleted
+    assert all(log.voided_at is not None for log in logs)
+
+    accepted = await client.post("/answer/", json=_payload(user_id, 1, "key-4", user_answer="2"))
+    assert accepted.status_code == 200
+    assert accepted.json()["correct"] is True
+
+
+async def test_voided_rows_excluded_from_profile_payload(client, db_session):
+    """The admin 'Unlock question' repair must be reflected in the profile
+    payload the frontend rebuilds question state from (app/state_manager.py),
+    not just in the attempt-cap check (app/endpoints/answer.py) - otherwise the
+    server would accept a new attempt while the student's UI stayed locked."""
+    from app.admin.queries import void_question_attempts
+    from app.state_manager import get_user_profile_with_session
+
+    user_id = "ans_void_profile_01"
+    await _create_user(client, user_id)
+
+    await client.post("/answer/", json=_payload(user_id, 1, "key-1", user_answer="1"))
+    await client.post("/answer/", json=_payload(user_id, 1, "key-2", user_answer="3"))
+
+    await void_question_attempts(db_session, user_id, 1)
+    db_session.expire_all()
+
+    profile = await get_user_profile_with_session(db_session, user_id)
+    assert profile["interaction_history"] == []
+    assert profile["completed_answers"] == {}
+
+
 async def test_unknown_question_still_404s(client, monkeypatch):
     user_id = "ans_404_01"
     await _create_user(client, user_id)

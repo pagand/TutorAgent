@@ -120,10 +120,14 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
     # here without incorrectly locking unrelated questions). Once answered
     # correctly, or once 2 real (non-skip) attempts exist with none correct,
     # the question is locked read-only and no further submission is accepted.
+    # voided_at IS NULL: an admin "Unlock question" repair stamps voided_at on
+    # this question's rows rather than deleting them, so they stay in the export
+    # but stop counting toward the cap.
     prior_attempts_result = await db.execute(
         select(InteractionLog)
         .filter_by(user_id=user_id, question_id=q_id)
         .where(InteractionLog.user_answer.isnot(None))
+        .where(InteractionLog.voided_at.is_(None))
     )
     prior_attempts = prior_attempts_result.scalars().all()
     already_correct = any(log.is_correct for log in prior_attempts)

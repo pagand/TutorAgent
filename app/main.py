@@ -1,6 +1,9 @@
 # FastAPI entry point; includes API orchestration and async event loop
 # app/main.py
+import asyncio
 import hmac
+import time
+import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -27,11 +30,12 @@ from app.endpoints.chat import router as chat_router
 from app.endpoints.action_log import router as action_log_router
 from app.endpoints.participants import router as participants_router
 from app.endpoints.admin_ui import router as admin_ui_router, CSRFOriginMismatch, render_csrf_rejected_page
+from app.services import metrics
 from app.services.pdf_ingestion import ingest_pdf
 from app.services.rag_agent import ensure_rag_components_initialized
 from app.services.question_service import question_service
 from app.utils.config import settings
-from app.utils.logger import logger
+from app.utils.logger import logger, request_id_var
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -81,9 +85,15 @@ async def lifespan(app: FastAPI):
         logger.critical(f"Fatal error during RAG initialization: {e}")
         sys.exit(1) # Exit if RAG fails, as the app is not functional
     
+    # Event-loop lag sampler for the admin Health tab. One task, one sleep per
+    # second, no I/O - see app/services/metrics.py for why this particular
+    # signal is the one worth having on a single-worker box.
+    lag_task = asyncio.create_task(metrics.sample_loop_lag())
+
     logger.warning("Startup complete.")
     yield
     # On shutdown
+    lag_task.cancel()
     logger.info("AI Tutor API shutting down...")
 
 # --- FastAPI App Initialization ---
@@ -153,6 +163,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Request logging and metrics ---
+# Registered LAST, so it ends up outermost and sees every response including the
+# api-key middleware's 401s. This does not disturb the ordering invariant
+# documented above (CORS must stay outermost of the api-key middleware) - adding
+# a layer outside CORS leaves that relationship intact.
+def _route_template(request: Request) -> str:
+    """The matched route's path template, never the concrete URL.
+
+    "/admin/user/{user_id}" rather than "/admin/user/3XMFN8TA", so the metrics
+    dict is bounded by the number of routes instead of growing with every user
+    id. Anything that matched no route at all collapses into one bucket, so a
+    scanner spraying random paths cannot grow it either - metrics.py's other
+    structures are all maxlen-bounded, and this dict is the one that would
+    otherwise not be.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if not path:
+        return f"{request.method} <unmatched>"
+    return f"{request.method} {path}"
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    token = request_id_var.set(request_id)
+    started = time.perf_counter()
+    metrics.in_flight += 1
+    status = 500
+    exc_detail = None
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception as exc:
+        exc_detail = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        metrics.in_flight -= 1
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        # Resolved here rather than before call_next: scope["route"] is only
+        # populated once routing has run, and scope is mutated in place.
+        route = _route_template(request)
+        metrics.record_request(route, status, duration_ms)
+        if exc_detail is not None:
+            metrics.record_error(route, 500, request_id, exc_detail)
+        elif status >= 500:
+            metrics.record_error(route, status, request_id, f"HTTP {status}")
+        logger.info(
+            "request",
+            extra={"fields": {
+                "method": request.method,
+                "path": request.url.path,
+                "route": route,
+                "status": status,
+                "duration_ms": round(duration_ms, 1),
+            }},
+        )
+        request_id_var.reset(token)
 
 # --- API Routers ---
 app.include_router(questions_router.router, prefix="/questions", tags=["Questions"])

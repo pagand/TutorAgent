@@ -95,7 +95,15 @@ async def get_user_profile_with_session(session: AsyncSession, user_id: str) -> 
         for sm in user.skill_mastery
     ]
     
-    sorted_logs = sorted(user.interaction_logs, key=lambda x: x.timestamp)
+    # Voided rows are dropped here, not just in answer.py's cap. This payload is
+    # what the frontend rebuilds question state from (CLAUDE.md, Session
+    # Recovery), so leaving them in would make the admin "Unlock question" repair
+    # purely cosmetic: the server would accept a new attempt while the student's
+    # UI still rendered the question as locked and refused to submit one.
+    sorted_logs = sorted(
+        (log for log in user.interaction_logs if log.voided_at is None),
+        key=lambda x: x.timestamp,
+    )
     interaction_log_data = [
         {
             "timestamp": log.timestamp.isoformat(),

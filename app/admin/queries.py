@@ -7,6 +7,7 @@ this module never touches pandas and never blocks the event loop.
 """
 import json
 import time
+from datetime import datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -346,7 +347,65 @@ async def get_user_kpis(db: AsyncSession, user_id: str) -> dict:
     }
 
 
+async def get_question_states(db: AsyncSession, user_id: str) -> list[dict]:
+    """One row per question this user has touched, with whether it is currently
+    locked and whether an admin has already voided attempts on it.
+
+    Feeds the "Unlock question" repair picker. `locked` mirrors the server-side
+    rule in app/endpoints/answer.py exactly - answered correctly, or 2 real
+    (non-skip, non-voided) attempts with none correct - so the picker cannot
+    offer to unlock something that is not actually locked.
+    """
+    query = text("""
+        SELECT question_id,
+               COUNT(*) FILTER (WHERE user_answer IS NOT NULL AND voided_at IS NULL) AS live_attempts,
+               COUNT(*) FILTER (WHERE is_correct AND voided_at IS NULL)              AS live_correct,
+               COUNT(*) FILTER (WHERE voided_at IS NOT NULL)                         AS voided_rows
+        FROM interaction_logs
+        WHERE user_id = :user_id
+        GROUP BY question_id
+        ORDER BY question_id
+    """)
+    result = await db.execute(query, {"user_id": user_id})
+    rows = []
+    for r in result.mappings().all():
+        row = dict(r)
+        row["locked"] = bool(row["live_correct"]) or row["live_attempts"] >= 2
+        row["reason"] = (
+            "answered correctly" if row["live_correct"]
+            else "2 incorrect attempts" if row["live_attempts"] >= 2
+            else "open"
+        )
+        question = question_service.get_question_by_id(row["question_id"])
+        row["question"] = question.question if question else None
+        rows.append(row)
+    return rows
+
+
 # --- Admin writes ---
+
+async def void_question_attempts(db: AsyncSession, user_id: str, question_id: int) -> int:
+    """Stamp voided_at on one question's attempts so the student can retry it.
+
+    Deliberately an UPDATE, not a DELETE. The rows stay queryable and stay in the
+    CSV export, so the research record still shows what happened and that an
+    admin intervened; they simply stop counting toward the attempt cap and stop
+    appearing in the history the frontend rebuilds question state from.
+
+    Already-voided rows are left alone, so re-running this cannot re-stamp an
+    earlier repair with a later timestamp.
+    """
+    result = await db.execute(
+        text("""
+            UPDATE interaction_logs
+            SET voided_at = :now
+            WHERE user_id = :user_id AND question_id = :question_id AND voided_at IS NULL
+        """),
+        {"now": datetime.utcnow(), "user_id": user_id, "question_id": question_id},
+    )
+    await db.commit()
+    return result.rowcount or 0
+
 
 async def reset_user_progress(db: AsyncSession, user_id: str) -> None:
     await db.execute(text("DELETE FROM exam_sessions WHERE user_id = :user_id"), {"user_id": user_id})

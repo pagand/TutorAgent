@@ -30,6 +30,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from app.admin import queries as admin_queries
+from app.services.llm_quota import CAP_GLOBAL_KEY, CAP_USER_KEY, get_cap_overrides, get_effective_caps
 from app.utils.config import settings
 
 SQLITE_SUPPORTS_JSON_ARROW = sqlite3.sqlite_version_info >= (3, 38, 0)
@@ -146,7 +147,9 @@ def stub_llm_usage(monkeypatch):
 @_SKIP_JSON_ARROW
 @pytest.mark.asyncio
 async def test_admin_home_empty(client, stub_llm_usage):
-    response = await client.get("/admin/")
+    # The roster (and its "No users yet" empty state) lives on /admin/students
+    # now, not the Exam tab - see the _TABS reordering in app/endpoints/admin_ui.py.
+    response = await client.get("/admin/students")
     assert response.status_code == 200
     assert "No users yet" in response.text
 
@@ -155,9 +158,8 @@ async def test_admin_home_empty(client, stub_llm_usage):
 @pytest.mark.asyncio
 async def test_admin_home_with_users(client, db_session, seeded_user, stub_llm_usage):
     await _insert_interaction(db_session, seeded_user)
-    response = await client.get("/admin/")
+    response = await client.get("/admin/students")
     assert response.status_code == 200
-    assert "System-Wide Analytics" in response.text
     assert seeded_user in response.text
 
 
@@ -179,7 +181,10 @@ async def test_admin_user_detail_ok(client, db_session, seeded_user):
     response = await client.get(f"/admin/user/{seeded_user}")
     assert response.status_code == 200
     assert seeded_user in response.text
-    assert "Key Performance Indicators" in response.text
+    # Manage is the default tab; KPIs live under Overview now.
+    overview = await client.get(f"/admin/user/{seeded_user}?tab=overview")
+    assert overview.status_code == 200
+    assert "Key Performance Indicators" in overview.text
 
 
 @pytest.mark.asyncio
@@ -199,11 +204,12 @@ async def test_admin_user_detail_action_type_filter(client, db_session, seeded_u
     await _insert_action_log(db_session, seeded_user, action_type="question_view")
     await _insert_action_log(db_session, seeded_user, action_type="hint_request")
 
-    unfiltered = await client.get(f"/admin/user/{seeded_user}")
+    # Action Log moved to its own tab, so both requests must ask for it.
+    unfiltered = await client.get(f"/admin/user/{seeded_user}?tab=actions")
     assert "<td>question_view</td>" in unfiltered.text
     assert "<td>hint_request</td>" in unfiltered.text
 
-    filtered = await client.get(f"/admin/user/{seeded_user}?action_type=hint_request")
+    filtered = await client.get(f"/admin/user/{seeded_user}?tab=actions&action_type=hint_request")
     assert filtered.status_code == 200
     assert "<td>hint_request</td>" in filtered.text
     assert "<td>question_view</td>" not in filtered.text
@@ -447,6 +453,129 @@ async def test_update_prefs_not_run_on_sqlite():
 @pytest.mark.asyncio
 async def test_llm_usage_not_run_on_sqlite():
     pass
+
+
+# --- Top-level tabs ---
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_admin_top_level_tabs_render(client, stub_llm_usage):
+    for path in ["/admin/", "/admin/students", "/admin/research", "/admin/health", "/admin/export"]:
+        response = await client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_admin_health_requires_no_database(client):
+    """The Health tab takes no db dependency at all, on purpose - it must work
+    when the DB is the thing broken. No fixture seeds anything here, and the
+    stub_llm_usage fixture (which patches around a DB query) is deliberately
+    not used, since this route never touches the DB."""
+    response = await client.get("/admin/health")
+    assert response.status_code == 200
+    assert "Server Health" in response.text
+
+
+# --- Per-student tabs ---
+
+@pytest.mark.asyncio
+async def test_admin_user_detail_all_tabs_return_200(client, db_session, seeded_user):
+    await _insert_interaction(db_session, seeded_user)
+    for tab in ["manage", "overview", "answers", "hints", "chat", "actions", "danger"]:
+        response = await client.get(f"/admin/user/{seeded_user}?tab={tab}")
+        assert response.status_code == 200, f"tab={tab} returned {response.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_admin_user_detail_unknown_tab_falls_back_to_manage(client, db_session, seeded_user):
+    response = await client.get(f"/admin/user/{seeded_user}?tab=bogus")
+    assert response.status_code == 200
+    assert "Timer Management" in response.text  # Manage-only heading
+
+
+@pytest.mark.asyncio
+async def test_admin_user_detail_tab_scoping_overview_kpis(client, db_session, seeded_user):
+    """Content belonging to one tab must be absent from another - without this,
+    a regression that renders everything on every tab would pass every other test."""
+    await _insert_interaction(db_session, seeded_user)
+    overview = await client.get(f"/admin/user/{seeded_user}?tab=overview")
+    manage = await client.get(f"/admin/user/{seeded_user}?tab=manage")
+    assert "Key Performance Indicators" in overview.text
+    assert "Key Performance Indicators" not in manage.text
+
+
+@pytest.mark.asyncio
+async def test_admin_user_detail_tab_scoping_danger_zone(client, db_session, seeded_user):
+    danger = await client.get(f"/admin/user/{seeded_user}?tab=danger")
+    manage = await client.get(f"/admin/user/{seeded_user}?tab=manage")
+    assert "Delete User" in danger.text
+    assert "Delete User" not in manage.text
+
+
+# --- LLM cap override round trip ---
+
+@pytest.mark.asyncio
+async def test_llm_cap_override_round_trip(client, db_session):
+    response = await client.post(
+        "/admin/settings/llm-caps",
+        data={"global_cap": "500", "user_cap": "20"},
+        headers={"Origin": "http://test"},
+    )
+    assert response.status_code == 303
+    global_cap, user_cap = await get_effective_caps(db_session)
+    assert global_cap == 500
+    assert user_cap == 20
+
+    clear_response = await client.post("/admin/settings/llm-caps/clear", headers={"Origin": "http://test"})
+    assert clear_response.status_code == 303
+    global_cap, user_cap = await get_effective_caps(db_session)
+    assert global_cap == settings.llm_max_calls_per_day
+    assert user_cap == settings.llm_max_calls_per_user_per_day
+
+
+@pytest.mark.asyncio
+async def test_get_cap_overrides_ignores_malformed_value(client, db_session):
+    """A malformed value must be ignored with a warning rather than raised - this
+    runs on every hint and chat request via reserve_llm_call."""
+    await db_session.execute(
+        text("INSERT INTO admin_settings (key, value) VALUES (:key, :value)"),
+        {"key": CAP_GLOBAL_KEY, "value": "not-an-int"},
+    )
+    await db_session.commit()
+    overrides = await get_cap_overrides(db_session)
+    assert CAP_GLOBAL_KEY not in overrides
+
+
+# --- CSRF coverage for the newer POST routes ---
+
+@pytest.mark.asyncio
+async def test_csrf_foreign_origin_rejects_llm_caps(client, db_session):
+    response = await client.post(
+        "/admin/settings/llm-caps",
+        data={"global_cap": "999", "user_cap": "999"},
+        headers={"Origin": "http://evil.example"},
+    )
+    assert response.status_code == 403
+    global_cap, user_cap = await get_effective_caps(db_session)
+    assert global_cap == settings.llm_max_calls_per_day
+    assert user_cap == settings.llm_max_calls_per_user_per_day
+
+
+@pytest.mark.asyncio
+async def test_csrf_foreign_origin_rejects_question_unlock(client, db_session, seeded_user):
+    await _insert_interaction(db_session, seeded_user, question_id=5, is_correct=False)
+    await _insert_interaction(db_session, seeded_user, question_id=5, is_correct=False)
+    response = await client.post(
+        f"/admin/user/{seeded_user}/question/unlock",
+        data={"question_id": "5"},
+        headers={"Origin": "http://evil.example"},
+    )
+    assert response.status_code == 403
+    row = (await db_session.execute(
+        text("SELECT voided_at FROM interaction_logs WHERE user_id=:uid AND question_id=5"),
+        {"uid": seeded_user},
+    )).mappings().first()
+    assert row["voided_at"] is None
 
 
 # --- API key exemption scoping ---

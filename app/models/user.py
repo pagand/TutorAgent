@@ -76,6 +76,15 @@ class InteractionLog(Base):
     # Performance metrics
     bkt_change = Column(Float, nullable=True)
 
+    # Set by the admin UI's "Unlock question" repair. A voided row still exists
+    # and is still exported for research - it is only excluded from the two
+    # places that decide whether a question is locked: the server-side attempt
+    # cap (app/endpoints/answer.py) and the history the frontend rebuilds
+    # question state from (app/state_manager.py). Voiding rather than deleting
+    # is deliberate: the only per-student remedies before this wiped the whole
+    # interaction history, which made one mis-click mid-exam unrecoverable.
+    voided_at = Column(DateTime, nullable=True)
+
     # Relationship
     user = relationship("User", back_populates="interaction_logs")
 
@@ -120,14 +129,28 @@ class Participant(Base):
 class UserActionLog(Base):
     """
     Fine-grained event log for every user interaction.
-    action_type values:
-        session_start, session_complete, timer_expired,
+
+    The 19 action_type values the frontend actually emits, verified by grepping
+    frontend/src for action_type:
+        session_start, session_submit, session_expire, timer_warning,
         question_view, question_navigate,
-        choice_select, answer_submit, answer_skip,
+        choice_select, answer_focus, answer_submit, answer_skip,
         hint_request, hint_display, hint_feedback,
-        intervention_offered, intervention_accepted, intervention_rejected,
-        chat_message_sent, chat_response_received,
+        intervention_offer, intervention_accept, intervention_reject,
+        chat_send,
         profile_view, preference_update
+
+    An earlier version of this docstring listed names the app has never emitted
+    (session_complete, timer_expired, intervention_offered/accepted/rejected,
+    chat_message_sent, chat_response_received) and omitted answer_focus and
+    timer_warning, so analysis queries written straight from it returned empty
+    result sets with no indication why.
+
+    The validation whitelist in app/endpoints/action_log.py is a different thing
+    and is correct as it stands: it holds these canonical names AND keeps the
+    old ones as explicit legacy aliases, so do not "fix" it to match this list.
+    The tutor's chat reply is in chat_logs, not here.
+
     action_data: flexible JSON payload specific to each action_type.
     """
     __tablename__ = "user_action_logs"
@@ -187,3 +210,20 @@ class LlmUsageLog(Base):
         Index("ix_llm_usage_log_user_created", "user_id", "created_at"),
         Index("ix_llm_usage_log_created", "created_at"),
     )
+
+
+class AdminSetting(Base):
+    """Key/value overrides an admin can change live, without an SSM session and
+    an api restart.
+
+    Only the two LLM spend caps use this today. It is a table rather than
+    in-process state on purpose: process state would silently revert on
+    `docker compose restart api`, and a raised cap quietly dropping back
+    mid-exam would re-throttle students with nobody noticing. The admin Health
+    and Exam tabs' in-memory counters make the opposite tradeoff, for the
+    opposite reason - losing those on a restart costs nothing.
+    """
+    __tablename__ = "admin_settings"
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

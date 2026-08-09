@@ -64,11 +64,16 @@ logger.propagate = False
 # stdout stream is one machine-parseable format rather than JSON interleaved with
 # uvicorn's plain text. uvicorn configures these when the server boots, which is
 # before it imports the app, so replacing them here sticks.
-# uvicorn.access is not in this list on purpose: entrypoint.sh passes
-# --no-access-log because the request-logging middleware already emits one line
-# per request, and the container log is capped at 10MB x 3 by docker-compose.yml's
-# x-logging anchor - no reason to spend half of it logging everything twice.
-for _uv_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+#
+# "uvicorn.access" is deliberately NOT in this list, and adding it back would be
+# a real regression rather than a tidy-up. uvicorn implements --no-access-log
+# (entrypoint.sh) by clearing that logger's handlers, not by suppressing the
+# records - so attaching a handler here re-enables the access log the flag exists
+# to switch off. That was observed live on the deployed box: every request logged
+# twice, once by the middleware and once by uvicorn.access, which is exactly the
+# duplication the flag was added to prevent, on a container log capped at
+# 10MB x 3 by docker-compose.yml's x-logging anchor.
+for _uv_name in ("uvicorn", "uvicorn.error"):
     _uv_logger = logging.getLogger(_uv_name)
     _uv_logger.setLevel(log_level)
     _uv_logger.handlers.clear()

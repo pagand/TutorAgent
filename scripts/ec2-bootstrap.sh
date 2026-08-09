@@ -119,7 +119,14 @@ else
 fi
 
 log "docker compose up"
-docker compose up -d --build
+# --remove-orphans: a service deleted from docker-compose.yml leaves its
+# container running forever otherwise, because compose only manages services it
+# can still see. Observed live after the streamlit service was removed - the old
+# container survived a reboot and a deploy, held a bridge IP and 384MB, and was
+# still the thing publishing 8501, so removing it by hand took the admin UI
+# offline until nginx was recreated. A stale container holding an IP is also the
+# precondition for the stale-upstream 502 this file's resolver fix exists for.
+docker compose up -d --build --remove-orphans
 
 # nginx.conf is bind-mounted as a single *file*, and a single-file bind mount
 # binds the inode, not the path. `git pull` writes a new file and renames it

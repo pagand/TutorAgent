@@ -549,6 +549,7 @@ aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%
   <div class="callout danger">
     <strong>Bypasses per-student authorization, by design</strong>
     The admin UI is a router inside the same FastAPI app, using the async DB session directly — none of the API's row-level authorization applies here. That's intentional (it's the trusted admin path; the SSM tunnel plus AWS IAM is the auth boundary, not a login form). Unlike the retired Streamlit dashboard, the two destructive actions below (<em>Reset Progress</em>, <em>Delete User</em>) now require typing the exact user id into a confirm field — a mismatch is rejected with a visible error rather than silently doing nothing.
+    Every write is also Origin-checked: the tunnel makes <code>localhost:8501</code> reachable from any tab your browser has open, so without this any page you visited mid-exam could have driven a timer reset or a delete. If an action ever returns <strong>403 Request rejected</strong>, you reached the page by some route where the browser's <code>Origin</code> disagrees with the <code>Host</code> (a proxy or a rewritten URL, for instance); open <code>http://localhost:8501/</code> directly and retry. <code>curl</code> from inside an SSM session sends no <code>Origin</code> and is deliberately still allowed, so ops scripts are unaffected.
   </div>
   <div class="grid2">
     <div class="card">

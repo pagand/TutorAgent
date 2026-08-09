@@ -256,7 +256,10 @@ def _bar_chart(counts: dict, width: int = 480, bar_height: int = 28, gap: int = 
     if not counts:
         return '<p class="info">No data.</p>'
     max_val = max_value if max_value is not None else (max(counts.values()) or 1)
-    chart_width = width - 160
+    # 150px label gutter on the left, plus room on the right for the value text.
+    # Without that right gutter the longest bar runs to the viewBox edge and its
+    # own value is clipped, which is exactly what "3" did on the live dashboard.
+    chart_width = width - 150 - 40
     bars = []
     y = 10
     for label, value in counts.items():

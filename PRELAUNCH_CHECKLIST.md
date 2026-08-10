@@ -8,6 +8,40 @@ Findings are recorded with the file and line that produced them so nothing has t
 
 ---
 
+## Next round, pick up here (added 2026-08-09)
+
+Two defects found while deploying the admin-UI batch, and the first is the most serious thing in this document.
+Neither was found by reasoning about the code.
+Both were found because a deploy behaved differently from the last one, and the difference was chased instead of retried.
+
+- [x] **P0. Every deploy this project has ever made was silently reverted by the next reboot, and exam morning starts with a reboot.**
+  `scripts/ec2-bootstrap.sh:35-37` runs `git fetch origin "$REPO_REF"` / `git checkout` / **`git reset --hard "origin/$REPO_REF"`** on every boot, and `REPO_REF` is `main`.
+  Every deploy in this project has been `git merge --ff-only origin/stage3-hardening` against a box sitting on `main`, which fast-forwards the local branch only.
+  The next boot resets it away.
+  **Found by reading the box's reflog**, which records the whole history plainly:
+  `adc487a HEAD@{0}: reset: moving to origin/main` sitting directly on top of `ede8401 HEAD@{2}: merge origin/stage3-hardening`.
+  The same `reset: moving to origin/main` appears at `HEAD@{5}` and `HEAD@{7}`, so this had already happened three times.
+  **`origin/main` was 17 commits behind `origin/stage3-hardening`**, and the stranded commits are not incidental:
+  `6656852` (the nginx resolver fix that stops the 502 blackout that took the exam dark on 2026-08-06), `92008ad` (the `hint_text` truncation fix, without which a long hint makes a question permanently unanswerable), `a5598fe` (recreate nginx on deploy so a config change actually lands), `3bb2c1f` (the Streamlit retirement) and `ede8401` (the `Host` header fix that makes admin writes work at all).
+  **The consequence, stated plainly:** `docs/OPS_RUNBOOK.html` §10 step 2 is "Start the instance."
+  On exam morning that boot would have reset the box to `origin/main` and served students code containing every bug this document spent three sessions fixing, and the exam would have gone dark from the identical 502.
+  **Why every prior gate missed it:** every deploy was verified immediately after deploying, while the merge was still in place, and every verification passed honestly. Nothing ever rebooted the box and re-checked. This is the same shape as the CSP and Streamlit misses, one layer further out: the gate measured the right thing at the wrong moment.
+  **Fixed** by fast-forwarding `main` to `stage3-hardening` (a clean fast-forward, no merge commit) and pushing, so `origin/main` and `origin/stage3-hardening` are identical and a boot-time reset is now a no-op.
+  **Still open as a process question, and worth deciding before exam day:** nothing prevents this recurring the moment another commit lands on `stage3-hardening` and is deployed without merging to `main`. Either always merge to `main` before deploying, or point `REPO_REF` at the working branch. The trap is silent either way, so it wants a guard rather than a habit.
+- [x] **P1. A container for a deleted compose service survives reboots and deploys, holds a bridge IP, and can be the thing publishing a port.**
+  `docker compose up -d --build` does not remove containers whose service no longer exists in `docker-compose.yml`, because compose only manages services it can still see.
+  `aitutorapp-streamlit-1` was still running after the Streamlit service had been deleted from the compose file, having survived a reboot **and** a deploy, holding `172.18.0.4` and 384MB.
+  It was also still the process publishing `127.0.0.1:8501`, so removing it by hand took the admin UI offline (`curl` to 8501 returned `000`) until nginx was recreated from the current compose file.
+  **This is also a latent cause of the 502 outage, not merely untidiness:** a stale container squatting on a bridge IP is exactly the precondition that made the api container come back on a different address in the first place.
+  **Fixed** by adding `--remove-orphans` to `scripts/ec2-bootstrap.sh`'s compose up, and by recreating every service from the current compose file so `8501` is published by `nginx` as intended.
+- [x] **Self-inflicted, found on the deployed box and fixed the same session:** the new JSON logging defeated `--no-access-log` and logged every request twice.
+  uvicorn implements `--no-access-log` by clearing the `uvicorn.access` logger's handlers, not by suppressing the records.
+  `app/utils/logger.py` then ran at app-import time, after uvicorn had configured logging, and attached a handler to that same logger, re-enabling exactly what the flag had switched off.
+  `/proc/1/cmdline` confirmed the flag was applied, which is what ruled out the obvious explanations and pointed at our own code.
+  Worth keeping as a pattern: a flag that works by removing handlers is undone by anything that later adds one.
+
+---
+
 ## Next round, pick up here (added 2026-08-07)
 
 The exam went fully dark on 2026-08-06 and the cause was not in this document.
@@ -579,7 +613,7 @@ That is a grading-fairness problem as much as a UX one, because the time cost is
 |---|---|---|---|
 | [x] | **P1** | Request logging middleware | **Fixed.** `app/main.py` registers a request-logging middleware LAST, which puts it outermost, so it sees every response including the api-key middleware's 401s. It generates or propagates an `X-Request-ID` into a `contextvars.ContextVar` and echoes it back on the response header. Deliberately does NOT read the request body to extract `user_id` - consuming the body stream in middleware breaks downstream handlers - so the join key is `request_id`: every app log line emitted inside a request carries it, and the app's own lines already name the user. |
 | [x] | **P1** | Structured (JSON) logging | **Fixed.** `app/utils/logger.py` now emits one JSON object per line, and the same formatter is applied to uvicorn's own loggers so the whole stdout stream is one machine-parseable format rather than JSON interleaved with plain text. `entrypoint.sh` adds `--no-access-log` because the middleware above already logs every request, and the container log is capped at 10MB x 3 by `docker-compose.yml`'s `x-logging` anchor. |
-| [x] | **P1** | Latency metrics | **Fixed.** `app/services/metrics.py` holds in-memory ring buffers and counters, surfaced by a new admin Health tab (`GET /admin/health`, no db dependency, on purpose - it must work when the DB is the thing broken). Recording costs a `perf_counter()` pair, a `deque` append and an integer increment: no DB write, no file write, no lock, which is sound specifically because uvicorn runs a single worker (already mandatory because the SQLite LLM cache is not multi-process safe), so one process sees 100% of traffic. Route labels are path templates (`GET /admin/user/{user_id}`), not concrete URLs, and anything unmatched collapses into a single `<unmatched>` bucket, so the metrics dict is bounded by route count rather than growing with user ids or scanner traffic. Gemini and Chroma calls are timed separately from the requests that wrap them, which is what makes "were hints slow during the exam?" answerable. **Honest limitation:** all of it resets on `docker compose restart api`; the durable record is the JSON log line above, joinable by `request_id`. |
+| [x] | **P1** | Latency metrics | **Fixed.** `app/services/metrics.py` holds in-memory ring buffers and counters, surfaced by a new admin Health tab (`GET /admin/health`, no db dependency, on purpose - it must work when the DB is the thing broken). Recording costs a `perf_counter()` pair, a `deque` append and an integer increment: no DB write, no file write, no lock, which is sound specifically because uvicorn runs a single worker (already mandatory because the SQLite LLM cache is not multi-process safe), so one process sees 100% of traffic. Route labels are path templates (`GET /admin/user/{user_id}`), not concrete URLs, and anything unmatched collapses into a single `<unmatched>` bucket, so the metrics dict is bounded by route count rather than growing with user ids or scanner traffic. Gemini and Chroma calls are timed separately from the requests that wrap them, which is what makes "were hints slow during the exam?" answerable. **Honest limitation:** all of it resets on `docker compose restart api`; the durable record is the JSON log line above, joinable by `request_id`. **Cost measured, not assumed**, because the requirement was explicitly that this must not slow the repetitive operations: 200,000 recorded requests gave **0.42 us** for `record_request` plus **0.40 us** for the `perf_counter` pair, so **~0.82 us per request** - 0.08% of a 1 ms request and 0.00008% of a 1 s Gemini call. The same run confirmed the memory bound holds: 200,000 recorded requests produced exactly **1** tracked route entry. |
 | [ ] | **P2** | Error alerting | An unhandled 500 goes to stdout and nowhere else. Nobody is paged. **Not closed by the Health tab above** - a recent-errors ring buffer is now visible there, but nothing pages anyone. Acceptable if a proctor is actively watching the dashboard. |
 
 **What already exists, and is genuinely good:** timestamped `user_action_logs` covering `session_start`, `question_view`, `choice_select`, `answer_submit`, `hint_request`, `hint_display`, `hint_feedback`, and all three intervention states (`app/models/user.py:110-134`).

@@ -84,11 +84,20 @@ async def get_all_user_ids(db: AsyncSession) -> list[str]:
 
 
 async def get_all_users_summary(db: AsyncSession) -> list[dict]:
-    """All users with A/B group, creation time, basic stats, and timer info.
+    """The whole roster: A/B group, creation time, basic stats, and timer info.
+
+    Driven from `participants` FULL OUTER JOIN `users`, not from `users`
+    alone. A `users` row only appears at first login, so a users-driven
+    query showed "No users yet" on a box with a fully seeded roster - which
+    hid the one thing a proctor needs to check before an exam opens, that
+    every student is loaded. The outer join also keeps any legacy user that
+    has no participant row, so neither side can be silently dropped.
+    `has_user` distinguishes the two: a participant who has never logged in
+    has no preferences, so no A/B group.
 
     Each log table is aggregated to one row per user before being joined
-    onto users, the same way the original query did it, so joining
-    interaction_logs and chat_logs directly onto the same user row never
+    onto the roster, the same way the original query did it, so joining
+    interaction_logs and chat_logs directly onto the same row never
     produces a cartesian product.
 
     Uses the Postgres `->>'key'` JSON operator on preferences. Not portable
@@ -109,7 +118,8 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             GROUP BY user_id
         )
         SELECT
-            u.id AS user_id,
+            COALESCE(u.id, p.token) AS user_id,
+            u.id IS NOT NULL AS has_user,
             u.created_at,
             u.preferences->>'ab_group' AS ab_group,
             u.preferences->>'hint_style_preference' AS hint_style_pref,
@@ -123,12 +133,12 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             es.submitted_at,
             p.status AS participant_status,
             p.last_seen_at
-        FROM users u
-        LEFT JOIN interaction_agg ia ON ia.user_id = u.id
-        LEFT JOIN chat_agg ca ON ca.user_id = u.id
-        LEFT JOIN exam_sessions es ON es.user_id = u.id
-        LEFT JOIN participants p ON p.token = u.id
-        ORDER BY u.created_at DESC
+        FROM participants p
+        FULL OUTER JOIN users u ON u.id = p.token
+        LEFT JOIN interaction_agg ia ON ia.user_id = COALESCE(u.id, p.token)
+        LEFT JOIN chat_agg ca ON ca.user_id = COALESCE(u.id, p.token)
+        LEFT JOIN exam_sessions es ON es.user_id = COALESCE(u.id, p.token)
+        ORDER BY u.created_at DESC NULLS LAST, p.token
     """)
     result = await db.execute(query)
     rows = [dict(r) for r in result.mappings().all()]

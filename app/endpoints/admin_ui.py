@@ -649,14 +649,16 @@ async def admin_students(db: AsyncSession = Depends(get_db), msg: str | None = N
         body.append('<p class="info">No users yet.</p>')
     else:
         body.append(_kpi_row([
-            ("Total Users", len(users)),
+            ("Enrolled", len(users)),
             ("Started", sum(1 for u in users if u["total_interactions"])),
             ("Active now", sum(1 for u in users if u["online"])),
             ("Timed out", sum(1 for u in users if u["timed_out"])),
             ("Submitted", sum(1 for u in users if u["submitted"])),
         ]))
         body.append(
-            '<p class="caption">Active now: heartbeat seen in the last 60s and not yet submitted. '
+            '<p class="caption">Enrolled is the seeded roster, so a student who has not logged in '
+            'yet still appears here - that is how you confirm before an exam opens that everyone '
+            'is loaded. Active now: heartbeat seen in the last 60s and not yet submitted. '
             'Timed out: the clock reached zero and the student never submitted - these are the '
             'ones to look at, since a bulk timer extension will reach them.</p>'
         )
@@ -669,7 +671,11 @@ async def admin_students(db: AsyncSession = Depends(get_db), msg: str | None = N
 async def admin_research(db: AsyncSession = Depends(get_db), msg: str | None = None):
     """Aggregate analytics. Deliberately off the landing page: none of this is
     actionable while an exam is running."""
-    users = await queries.get_all_users_summary(db)
+    # Roster entries that have never logged in carry no preferences and so no
+    # A/B group; counting them here would inflate every figure below with
+    # students who have not sat the exam. The Students tab wants them, this
+    # does not.
+    users = [u for u in await queries.get_all_users_summary(db) if u["has_user"]]
     body = [_flash(msg), "<h1>Research Analytics</h1>"]
     if not users:
         body.append('<p class="info">No users yet.</p>')

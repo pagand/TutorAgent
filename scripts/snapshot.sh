@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# scripts/snapshot.sh - one on-demand bundle of everything associated with
-# the instance: Postgres dump, the chroma_data Docker volume (vector store +
-# llm_cache.db), prod/data (point-in-time questions + manifest), the four
-# services' container logs, and a CSV export of all 9 application tables for
-# offline analysis. Uploaded as ONE timestamped key to the backups bucket.
+# scripts/snapshot.sh - one on-demand bundle of everything on the instance
+# that CANNOT be rebuilt from Terraform, git and S3: the Postgres dump, the
+# chroma_data Docker volume (vector store + llm_cache.db), and the container
+# logs. Uploaded as ONE timestamped key to the backups bucket.
+#
+# Scope is deliberate. A fresh box rebuilds the OS, the code, the schema, the
+# questions, the participant roster and the RAG index unattended in about four
+# minutes, so none of that belongs in the artifact you reach for when an exam
+# has to be recovered. Postgres is the only irreplaceable state; the logs die
+# with the container and so cannot be regenerated either; chroma_data is kept
+# because llm_cache.db lives inside it and rebuilding the cache costs real
+# Gemini calls.
 #
 # Not a cron. Run on demand and as a post-exam runbook step
 # (docs/OPS_RUNBOOK.html), same reasoning as backup.sh: the box is stopped
@@ -42,7 +49,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$BUNDLE_ROOT"/{dump,csv,logs,prod_data}
+mkdir -p "$BUNDLE_ROOT"/{dump,logs}
 
 # --- 1. Container logs first, before anything below touches the stack ---
 log "Capturing container logs"
@@ -60,19 +67,12 @@ BACKUP_DIR="${BUNDLE_ROOT}/dump" \
   POSTGRES_DB="$POSTGRES_DB" \
   "${SCRIPT_DIR}/backup.sh"
 
-# --- 3. CSV export of all 9 application tables, full rows, no filtering ---
-log "Exporting all 9 tables to CSV"
-TABLES=(users participants exam_sessions interaction_logs skill_mastery user_action_logs chat_logs intervention_logs llm_usage_log)
-for t in "${TABLES[@]}"; do
-  docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -c "\copy (SELECT * FROM ${t}) TO STDOUT WITH CSV HEADER" \
-    > "${BUNDLE_ROOT}/csv/${t}.csv"
-done
-
-# --- 4. prod/data point-in-time copy (questions + manifest actually served) ---
-log "Copying prod/data"
-cp -a ./prod/data/. "${BUNDLE_ROOT}/prod_data/" 2>/dev/null || \
-  log "WARNING: ./prod/data not found or empty (continuing)"
+# --- 3 and 4 removed deliberately: the bundle holds only what cannot be   ---
+# --- rebuilt. The per-table CSV export is derivable from dump/ at any time ---
+# --- (pg_restore then \copy), and prod/data is restored on every boot by   ---
+# --- ec2-bootstrap.sh's sync from the ops bucket, so carrying either here  ---
+# --- inflated the artifact you depend on to recover an exam with copies of ---
+# --- things that recover themselves.                                       ---
 
 # --- 5. Data dictionary, so the bundle is self-describing ---
 cat > "${BUNDLE_ROOT}/README.md" <<'EOF'
@@ -82,25 +82,12 @@ Captured by scripts/snapshot.sh. Contents:
 
 - dump/aitutor_*.dump      Postgres dump (pg_dump -Fc, all tables incl. alembic_version).
                            Restore with scripts/restore.sh or scripts/snapshot_restore.sh.
-- csv/*.csv                One CSV per application table, full rows, header row included.
-                           For offline analysis - do not restore from these, restore from dump/.
 - chroma_data.tar.gz        Tar of the chroma_data Docker named volume (Chroma vector store
                            plus llm_cache.db, which lives inside chroma_persist_dir).
                            NOT PRESENT if the API container could not be stopped during capture
                            (see snapshot.sh output for a warning) - check before relying on it.
-- prod_data/                Point-in-time copy of prod/data (questions + participant manifest)
-                           as actually served at capture time. Record only - NOT the restore
-                           path for prod/data on a rebuilt box (that is ec2-bootstrap.sh's S3
-                           sync from the ops bucket; see PRELAUNCH_CHECKLIST.md).
 - logs/*.log                docker compose logs for api/db/nginx at capture time,
                            capped at whatever the 10MB x 3 file x-logging retention held.
-
-## CSV column notes
-
-- user_action_logs.action_data, users.preferences, users.feedback_scores are JSON columns.
-  CSV renders them as a single JSON-text column, not flattened.
-- The `alembic_version` table is schema bookkeeping, not analysis data, and is intentionally
-  excluded from the CSV export (it is still inside dump/*.dump).
 
 ## user_action_logs.action_type - the real values
 
@@ -116,8 +103,6 @@ hint_request, hint_display, hint_feedback, intervention_offer, intervention_acce
 intervention_reject, chat_send, profile_view, preference_update
 
 Do not filter action_type on the docstring's names - they do not occur in the data.
-The CSV export above does not filter on action_type at all, so this note is informational,
-not a warning about missing rows.
 EOF
 
 # --- 6. chroma_data volume: resolve the real volume name, stop api for a  ---
@@ -160,4 +145,4 @@ log "Uploading to s3://${BACKUPS_BUCKET}/${S3_KEY}"
 aws s3 cp "${SNAPSHOT_DIR}/${BUNDLE_FILE}" "s3://${BACKUPS_BUCKET}/${S3_KEY}" --region "$AWS_REGION"
 
 log "Done. s3://${BACKUPS_BUCKET}/${S3_KEY}"
-log "Local copy retained at ${SNAPSHOT_DIR}/${BUNDLE_FILE} - contains student names, identifiers, and full chat transcripts in plain CSV; delete it once you no longer need it on this box."
+log "Local copy retained at ${SNAPSHOT_DIR}/${BUNDLE_FILE} - contains student names, identifiers and full chat transcripts inside dump/ and logs/; delete it once you no longer need it on this box."

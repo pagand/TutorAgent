@@ -25,10 +25,11 @@ set -euo pipefail
 # set explicitly. There is no path through this script that picks a target
 # on its own.
 #
-# Does NOT restore prod/data from the bundle. On a rebuilt box, prod/data
-# arrives via ec2-bootstrap.sh's S3 sync from the ops bucket - the bundle's
-# prod_data/ copy is a point-in-time record for analysis/audit, not a
-# restore source (see the bundle's own README.md).
+# Does not touch prod/data, and the bundle no longer carries a copy of it:
+# on a rebuilt box prod/data arrives via ec2-bootstrap.sh's S3 sync from the
+# ops bucket, so shipping it in the recovery artifact was duplicating a path
+# that already restores itself. Bundles captured before 2026-08-09 still
+# contain prod_data/ and csv/; both are ignored here.
 #
 # Env vars:
 #   POSTGRES_USER, POSTGRES_DB   required - passed straight through to restore.sh
@@ -110,5 +111,5 @@ fi
 
 log "Done. Postgres and (if present) chroma_data restored from $LOCAL_BUNDLE."
 log "Verify with: docker compose exec -T db psql -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT COUNT(*) FROM users;'"
-log "The extracted bundle (including its csv/ export) was under $WORK_DIR - already removed on exit. Re-download and untar the same bundle yourself if you need a full per-table comparison against its CSVs."
+log "The extracted bundle was under $WORK_DIR - already removed on exit. Re-download and untar the same bundle yourself if you need to inspect it further."
 log "Reminder: prod/data was NOT restored from this bundle (by design) - it arrives via ec2-bootstrap.sh's S3 sync from the ops bucket."

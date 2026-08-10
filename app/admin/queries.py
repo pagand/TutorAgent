@@ -16,6 +16,13 @@ from app.services.question_service import question_service
 from app.utils.config import settings
 
 
+# Same 60s staleness rule the app itself enforces (app/endpoints/session.py and
+# app/endpoints/participants.py both define STALE_SECONDS = 60). Repeated rather
+# than imported because this is the admin data layer and must not depend on an
+# endpoint module; if one of the three moves, all three move.
+STALE_SECONDS = 60
+
+
 def _decode_json(value):
     """Raw text() queries bypass SQLAlchemy's Column(JSON) result processor,
     so a JSON column comes back as the driver's native string rather than a
@@ -114,7 +121,8 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             es.exam_start_ms,
             es.exam_duration_ms,
             es.submitted_at,
-            p.status AS participant_status
+            p.status AS participant_status,
+            p.last_seen_at
         FROM users u
         LEFT JOIN interaction_agg ia ON ia.user_id = u.id
         LEFT JOIN chat_agg ca ON ca.user_id = u.id
@@ -125,7 +133,9 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
     result = await db.execute(query)
     rows = [dict(r) for r in result.mappings().all()]
     now_ms = int(time.time() * 1000)
+    now_dt = datetime.utcnow()
     for row in rows:
+        remaining = None
         if row["exam_start_ms"] is None or row["exam_duration_ms"] is None:
             row["remaining_min"] = None
         else:
@@ -133,6 +143,19 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             remaining = max(0, int(row["exam_duration_ms"]) - elapsed)
             row["remaining_min"] = remaining // 60000
         row["submitted"] = row["submitted_at"] is not None
+        # last_seen_at is written as naive UTC (session.py's heartbeat), so it
+        # compares directly against utcnow(). Heartbeats arrive every 25s, so a
+        # 60s window tolerates one dropped beat before calling a student offline.
+        last_seen = row["last_seen_at"]
+        row["online"] = (
+            last_seen is not None
+            and not row["submitted"]
+            and (now_dt - last_seen).total_seconds() <= STALE_SECONDS
+        )
+        # Judged on raw milliseconds, not remaining_min: that value floors to
+        # whole minutes, so it reads 0 for the final 59 seconds of a session
+        # that is still running and would over-count timed-out students.
+        row["timed_out"] = remaining is not None and remaining <= 0 and not row["submitted"]
     return rows
 
 

@@ -28,6 +28,16 @@ Both were found because a deploy behaved differently from the last one, and the 
   **Why every prior gate missed it:** every deploy was verified immediately after deploying, while the merge was still in place, and every verification passed honestly. Nothing ever rebooted the box and re-checked. This is the same shape as the CSP and Streamlit misses, one layer further out: the gate measured the right thing at the wrong moment.
   **Fixed** by fast-forwarding `main` to `stage3-hardening` (a clean fast-forward, no merge commit) and pushing, so `origin/main` and `origin/stage3-hardening` are identical and a boot-time reset is now a no-op.
   **Still open as a process question, and worth deciding before exam day:** nothing prevents this recurring the moment another commit lands on `stage3-hardening` and is deployed without merging to `main`. Either always merge to `main` before deploying, or point `REPO_REF` at the working branch. The trap is silent either way, so it wants a guard rather than a habit.
+- [ ] **P0. Add a guard so the `main` drift above cannot silently recur.**
+  The fix above only cleared the drift that existed on 2026-08-09; it did nothing to stop the next commit on `stage3-hardening` recreating it.
+  The failure is silent by construction: the box looks correct right after every deploy, and only a reboot exposes it, which is why three occurrences went unnoticed.
+  A habit ("remember to merge to `main` first") is not a guard, because the thing that failed was exactly a habit.
+  **Requirement:** deploying code that `origin/main` does not contain must fail loudly at deploy time, not silently revert at boot time.
+  Candidate mechanisms, to be chosen deliberately rather than by whichever is quickest:
+  1. `scripts/ec2-bootstrap.sh` refuses to `git reset --hard` when the working tree's HEAD is not an ancestor of `origin/$REPO_REF`, and exits non-zero instead of discarding commits.
+  2. A pre-deploy assertion in the deploy path that `git merge-base --is-ancestor HEAD origin/main` holds, so a deploy from an unmerged branch stops before touching the box.
+  3. Point `REPO_REF` at the working branch, which removes the mismatch but moves the risk to `REPO_REF` and the branch drifting apart instead.
+  **Verification must include a reboot**, not just a deploy: this bug is only observable on the far side of one, and every gate that missed it checked immediately after deploying.
 - [x] **P1. A container for a deleted compose service survives reboots and deploys, holds a bridge IP, and can be the thing publishing a port.**
   `docker compose up -d --build` does not remove containers whose service no longer exists in `docker-compose.yml`, because compose only manages services it can still see.
   `aitutorapp-streamlit-1` was still running after the Streamlit service had been deleted from the compose file, having survived a reboot **and** a deploy, holding `172.18.0.4` and 384MB.

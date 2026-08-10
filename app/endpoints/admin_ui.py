@@ -150,6 +150,8 @@ section { margin-bottom: 24px; }
 .correct { color: var(--emerald-500); font-weight: bold; }
 .wrong { color: var(--rose-500); font-weight: bold; }
 .skipped { color: var(--amber-400); font-weight: bold; }
+.online { color: var(--emerald-500); font-weight: bold; }
+.offline { color: var(--slate-500); }
 .kpi-row { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0; }
 .kpi { border: 1px solid var(--slate-200); background: white; padding: 10px 16px; min-width: 140px; }
 .kpi-value { font-size: 20px; font-weight: bold; color: var(--indigo-600); }
@@ -397,7 +399,7 @@ def _simple_table(headers: list[str], rows: list[list]) -> str:
 def _users_table(users: list[dict]) -> str:
     headers = ["user_id", "ab_group", "participant_status", "hint_style_pref", "created_at",
                "total_interactions", "correctness", "hints_used", "chat_messages",
-               "remaining_min", "submitted"]
+               "remaining_min", "submitted", "active"]
     thead = "".join(f"<th>{h}</th>" for h in headers)
     rows = []
     for u in users:
@@ -420,6 +422,7 @@ def _users_table(users: list[dict]) -> str:
             str(u["chat_messages"]),
             html.escape("" if u["remaining_min"] is None else str(u["remaining_min"])),
             "Yes" if u["submitted"] else "No",
+            '<span class="online">online</span>' if u["online"] else '<span class="offline">offline</span>',
         ]
         rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
     return f'<table class="data-table"><thead><tr>{thead}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
@@ -648,8 +651,15 @@ async def admin_students(db: AsyncSession = Depends(get_db), msg: str | None = N
         body.append(_kpi_row([
             ("Total Users", len(users)),
             ("Started", sum(1 for u in users if u["total_interactions"])),
+            ("Active now", sum(1 for u in users if u["online"])),
+            ("Timed out", sum(1 for u in users if u["timed_out"])),
             ("Submitted", sum(1 for u in users if u["submitted"])),
         ]))
+        body.append(
+            '<p class="caption">Active now: heartbeat seen in the last 60s and not yet submitted. '
+            'Timed out: the clock reached zero and the student never submitted - these are the '
+            'ones to look at, since a bulk timer extension will reach them.</p>'
+        )
         body.append('<p class="caption">Click a token to open that student.</p>')
         body.append(_users_table(users))
     return _page("Students", "\n".join(body), active_tab="Students")

@@ -573,7 +573,7 @@ Students survive a browser reload via `localStorage.quizCache_<userId>`.
 | [x] | **P2** | ~~Raise DB pool above 50~~ | **Corrected by audit, demoted from P0. The original premise was wrong.** Both LLM endpoints explicitly release the connection *before* the slow call: `hints.py:54-55` carries the comment "Release the DB connection before the slow LLM call so the pool isn't exhausted", and `chat.py:97-98` does the same. A committed `AsyncSession` returns its connection to the pool, so sessions are held for millisecond queries only, never across a Gemini call. 25 connections is ample for 50 students. Raising it is harmless but blocks nothing. **Raised anyway (Stage 2)** — `app/utils/db.py`'s `pool_size` 10→20, `max_overflow` 15→30 (50 total, up from 25) — free headroom while this stage already owned the file. |
 | [x] | **P0** | Instance size t3.small → t3.medium | **Already closed, per F6 in the Stage 5 handoff plan** — `terraform.tfvars`'s `instance_type = "t3.medium"` was set during Stage 4 and never regressed. Verified live during Stage 5: `aws ec2 describe-instances --instance-ids i-0b0d93da111a1e907 --query 'Reservations[].Instances[].InstanceType'` returns `t3.medium`. |
 | [ ] | **P1** | Verify SQLite LLM cache under concurrency | `set_llm_cache(SQLiteCache(...))` is a global sync cache. 50 concurrent writers on one file can raise "database is locked". Never tested at that level. |
-| [ ] | **P1** | Confirm Gemini paid-tier rate limits | Billing is enabled, so the ceiling is high, but confirm the actual RPM ceiling for `gemini-2.5-flash-lite` on this project and check it comfortably exceeds peak load. |
+| [ ] | **P1** | Confirm Gemini paid-tier rate limits | Billing is enabled, so the ceiling is high, but confirm the actual RPM ceiling for `gemini-3.1-flash-lite` on this project and check it comfortably exceeds peak load. |
 | [ ] | **P1** | Measure real cache hit rate before trusting it | See the caching note below. The cache is correctly wired, but its hit rate on this workload is unmeasured and probably low. |
 
 ### LLM cache and model, verified state
@@ -586,7 +586,7 @@ Caching is correctly configured and requires no changes to switch on:
 | Backing store | SQLite at `./chroma_db/llm_cache.db` | `app/services/rag_agent.py:148` |
 | Persistence | Survives restarts and EC2 stop/start | The `chroma_data` named Docker volume, mounted at `/app/chroma_db` (corrected 2026-08-04; this said "bind mount" before, stale since section H's ownership fix) |
 | Determinism | `temperature=0` | `app/services/rag_agent.py:163` — identical prompts return identical output, which is what makes caching sound here |
-| Test model | `gemini-2.5-flash-lite` | Already set in `.env.docker.example`; code default needs aligning, see section H |
+| Test model | `gemini-3.1-flash-lite` | Already set in `.env.docker.example`; code default needs aligning, see section H |
 
 **The caveat worth knowing before relying on it.** LangChain's `SQLiteCache` keys on the exact prompt string plus model parameters.
 Hint prompts embed per-user history and BKT mastery, and chat prompts embed the full conversation history.

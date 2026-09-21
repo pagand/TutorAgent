@@ -20,8 +20,8 @@ def test_exam_duration_ms_fallback_is_25_minutes():
     assert 'os.getenv("EXAM_DURATION_MS", 20 * 60 * 1000)' not in _CONFIG_SOURCE
 
 
-def test_google_model_name_fallback_is_flash_lite():
-    assert 'os.getenv("GOOGLE_MODEL_NAME", "gemini-2.5-flash-lite")' in _CONFIG_SOURCE
+def test_google_model_name_fallback_is_3_1_flash_lite():
+    assert 'os.getenv("GOOGLE_MODEL_NAME", "gemini-3.1-flash-lite")' in _CONFIG_SOURCE
     assert 'os.getenv("GOOGLE_MODEL_NAME", "gemini-1.5-flash-latest")' not in _CONFIG_SOURCE
 
 

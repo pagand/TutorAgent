@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # Google Gemini specific
     google_api_key: SecretStr | None = SecretStr(os.getenv("GOOGLE_API_KEY")) if os.getenv("GOOGLE_API_KEY") else None
-    google_model_name: str = os.getenv("GOOGLE_MODEL_NAME", "gemini-2.5-flash-lite")
+    google_model_name: str = os.getenv("GOOGLE_MODEL_NAME", "gemini-3.1-flash-lite")
 
     # AWS Bedrock specific
     aws_access_key_id: SecretStr | None = SecretStr(os.getenv("AWS_ACCESS_KEY_ID")) if os.getenv("AWS_ACCESS_KEY_ID") else None

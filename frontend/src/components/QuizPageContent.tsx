@@ -20,6 +20,7 @@ import FeedbackBar from './FeedbackBar'
 import ResultBanner from './ResultBanner'
 import InterventionBanner from './InterventionBanner'
 import ChatPanel from './ChatPanel'
+import ConfidenceBar from './ConfidenceBar'
 function generateSessionId(): string {
   return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 }
@@ -103,6 +104,9 @@ export default function QuizPageContent() {
   const [hintError, setHintError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [timerExpired, setTimerExpired] = useState(false)
+  const [confidence, setConfidence] = useState<number | null>(null)
+  const [confidenceShake, setConfidenceShake] = useState(false)
+  const confidenceNudgedRef = useRef<Record<number, boolean>>({})
 
   const [showIntervention, setShowIntervention] = useState(false)
   const [interventionDismissed, setInterventionDismissed] = useState(false)
@@ -375,6 +379,7 @@ export default function QuizPageContent() {
     setUserAnswerLocal(draft)
     setSubmitError(null)
     setHintError(null)
+    setConfidence(null)
     setShowIntervention(false)
     setInterventionDismissed(false)
     setInterventionReason(null)
@@ -460,6 +465,14 @@ export default function QuizPageContent() {
     if (!userId || !questions.length || !userAnswer) return
     const currentQ = questions[currentQuestionIndex]
     const qNum = currentQ.question_number
+
+    if (confidence === null && !confidenceNudgedRef.current[qNum]) {
+      confidenceNudgedRef.current[qNum] = true
+      setConfidenceShake(true)
+      setTimeout(() => setConfidenceShake(false), 400)
+      return
+    }
+
     const startTime = questionStartTimeRef.current[qNum] || Date.now()
     const timeTakenMs = Date.now() - startTime
     setIsSubmitting(true)
@@ -472,6 +485,7 @@ export default function QuizPageContent() {
         user_id: userId, session_id: sessionId, question_number: qNum, attempt_key: attemptKey,
         user_answer: userAnswer, time_taken_ms: timeTakenMs,
       }
+      if (confidence !== null) payload.confidence = confidence
       if (activeHint) {
         payload.hint_shown = true
         payload.hint_style_used = activeHint.hint_style
@@ -482,6 +496,8 @@ export default function QuizPageContent() {
 
       const result = await submitAnswer(payload)
       delete attemptKeyRef.current[qNum]
+      confidenceNudgedRef.current[qNum] = false
+      setConfidence(null)
       dispatch({
         type: 'SUBMIT_RESULT',
         questionNumber: qNum,
@@ -767,6 +783,10 @@ export default function QuizPageContent() {
                   question_number: currentQ.question_number,
                 })}
               />
+
+              {!isReadOnly && (
+                <ConfidenceBar value={confidence} onSelect={setConfidence} showError={confidenceShake} />
+              )}
 
               {!isReadOnly && (
                 <div className="flex gap-3 mt-4">

@@ -4,3 +4,20 @@ body {
   background-color: #f8fafc; /* slate-50 */
   color: #1e293b; /* slate-800 */
 }
+
+@keyframes confidence-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
+.confidence-bar-shake {
+  animation: confidence-shake 0.4s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confidence-bar-shake {
+    animation: none;
+  }
+}

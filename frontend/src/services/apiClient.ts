@@ -91,6 +91,7 @@ export const submitAnswer = async (payload: {
   hint_text?: string
   pre_hint_mastery?: number
   feedback_rating?: number
+  confidence?: number
 }) => {
   const res = await apiClient.post('/answer/', payload)
   return res.data

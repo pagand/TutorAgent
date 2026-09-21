@@ -66,6 +66,7 @@ class InteractionLog(Base):
     user_answer = Column(Text, nullable=True)
     is_correct = Column(Boolean, nullable=True)
     time_taken_ms = Column(Integer, nullable=True)
+    confidence = Column(Integer, nullable=True)  # self-declared 1-10, null if left empty; telemetry only
 
     # Hint and feedback details (for a single interaction loop)
     hint_shown = Column(Boolean, default=False)

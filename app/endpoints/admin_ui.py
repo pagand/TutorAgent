@@ -89,7 +89,7 @@ LOG_TYPE_OPTIONS = ["Interaction Logs", "Chat Logs", "Intervention Logs", "Actio
 EXPORT_COLUMNS = {
     "Interaction Logs": ["timestamp", "user_id", "ab_group", "question_id", "skill", "user_answer",
                           "is_correct", "hint_shown", "hint_style_used", "hint_text",
-                          "user_feedback_rating", "bkt_change", "time_taken_ms"],
+                          "user_feedback_rating", "bkt_change", "time_taken_ms", "confidence"],
     "Chat Logs": ["timestamp", "user_id", "ab_group", "session_id", "question_number",
                   "user_message", "tutor_response"],
     "Intervention Logs": ["timestamp", "user_id", "ab_group", "session_id", "question_number",

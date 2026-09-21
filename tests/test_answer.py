@@ -238,3 +238,73 @@ async def test_unknown_question_still_404s(client, monkeypatch):
 
     res = await client.post("/answer/", json=_payload(user_id, 999, "key-1", user_answer="x"))
     assert res.status_code == 404
+
+
+# --- Self-declared confidence (telemetry only, Feature 1) ---
+
+async def test_confidence_stored_when_sent(client, db_session):
+    user_id = "ans_conf_stored_01"
+    await _create_user(client, user_id)
+
+    payload = _payload(user_id, 1, "k1", user_answer="2")
+    payload["confidence"] = 7
+    res = await client.post("/answer/", json=payload)
+    assert res.status_code == 200
+
+    result = await db_session.execute(select(InteractionLog).filter_by(user_id=user_id, question_id=1))
+    log = result.scalars().first()
+    assert log.confidence == 7
+
+
+async def test_confidence_null_when_omitted(client, db_session):
+    user_id = "ans_conf_null_01"
+    await _create_user(client, user_id)
+
+    res = await client.post("/answer/", json=_payload(user_id, 1, "k1", user_answer="2"))
+    assert res.status_code == 200
+
+    result = await db_session.execute(select(InteractionLog).filter_by(user_id=user_id, question_id=1))
+    log = result.scalars().first()
+    assert log.confidence is None
+
+
+async def test_confidence_above_range_rejected(client):
+    user_id = "ans_conf_high_01"
+    await _create_user(client, user_id)
+
+    payload = _payload(user_id, 1, "k1", user_answer="2")
+    payload["confidence"] = 11
+    res = await client.post("/answer/", json=payload)
+    assert res.status_code == 422
+
+
+async def test_confidence_below_range_rejected(client):
+    user_id = "ans_conf_low_01"
+    await _create_user(client, user_id)
+
+    payload = _payload(user_id, 1, "k1", user_answer="2")
+    payload["confidence"] = 0
+    res = await client.post("/answer/", json=payload)
+    assert res.status_code == 422
+
+
+async def test_confidence_not_present_on_replayed_duplicate(client, db_session):
+    """A duplicate attempt_key still replays cleanly when confidence was sent
+    on the original attempt - confidence isn't part of AnswerResponse and
+    doesn't affect the idempotency path."""
+    user_id = "ans_conf_replay_01"
+    await _create_user(client, user_id)
+
+    payload = _payload(user_id, 1, "same-key", user_answer="2")
+    payload["confidence"] = 5
+    r1 = await client.post("/answer/", json=payload)
+    r2 = await client.post("/answer/", json=payload)
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json() == r2.json()
+
+    result = await db_session.execute(select(InteractionLog).filter_by(user_id=user_id, question_id=1))
+    logs = result.scalars().all()
+    assert len(logs) == 1
+    assert logs[0].confidence == 5

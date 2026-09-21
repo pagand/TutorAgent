@@ -216,7 +216,8 @@ async def get_all_interaction_logs(db: AsyncSession, user_id: str | None = None)
                u.preferences->>'ab_group' AS ab_group,
                il.question_id, il.skill, il.user_answer, il.is_correct,
                il.hint_shown, il.hint_style_used, il.hint_text,
-               il.user_feedback_rating, il.bkt_change, il.time_taken_ms
+               il.user_feedback_rating, il.bkt_change, il.time_taken_ms,
+               il.confidence
         FROM interaction_logs il
         JOIN users u ON u.id = il.user_id
         {where}

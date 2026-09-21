@@ -429,6 +429,34 @@ async def test_export_download_interaction_logs(client, db_session, seeded_user)
 
 @_SKIP_JSON_ARROW
 @pytest.mark.asyncio
+async def test_export_download_interaction_logs_includes_confidence(client, db_session, seeded_user):
+    """The confidence column (Feature 1) must flow through the generic
+    export path: the column header and the stored value both appear."""
+    await db_session.execute(
+        text("INSERT INTO interaction_logs (user_id, timestamp, question_id, skill, user_answer, "
+             "is_correct, hint_shown, hint_style_used, hint_text, user_feedback_rating, bkt_change, "
+             "time_taken_ms, confidence) "
+             "VALUES (:user_id, :timestamp, :question_id, :skill, :user_answer, :is_correct, "
+             ":hint_shown, :hint_style_used, :hint_text, :user_feedback_rating, :bkt_change, "
+             ":time_taken_ms, :confidence)"),
+        {
+            "user_id": seeded_user, "timestamp": datetime.datetime.utcnow(),
+            "question_id": 5, "skill": "confidence-test", "user_answer": "A",
+            "is_correct": True, "hint_shown": False, "hint_style_used": None,
+            "hint_text": None, "user_feedback_rating": None, "bkt_change": 0.05,
+            "time_taken_ms": 1000, "confidence": 8,
+        },
+    )
+    await db_session.commit()
+
+    response = await client.get("/admin/export/download", params={"log_type": "Interaction Logs"})
+    assert response.status_code == 200
+    assert "confidence" in response.text.splitlines()[0]
+    assert ",8\r\n" in response.text or ",8\n" in response.text
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
 async def test_export_download_action_logs_filtered_by_action_type(client, db_session, seeded_user):
     await _insert_action_log(db_session, seeded_user, action_type="question_view")
     await _insert_action_log(db_session, seeded_user, action_type="answer_submit")

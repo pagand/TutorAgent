@@ -39,6 +39,7 @@ class AnswerRequest(BaseModel):
     hint_text: str | None = None
     pre_hint_mastery: float | None = None
     feedback_rating: int | None = Field(None, ge=1, le=5)
+    confidence: int | None = Field(None, ge=1, le=10)
 
     @field_validator("hint_text")
     @classmethod
@@ -194,7 +195,8 @@ async def submit_answer(request: AnswerRequest, db: AsyncSession = Depends(get_d
         hint_style_used=request.hint_style_used,
         hint_text=request.hint_text,
         user_feedback_rating=request.feedback_rating,
-        bkt_change=bkt_change_value
+        bkt_change=bkt_change_value,
+        confidence=request.confidence
     )
     db.add(log_entry)
 

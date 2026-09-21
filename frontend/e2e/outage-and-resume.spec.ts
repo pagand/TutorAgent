@@ -7,7 +7,7 @@
 // within one heartbeat, with no reload — the other half of "restart services,
 // retain data, resume the exam."
 import { test, expect } from '@playwright/test'
-import { loginAsToken, getCorrectAnswer, getProfile, extendAllTimers } from './helpers'
+import { loginAsToken, getCorrectAnswer, getProfile, extendAllTimers, submitAnswerInUI } from './helpers'
 
 test('outage-and-resume: lost response is deduped, draft survives reload', async ({ page }) => {
   await loginAsToken(page, 'E2EOUTAGE')
@@ -20,7 +20,7 @@ test('outage-and-resume: lost response is deduped, draft survives reload', async
   } else {
     await page.getByPlaceholder('Type your answer…').fill(q1Correct)
   }
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('✓ Correct!')).toBeVisible()
 
   // Q2: simulate an outage on the FIRST /answer/ request only — the real
@@ -47,7 +47,7 @@ test('outage-and-resume: lost response is deduped, draft survives reload', async
   } else {
     await page.getByPlaceholder('Type your answer…').fill(q2Wrong)
   }
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('Failed to submit. Please try again.')).toBeVisible()
 
   // Confirm the precondition is real: the server already committed the log
@@ -59,7 +59,7 @@ test('outage-and-resume: lost response is deduped, draft survives reload', async
 
   // Retry with the same unmodified answer — attemptKeyRef was preserved
   // across the failed attempt, so this must be deduped server-side.
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('1 attempt remaining')).toBeVisible()
 
   const profileAfterRetry = await getProfile(page.request, 'E2EOUTAGE', ownSessionId ?? undefined)

@@ -22,6 +22,8 @@ export default function ProfilePage() {
   const [abGroup, setAbGroup] = useState<string | null>(null)
   const [hintStyle, setHintStyle] = useState<string>('Conceptual')
   const [interventionPref, setInterventionPref] = useState<string>('proactive')
+  const [chatEnabled, setChatEnabled] = useState<boolean>(true)
+  const [chatIqEnabled, setChatIqEnabled] = useState<boolean>(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -41,6 +43,8 @@ export default function ProfilePage() {
         setAbGroup(prefs.ab_group || null)
         setHintStyle(prefs.hint_style_preference || 'Conceptual')
         setInterventionPref(prefs.intervention_preference || 'proactive')
+        setChatEnabled(prefs.chat_enabled ?? true)
+        setChatIqEnabled(prefs.chatiq_enabled ?? true)
       })
       .catch(() => setError('Failed to load profile.'))
       .finally(() => setLoading(false))
@@ -158,6 +162,25 @@ export default function ProfilePage() {
           )}
 
           {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Tutor Chat</h2>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-slate-600">
+              {chatEnabled ? 'Available in this session' : 'Not available in this session'}
+            </p>
+            <span
+              className={[
+                'shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full border',
+                chatIqEnabled
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-slate-100 text-slate-500 border-slate-200',
+              ].join(' ')}
+            >
+              ChatIQ
+            </span>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">

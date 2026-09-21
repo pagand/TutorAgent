@@ -3,7 +3,7 @@
 // Also asserts, at the network level (not just UI non-rendering), that correct_answer
 // never appears on the wire for /questions/ or /answer/ (Stage 1a regression guard).
 import { test, expect } from '@playwright/test'
-import { loginAsToken, getCorrectAnswer, submitAnswerDirect } from './helpers'
+import { loginAsToken, getCorrectAnswer, submitAnswerDirect, submitAnswerInUI } from './helpers'
 
 function wrongOption(correct: string, exclude: string[] = []): string {
   for (const v of ['1', '2', '3', '4']) {
@@ -39,7 +39,7 @@ test('critical path: correct, locked wrong, skip, hint+rating, chat, results —
   // Q1: correct answer.
   const q1Correct = getCorrectAnswer(1)
   await answerMcOrFitb(page, q1Correct)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page, 8)
   await expect(page.getByText('✓ Correct!')).toBeVisible()
 
   // Q2: wrong twice -> locked.
@@ -47,12 +47,12 @@ test('critical path: correct, locked wrong, skip, hint+rating, chat, results —
   const q2Correct = getCorrectAnswer(2)
   const q2Wrong1 = wrongOption(q2Correct)
   await answerMcOrFitb(page, q2Wrong1)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('1 attempt remaining')).toBeVisible()
 
   const q2Wrong2 = wrongOption(q2Correct, [q2Wrong1])
   await answerMcOrFitb(page, q2Wrong2)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('✗ Locked — Move on to the next question')).toBeVisible()
 
   // Server-side cap must reject a 3rd submission independently of the UI —
@@ -83,7 +83,7 @@ test('critical path: correct, locked wrong, skip, hint+rating, chat, results —
 
   const q4Correct = getCorrectAnswer(4)
   await answerMcOrFitb(page, q4Correct)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('✓ Correct!')).toBeVisible()
 
   // Chat with tutor (panel is open by default — only toggle it if collapsed).

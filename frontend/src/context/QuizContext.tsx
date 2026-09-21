@@ -4,7 +4,7 @@ import React, { createContext, useContext, useReducer, ReactNode } from 'react'
 import type { QuizState, QuestionStatus, Question, ChatMessage, HintData } from '@/types'
 
 type QuizAction =
-  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number; cachedHints?: Record<number, HintData>; cachedChat?: ChatMessage[]; cachedDrafts?: Record<number, string> }
+  | { type: 'LOAD_QUIZ'; userId: string; sessionId: string; questions: Question[]; examStartMs: number; examDurationMs: number; cachedHints?: Record<number, HintData>; cachedChat?: ChatMessage[]; cachedDrafts?: Record<number, string>; chatEnabled: boolean }
   | { type: 'NAVIGATE_TO'; index: number }
   | { type: 'SUBMIT_RESULT'; questionNumber: number; isCorrect: boolean; userAnswer: string }
   | { type: 'SKIP_QUESTION' }
@@ -34,6 +34,7 @@ const initialState: QuizState = {
   hints: {},
   pendingRatings: {},
   isComplete: false,
+  chatEnabled: true,
 }
 
 function quizReducer(state: QuizState, action: QuizAction): QuizState {
@@ -61,6 +62,7 @@ function quizReducer(state: QuizState, action: QuizAction): QuizState {
         hints: action.cachedHints ?? {},
         pendingRatings: {},
         isComplete: false,
+        chatEnabled: action.chatEnabled,
       }
     }
 

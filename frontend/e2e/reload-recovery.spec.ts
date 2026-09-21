@@ -3,7 +3,7 @@
 // reload: states/prior answers reconstructed from server interaction history,
 // draft restored from localStorage, timer continues server-authoritatively.
 import { test, expect } from '@playwright/test'
-import { loginAsToken, getCorrectAnswer } from './helpers'
+import { loginAsToken, getCorrectAnswer, submitAnswerInUI } from './helpers'
 
 async function answer(page: import('@playwright/test').Page, value: string) {
   const radioCount = await page.locator('input[type="radio"]').count()
@@ -20,7 +20,7 @@ test('reload recovery: mixed question states and an unsubmitted draft survive a 
   // Q1: correct.
   const q1Correct = getCorrectAnswer(1)
   await answer(page, q1Correct)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('✓ Correct!')).toBeVisible()
 
   // Q2: wrong once (stays resumable, not locked).
@@ -28,7 +28,7 @@ test('reload recovery: mixed question states and an unsubmitted draft survive a 
   const q2Correct = getCorrectAnswer(2)
   const q2Wrong = q2Correct === '1' ? '2' : '1'
   await answer(page, q2Wrong)
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
   await expect(page.getByText('1 attempt remaining')).toBeVisible()
 
   // Q3: skip. Skipping auto-advances to Q4, unlike answer submission.

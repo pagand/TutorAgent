@@ -23,11 +23,13 @@ from app.models.user import Participant, User, ExamSession
 async def _create_participant(db, token="TESTTKN1", name="Test User",
                                identifier="t001", group="adaptive",
                                intervention="proactive", status="unused",
-                               active_session_id=None, last_seen_at=None):
+                               active_session_id=None, last_seen_at=None,
+                               chat_enabled=True, chatiq_enabled=True):
     p = Participant(
         token=token, name=name, identifier=identifier,
         group=group, intervention=intervention, status=status,
         active_session_id=active_session_id, last_seen_at=last_seen_at,
+        chat_enabled=chat_enabled, chatiq_enabled=chatiq_enabled,
     )
     db.add(p)
     await db.commit()
@@ -330,3 +332,37 @@ async def test_user_creation_uses_manifest_group(client, db_session):
     u = result.scalars().first()
     assert u.preferences["ab_group"] == "free_choice"
     assert u.preferences["intervention_preference"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_user_creation_copies_chat_flags_from_manifest(client, db_session):
+    """When a Participant row exists, the created User gets its chat_enabled/
+    chatiq_enabled flags copied into preferences, the same way ab_group and
+    intervention_preference are."""
+    from sqlalchemy.future import select
+    await _create_participant(db_session, token="CHATFLAG1", chat_enabled=False, chatiq_enabled=False)
+
+    res = await client.post("/users/", json={"user_id": "CHATFLAG1"})
+    assert res.status_code == 200
+
+    db_session.expire_all()
+    result = await db_session.execute(select(User).filter_by(id="CHATFLAG1"))
+    u = result.scalars().first()
+    assert u.preferences["chat_enabled"] is False
+    assert u.preferences["chatiq_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_user_creation_no_participant_row_defaults_chat_flags_true(client, db_session):
+    """An ad-hoc user_id with no manifest Participant row (dev/test identity)
+    must default both flags to True, never randomised."""
+    from sqlalchemy.future import select
+
+    res = await client.post("/users/", json={"user_id": "NOPARTFLAG1"})
+    assert res.status_code == 200
+
+    db_session.expire_all()
+    result = await db_session.execute(select(User).filter_by(id="NOPARTFLAG1"))
+    u = result.scalars().first()
+    assert u.preferences["chat_enabled"] is True
+    assert u.preferences["chatiq_enabled"] is True

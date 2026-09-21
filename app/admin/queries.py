@@ -132,7 +132,9 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             es.exam_duration_ms,
             es.submitted_at,
             p.status AS participant_status,
-            p.last_seen_at
+            p.last_seen_at,
+            p.chat_enabled,
+            p.chatiq_enabled
         FROM participants p
         FULL OUTER JOIN users u ON u.id = p.token
         LEFT JOIN interaction_agg ia ON ia.user_id = COALESCE(u.id, p.token)

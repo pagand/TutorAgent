@@ -6,7 +6,7 @@
 // on the session_id that claimed the lock would otherwise 403 this exact case,
 // since a fresh browser has no sessionId in localStorage at all.
 import { test, expect } from '@playwright/test'
-import { loginAsToken, getCorrectAnswer } from './helpers'
+import { loginAsToken, getCorrectAnswer, submitAnswerInUI } from './helpers'
 
 test('results cross-device: a fresh browser with no session_id can still view a completed exam', async ({ browser }) => {
   const deviceA = await browser.newContext()
@@ -20,7 +20,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
   } else {
     await pageA.getByPlaceholder('Type your answer…').fill(q1Correct)
   }
-  await pageA.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(pageA)
   await expect(pageA.getByText('✓ Correct!')).toBeVisible()
 
   // Q2: wrong twice -> locked, so its correct answer is genuinely revealed
@@ -37,7 +37,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
   } else {
     await pageA.getByPlaceholder('Type your answer…').fill(q2Wrong1)
   }
-  await pageA.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(pageA)
   await expect(pageA.getByText('1 attempt remaining')).toBeVisible()
 
   const q2Wrong2 = ['1', '2', '3', '4'].find((v) => v !== q2Correct && v !== q2Wrong1) as string
@@ -46,7 +46,7 @@ test('results cross-device: a fresh browser with no session_id can still view a 
   } else {
     await pageA.getByPlaceholder('Type your answer…').fill(q2Wrong2)
   }
-  await pageA.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(pageA)
   await expect(pageA.getByText('✗ Locked — Move on to the next question')).toBeVisible()
 
   await pageA.getByRole('button', { name: 'Submit Exam' }).click()

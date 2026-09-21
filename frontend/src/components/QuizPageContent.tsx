@@ -86,7 +86,7 @@ export default function QuizPageContent() {
   const {
     userId, sessionId, questions, questionStates, currentQuestionIndex,
     examStartMs, examDurationMs, hints, pendingRatings,
-    isComplete, draftAnswers, userAnswers,
+    isComplete, draftAnswers, userAnswers, chatEnabled,
   } = state
 
   const currentQNum = questions[currentQuestionIndex]?.question_number
@@ -302,11 +302,14 @@ export default function QuizPageContent() {
           }
         } catch { /* ignore */ }
 
+        const prefs = profile.preferences || {}
+
         dispatch({
           type: 'LOAD_QUIZ',
           userId: storedUserId!, sessionId: storedSessionId, questions: qs,
           examStartMs: sessionData.exam_start_ms, examDurationMs: sessionData.exam_duration_ms,
           cachedHints, cachedChat, cachedDrafts,
+          chatEnabled: prefs.chat_enabled ?? true,
         })
 
         if (Object.keys(questionStates).length > 0) {
@@ -341,7 +344,6 @@ export default function QuizPageContent() {
         }, 25000)
 
         // Show profile banner for free_choice users who haven't customized their hint style
-        const prefs = profile.preferences || {}
         if (prefs.ab_group === 'free_choice' && (!prefs.hint_style_preference || prefs.hint_style_preference === 'adaptive')) {
           setShowProfileBanner(true)
         }
@@ -853,7 +855,7 @@ export default function QuizPageContent() {
             </div>
 
             {/* Chat */}
-            <ChatPanel defaultOpen />
+            {chatEnabled && <ChatPanel defaultOpen />}
           </div>
         </div>
       </main>

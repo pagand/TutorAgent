@@ -121,6 +121,8 @@ class Participant(Base):
     identifier = Column(String, nullable=False, index=True)  # student ID / email
     group = Column(String, nullable=False)         # free_choice | adaptive
     intervention = Column(String, nullable=False)  # proactive | manual
+    chat_enabled = Column(Boolean, nullable=False, default=True)
+    chatiq_enabled = Column(Boolean, nullable=False, default=True)
     status = Column(String, nullable=False, default="unused")  # unused | active | completed
     active_session_id = Column(String, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)

@@ -26,15 +26,20 @@ from app.models.user import (
 from app.utils.db import AsyncSessionLocal
 
 FIXTURE_PARTICIPANTS = [
-    {"token": "E2ECRITPATH", "name": "E2E Critical Path", "identifier": "e2e-critpath", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ERELOAD", "name": "E2E Reload Recovery", "identifier": "e2e-reload", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2EOUTAGE", "name": "E2E Outage Resume", "identifier": "e2e-outage", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ELOCK", "name": "E2E Second Device Lock", "identifier": "e2e-lock", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ETIMER", "name": "E2E Timer Expiry", "identifier": "e2e-timer", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2EXDEVICE", "name": "E2E Cross Device Results", "identifier": "e2e-xdevice", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ESWITCHA", "name": "E2E Token Switch A", "identifier": "e2e-switch-a", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ESWITCHB", "name": "E2E Token Switch B", "identifier": "e2e-switch-b", "group": "free_choice", "intervention": "manual"},
-    {"token": "E2ESWITCHC", "name": "E2E Token Switch C", "identifier": "e2e-switch-c", "group": "free_choice", "intervention": "manual"},
+    {"token": "E2ECRITPATH", "name": "E2E Critical Path", "identifier": "e2e-critpath", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ERELOAD", "name": "E2E Reload Recovery", "identifier": "e2e-reload", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2EOUTAGE", "name": "E2E Outage Resume", "identifier": "e2e-outage", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELOCK", "name": "E2E Second Device Lock", "identifier": "e2e-lock", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ETIMER", "name": "E2E Timer Expiry", "identifier": "e2e-timer", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2EXDEVICE", "name": "E2E Cross Device Results", "identifier": "e2e-xdevice", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ESWITCHA", "name": "E2E Token Switch A", "identifier": "e2e-switch-a", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ESWITCHB", "name": "E2E Token Switch B", "identifier": "e2e-switch-b", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ESWITCHC", "name": "E2E Token Switch C", "identifier": "e2e-switch-c", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ECONF", "name": "E2E Confidence", "identifier": "e2e-confidence", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ECHATOFF", "name": "E2E Chat Off Arm", "identifier": "e2e-chat-off", "group": "free_choice", "intervention": "manual", "chat": False, "chatiq": False},
+    {"token": "E2ECHATIQOFF", "name": "E2E ChatIQ Off Arm", "identifier": "e2e-chatiq-off", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": False},
+    {"token": "E2ECHATIQON", "name": "E2E ChatIQ On Arm", "identifier": "e2e-chatiq-on", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2EMOBILE", "name": "E2E Mobile Layout", "identifier": "e2e-mobile", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
 ]
 
 
@@ -59,6 +64,8 @@ async def run():
                 participant.token = token
                 participant.group = row["group"]
                 participant.intervention = row["intervention"]
+                participant.chat_enabled = row["chat"]
+                participant.chatiq_enabled = row["chatiq"]
                 participant.name = row["name"]
                 participant.status = "unused"
                 participant.active_session_id = None
@@ -71,6 +78,8 @@ async def run():
                     identifier=row["identifier"],
                     group=row["group"],
                     intervention=row["intervention"],
+                    chat_enabled=row["chat"],
+                    chatiq_enabled=row["chatiq"],
                     status="unused",
                 ))
         await session.commit()

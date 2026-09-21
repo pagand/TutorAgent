@@ -36,4 +36,5 @@ export interface QuizState {
   hints: Record<number, HintData>         // per question_number, persists across navigation
   pendingRatings: Record<number, number>  // per question_number
   isComplete: boolean
+  chatEnabled: boolean
 }

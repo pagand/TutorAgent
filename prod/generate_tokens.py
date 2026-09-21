@@ -1,9 +1,10 @@
 """
 prod/generate_tokens.py
 
-Reads prod/data/participants.csv (name, identifier, group, intervention),
-generates a unique 8-char token per participant, writes prod/data/manifest.csv,
-and upserts all rows into the 'participants' DB table.
+Reads prod/data/participants.csv (name, identifier, group, intervention,
+chat, chatiq), generates a unique 8-char token per participant, writes
+prod/data/manifest.csv, and upserts all rows into the 'participants' DB
+table.
 
 Usage (from project root, with .venv active and DB running):
     python prod/generate_tokens.py
@@ -33,6 +34,7 @@ ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 TOKEN_LENGTH = 8
 VALID_GROUPS = {"free_choice", "adaptive"}
 VALID_INTERVENTIONS = {"proactive", "manual"}
+VALID_ON_OFF = {"on", "off"}
 
 
 def generate_token() -> str:
@@ -52,7 +54,7 @@ async def run():
         sys.exit(1)
 
     # Validate columns
-    required = {"name", "identifier", "group", "intervention"}
+    required = {"name", "identifier", "group", "intervention", "chat", "chatiq"}
     missing = required - set(rows[0].keys())
     if missing:
         print(f"ERROR: Missing columns in participants.csv: {missing}")
@@ -65,6 +67,15 @@ async def run():
             sys.exit(1)
         if row["intervention"] not in VALID_INTERVENTIONS:
             print(f"ERROR row {i}: intervention='{row['intervention']}' must be one of {VALID_INTERVENTIONS}")
+            sys.exit(1)
+        if row["chat"] not in VALID_ON_OFF:
+            print(f"ERROR row {i}: chat='{row['chat']}' must be one of {VALID_ON_OFF}")
+            sys.exit(1)
+        if row["chatiq"] not in VALID_ON_OFF:
+            print(f"ERROR row {i}: chatiq='{row['chatiq']}' must be one of {VALID_ON_OFF}")
+            sys.exit(1)
+        if row["chat"] == "off" and row["chatiq"] == "on":
+            print(f"ERROR row {i}: chat='off' with chatiq='on' is invalid")
             sys.exit(1)
 
     async with AsyncSessionLocal() as session:
@@ -80,6 +91,8 @@ async def run():
             name = row["name"].strip()
             group = row["group"].strip()
             intervention = row["intervention"].strip()
+            chat_enabled = row["chat"].strip() == "on"
+            chatiq_enabled = row["chatiq"].strip() == "on"
 
             # Check for an existing participant by identifier (idempotent re-runs)
             result = await session.execute(
@@ -89,10 +102,12 @@ async def run():
 
             if participant:
                 token = participant.token
-                # Update group/intervention in case they changed in the CSV
+                # Update group/intervention/chat flags in case they changed in the CSV
                 participant.group = group
                 participant.intervention = intervention
                 participant.name = name
+                participant.chat_enabled = chat_enabled
+                participant.chatiq_enabled = chatiq_enabled
             else:
                 # Generate a unique token
                 token = generate_token()
@@ -106,6 +121,8 @@ async def run():
                     identifier=identifier,
                     group=group,
                     intervention=intervention,
+                    chat_enabled=chat_enabled,
+                    chatiq_enabled=chatiq_enabled,
                     status="unused",
                 )
                 session.add(participant)
@@ -117,13 +134,15 @@ async def run():
                 "identifier": identifier,
                 "group": group,
                 "intervention": intervention,
+                "chat": row["chat"].strip(),
+                "chatiq": row["chatiq"].strip(),
             })
 
         await session.commit()
 
     # Write manifest CSV
     with open(OUTPUT_PATH, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["token", "name", "identifier", "group", "intervention"])
+        writer = csv.DictWriter(f, fieldnames=["token", "name", "identifier", "group", "intervention", "chat", "chatiq"])
         writer.writeheader()
         writer.writerows(manifest_rows)
 
@@ -132,7 +151,7 @@ async def run():
     print()
     print("Tokens (for distribution):")
     for r in manifest_rows:
-        print(f"  {r['token']}  {r['name']} ({r['identifier']})  [{r['group']}/{r['intervention']}]")
+        print(f"  {r['token']}  {r['name']} ({r['identifier']})  [{r['group']}/{r['intervention']}/chat={r['chat']}/chatiq={r['chatiq']}]")
 
 
 if __name__ == "__main__":

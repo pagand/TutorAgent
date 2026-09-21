@@ -55,6 +55,25 @@ export async function loginAsToken(page: Page, token: string) {
   await expect(page.getByText('Q1 of')).toBeVisible({ timeout: 15000 })
 }
 
+/**
+ * Clicks Submit Answer in the UI, setting the confidence bar first so the
+ * nudge never swallows the click (CLAUDE.md, Confidence Capture). Pass null
+ * to leave the bar untouched and take the two-click nudge path instead, but
+ * only where the attempt is known not to have consumed the nudge already -
+ * a failed submit leaves it consumed, and the second click would then land
+ * on a disabled button. confidence.spec.ts owns the nudge itself.
+ */
+export async function submitAnswerInUI(page: Page, confidence: number | null = 5) {
+  const submit = page.getByRole('button', { name: 'Submit Answer' })
+  if (confidence === null) {
+    await submit.click()
+    await submit.click()
+    return
+  }
+  await page.getByLabel(`Confidence ${confidence} of 10`).click()
+  await submit.click()
+}
+
 /** Submits an answer directly against the backend, bypassing the UI entirely. */
 export async function submitAnswerDirect(request: APIRequestContext, payload: {
   user_id: string

@@ -25,7 +25,7 @@ from app.models.user import Participant
 
 def _write_manifest(path, rows):
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["token", "name", "identifier", "group", "intervention"])
+        writer = csv.DictWriter(f, fieldnames=["token", "name", "identifier", "group", "intervention", "chat", "chatiq"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -49,7 +49,7 @@ async def _seed(db_session, monkeypatch, tmp_path, rows):
 @pytest.mark.asyncio
 async def test_inserts_new_participant_as_unused(db_session, monkeypatch, tmp_path):
     await _seed(db_session, monkeypatch, tmp_path, [
-        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive"},
+        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive", "chat": "on", "chatiq": "on"},
     ])
 
     result = await db_session.execute(select(Participant).filter_by(token="TOK1"))
@@ -62,7 +62,7 @@ async def test_inserts_new_participant_as_unused(db_session, monkeypatch, tmp_pa
 
 @pytest.mark.asyncio
 async def test_idempotent_rerun_changes_nothing(db_session, monkeypatch, tmp_path):
-    rows = [{"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive"}]
+    rows = [{"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive", "chat": "on", "chatiq": "on"}]
     await _seed(db_session, monkeypatch, tmp_path, rows)
     await _seed(db_session, monkeypatch, tmp_path, rows)
 
@@ -74,7 +74,7 @@ async def test_idempotent_rerun_changes_nothing(db_session, monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_reseed_preserves_in_flight_session_state(db_session, monkeypatch, tmp_path):
-    rows = [{"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive"}]
+    rows = [{"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive", "chat": "on", "chatiq": "on"}]
     await _seed(db_session, monkeypatch, tmp_path, rows)
 
     result = await db_session.execute(select(Participant).filter_by(token="TOK1"))
@@ -100,16 +100,18 @@ async def test_reseed_preserves_in_flight_session_state(db_session, monkeypatch,
 @pytest.mark.asyncio
 async def test_reseed_updates_group_and_intervention(db_session, monkeypatch, tmp_path):
     await _seed(db_session, monkeypatch, tmp_path, [
-        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive"},
+        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "adaptive", "intervention": "proactive", "chat": "on", "chatiq": "on"},
     ])
     await _seed(db_session, monkeypatch, tmp_path, [
-        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "free_choice", "intervention": "manual"},
+        {"token": "TOK1", "name": "Alice", "identifier": "a1", "group": "free_choice", "intervention": "manual", "chat": "on", "chatiq": "off"},
     ])
 
     result = await db_session.execute(select(Participant).filter_by(token="TOK1"))
     p = result.scalars().first()
     assert p.group == "free_choice"
     assert p.intervention == "manual"
+    assert p.chat_enabled is True
+    assert p.chatiq_enabled is False
 
 
 @pytest.mark.asyncio
@@ -128,3 +130,29 @@ async def test_empty_manifest_exits_nonzero(db_session, monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc_info:
         await seed_participants.run()
     assert exc_info.value.code != 0
+
+
+@pytest.mark.asyncio
+async def test_rejects_invalid_arm_combination(db_session, monkeypatch, tmp_path):
+    """The manifest on the box can be hand-edited, so a chat=off/chatiq=on row
+    must stop the boot seed rather than silently mis-assign an arm."""
+    with pytest.raises(SystemExit):
+        await _seed(db_session, monkeypatch, tmp_path, [
+            {"token": "TOKBAD", "name": "Bad Arm", "identifier": "bad-arm", "group": "adaptive",
+             "intervention": "manual", "chat": "off", "chatiq": "on"},
+        ])
+
+    result = await db_session.execute(select(Participant).filter_by(token="TOKBAD"))
+    assert result.scalars().first() is None
+
+
+@pytest.mark.asyncio
+async def test_rejects_unknown_on_off_value(db_session, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit):
+        await _seed(db_session, monkeypatch, tmp_path, [
+            {"token": "TOKBAD2", "name": "Bad Value", "identifier": "bad-value", "group": "adaptive",
+             "intervention": "manual", "chat": "yes", "chatiq": "on"},
+        ])
+
+    result = await db_session.execute(select(Participant).filter_by(token="TOKBAD2"))
+    assert result.scalars().first() is None

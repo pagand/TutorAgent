@@ -21,14 +21,15 @@ from langchain_core.output_parsers import StrOutputParser
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 CHAT_PROMPT_TEMPLATE = PromptTemplate.from_template(
-    """You are a supportive AI tutor helping a student during an exam. Your role is to guide thinking, never to reveal answers directly.
+    """You are a supportive AI tutor helping a student during a proctored exam. You can see the current question below.
 
 CRITICAL RULES:
-- NEVER state the correct answer explicitly, even if directly asked.
-- If the student asks for the answer, redirect with a guiding question.
+- Answer the student's actual question directly and correctly first. A guiding follow-up question may come after that answer, but must never replace it.
+- NEVER give away the final answer to an exam question - not the current one, not one the student describes or pastes into the chat. If the student asks for a final answer, decline that specific part and redirect with a guiding question instead, but still answer any general conceptual question they asked.
+- A general explanation of a concept (for example, what a term means) is not the exam answer; answering it directly is correct behavior, not a leak.
 - Keep responses concise: 2-4 sentences maximum.
 - Be encouraging and constructive.
-- Do not generate useless sentences such as "That is an interesting question" or similar. Try to reframe the original question or the user query followed by your hint.
+- Your first sentence must engage directly with the substance of what the student is asking or confused about. Do not restate or repeat their question back to them, and do not open with filler such as "That's an interesting question."
 
 Current Question:
 {question}
@@ -49,7 +50,39 @@ Conversation so far:
 
 Student's message: {user_message}
 
-Tutor response (guide, don't reveal):"""
+Respond to the student's message above, grounded in the current question, history, current answer attempt, and reference material shown above where relevant. Never reveal or hint at which option is correct for the current question.
+
+Tutor response:"""
+)
+
+
+# ChatIQ off: the prompt has no knowledge of the current question at all -
+# only the running conversation and the no-reveal guard rules. No question
+# text, options, user history, mastery, hint history/style, RAG context, or
+# current answer attempt. A second template rather than empty strings
+# threaded through CHAT_PROMPT_TEMPLATE, since an empty labelled section in a
+# prompt still says something to the model, and because this is now a
+# genuinely different treatment (general-purpose chat with a guard), not a
+# trimmed-down copy of the ON template.
+CHAT_PROMPT_TEMPLATE_CHATIQ_OFF = PromptTemplate.from_template(
+    """You are a supportive AI tutor helping a student during a proctored exam. You cannot see which question the student is currently working on - you only have the conversation below, so if they want help on a specific question, they need to paste it into the chat.
+
+CRITICAL RULES:
+- Answer the student's actual question directly and correctly first. A guiding follow-up question may come after that answer, but must never replace it.
+- NEVER give away the final answer to an exam question - not the current one, not one the student describes or pastes into the chat. If the student asks for a final answer, decline that specific part and redirect with a guiding question instead, but still answer any general conceptual question they asked.
+- A general explanation of a concept (for example, what a term means) is not the exam answer; answering it directly is correct behavior, not a leak.
+- Keep responses concise: 2-4 sentences maximum.
+- Be encouraging and constructive.
+- Your first sentence must engage directly with the substance of what the student is asking or confused about. Do not restate or repeat their question back to them, and do not open with filler such as "That's an interesting question."
+
+Conversation so far:
+{chat_history}
+
+Student's message: {user_message}
+
+Respond to the student's message above. If the message includes a pasted exam question and options, do not reveal or imply which option is correct.
+
+Tutor response:"""
 )
 
 
@@ -112,6 +145,11 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    preferences = user.preferences or {}
+    if preferences.get("chat_enabled", True) is False:
+        raise HTTPException(status_code=403, detail="Tutor chat is not available for this session.")
+    chatiq_enabled = preferences.get("chatiq_enabled", True) is not False
+
     question_obj = question_service.get_question_by_id(request.question_number)
     if not question_obj:
         raise HTTPException(status_code=404, detail="Question not found")
@@ -120,7 +158,7 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
         if not rag_agent._initialize_rag_components():
             raise HTTPException(status_code=503, detail="AI components not ready")
 
-    user_history = await get_user_history_summary(db, request.user_id)
+    user_history = await get_user_history_summary(db, request.user_id) if chatiq_enabled else None
     chat_history_text = await _recent_chat_history_text(db, request.user_id)
 
     # Reserve the call against the per-user/global daily LLM cap before it
@@ -131,31 +169,40 @@ async def chat_with_tutor(request: ChatRequest, db: AsyncSession = Depends(get_d
     await db.commit()
 
     try:
-        query = f"Question: {question_obj.question}\nStudent message: {request.message}"
-        # Timed separately from the LLM call below: langchain_chroma has no native
-        # async, so this falls through to run_in_executor with a synchronous Google
-        # embedding HTTP call inside each of its 6 slots. That is one of the two
-        # documented single-worker throughput suspects (PRELAUNCH_CHECKLIST.md
-        # section C), so it needs its own number, not one merged with Gemini's.
-        _t0 = time.perf_counter()
-        docs = await rag_agent._retriever.ainvoke(query)
-        metrics.record_llm("chat retrieval", (time.perf_counter() - _t0) * 1000.0)
-        context = format_docs(docs)
-
         options_text = "\n".join(f"- {opt}" for opt in question_obj.options) if question_obj.options else "Open-ended question"
 
-        chain = CHAT_PROMPT_TEMPLATE | rag_agent._llm_client | StrOutputParser()
-        _t0 = time.perf_counter()
-        response_text = await chain.ainvoke({
-            "question": question_obj.question,
-            "options": options_text,
-            "current_answer": request.current_answer or "Not provided",
-            "user_history": user_history,
-            "context": context,
-            "chat_history": chat_history_text,
-            "user_message": request.message,
-        })
-        metrics.record_llm("chat LLM", (time.perf_counter() - _t0) * 1000.0)
+        if chatiq_enabled:
+            query = f"Question: {question_obj.question}\nStudent message: {request.message}"
+            # Timed separately from the LLM call below: langchain_chroma has no native
+            # async, so this falls through to run_in_executor with a synchronous Google
+            # embedding HTTP call inside each of its 6 slots. That is one of the two
+            # documented single-worker throughput suspects (PRELAUNCH_CHECKLIST.md
+            # section C), so it needs its own number, not one merged with Gemini's.
+            _t0 = time.perf_counter()
+            docs = await rag_agent._retriever.ainvoke(query)
+            metrics.record_llm("chat retrieval", (time.perf_counter() - _t0) * 1000.0)
+            context = format_docs(docs)
+
+            chain = CHAT_PROMPT_TEMPLATE | rag_agent._llm_client | StrOutputParser()
+            _t0 = time.perf_counter()
+            response_text = await chain.ainvoke({
+                "question": question_obj.question,
+                "options": options_text,
+                "current_answer": request.current_answer or "Not provided",
+                "user_history": user_history,
+                "context": context,
+                "chat_history": chat_history_text,
+                "user_message": request.message,
+            })
+            metrics.record_llm("chat LLM", (time.perf_counter() - _t0) * 1000.0)
+        else:
+            chain = CHAT_PROMPT_TEMPLATE_CHATIQ_OFF | rag_agent._llm_client | StrOutputParser()
+            _t0 = time.perf_counter()
+            response_text = await chain.ainvoke({
+                "chat_history": chat_history_text,
+                "user_message": request.message,
+            })
+            metrics.record_llm("chat LLM", (time.perf_counter() - _t0) * 1000.0)
 
         # Re-acquire a connection only for the write
         log_entry = ChatLog(

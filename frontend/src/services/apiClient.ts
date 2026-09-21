@@ -53,9 +53,17 @@ export interface InteractionLogEntry {
   bkt_change: number | null
 }
 
+export interface UserPreferences {
+  ab_group?: string
+  hint_style_preference?: string
+  intervention_preference?: string
+  chat_enabled?: boolean
+  chatiq_enabled?: boolean
+}
+
 export interface UserProfile {
   user_id: string
-  preferences: Record<string, string>
+  preferences: UserPreferences
   interaction_history: InteractionLogEntry[]
   completed_answers: Record<number, string>
 }

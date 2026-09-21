@@ -399,11 +399,15 @@ def _simple_table(headers: list[str], rows: list[list]) -> str:
 def _users_table(users: list[dict]) -> str:
     headers = ["user_id", "ab_group", "participant_status", "hint_style_pref", "created_at",
                "total_interactions", "correctness", "hints_used", "chat_messages",
-               "remaining_min", "submitted", "active"]
+               "remaining_min", "submitted", "active", "chat", "chatiq"]
     thead = "".join(f"<th>{h}</th>" for h in headers)
     rows = []
     for u in users:
         created = _fmt_ts(u.get("created_at"), "%Y-%m-%d %H:%M")
+        chat_on = u.get("chat_enabled")
+        chat_on = True if chat_on is None else chat_on
+        chatiq_on = u.get("chatiq_enabled")
+        chatiq_on = True if chatiq_on is None else chatiq_on
         correctness = (
             f"{u['correct_answers'] / u['total_interactions']:.0%}"
             if u["total_interactions"] else "-"
@@ -423,6 +427,8 @@ def _users_table(users: list[dict]) -> str:
             html.escape("" if u["remaining_min"] is None else str(u["remaining_min"])),
             "Yes" if u["submitted"] else "No",
             '<span class="online">online</span>' if u["online"] else '<span class="offline">offline</span>',
+            "on" if chat_on else "off",
+            '<span class="online">ChatIQ on</span>' if chatiq_on else '<span class="offline">ChatIQ off</span>',
         ]
         rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
     return f'<table class="data-table"><thead><tr>{thead}</tr></thead><tbody>{"".join(rows)}</tbody></table>'

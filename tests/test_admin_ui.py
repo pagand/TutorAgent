@@ -71,18 +71,21 @@ async def _insert_exam_session(db_session, user_id, exam_start_ms, exam_duration
     await db_session.commit()
 
 
-async def _insert_participant(db_session, user_id, status="unused", active_session_id=None, last_seen_at=None):
-    # name, identifier, "group" and intervention are NOT NULL with no default
-    # on the Participant model (app/models/user.py) - the queries under test
-    # never read them, but the insert fails without them. "group" is a SQL
-    # reserved word, quoted accordingly.
+async def _insert_participant(db_session, user_id, status="unused", active_session_id=None,
+                               last_seen_at=None, chat_enabled=True, chatiq_enabled=True):
+    # name, identifier, "group", intervention, chat_enabled and chatiq_enabled are
+    # NOT NULL with no server-side default on the Participant model (app/models/user.py)
+    # - the queries under test never read most of them, but the insert fails without
+    # them since a raw text() INSERT bypasses the ORM's Python-side `default=`.
+    # "group" is a SQL reserved word, quoted accordingly.
     await db_session.execute(
         text('INSERT INTO participants (token, name, identifier, "group", intervention, '
-             "status, active_session_id, last_seen_at) "
+             "chat_enabled, chatiq_enabled, status, active_session_id, last_seen_at) "
              'VALUES (:token, :name, :identifier, :group_val, :intervention, '
-             ":status, :active_session_id, :last_seen_at)"),
+             ":chat_enabled, :chatiq_enabled, :status, :active_session_id, :last_seen_at)"),
         {"token": user_id, "name": "Test Student", "identifier": user_id,
          "group_val": "adaptive", "intervention": "proactive",
+         "chat_enabled": chat_enabled, "chatiq_enabled": chatiq_enabled,
          "status": status, "active_session_id": active_session_id,
          "last_seen_at": last_seen_at},
     )
@@ -161,6 +164,17 @@ async def test_admin_home_with_users(client, db_session, seeded_user, stub_llm_u
     response = await client.get("/admin/students")
     assert response.status_code == 200
     assert seeded_user in response.text
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_admin_students_shows_chat_and_chatiq_flags(client, db_session, seeded_user, stub_llm_usage):
+    """The Students tab roster must show both new per-participant flags,
+    ChatIQ rendered as a colored on/off tag."""
+    await _insert_participant(db_session, seeded_user, chat_enabled=True, chatiq_enabled=False)
+    response = await client.get("/admin/students")
+    assert response.status_code == 200
+    assert '<span class="offline">ChatIQ off</span>' in response.text
 
 
 @_SKIP_JSON_ARROW

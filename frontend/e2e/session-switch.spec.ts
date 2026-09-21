@@ -13,7 +13,7 @@
 //    isComplete and their unscoped `examResults`, redirecting the new student
 //    straight to /results and exposing the previous student's answer key.
 import { test, expect } from '@playwright/test'
-import { loginAsToken, getCorrectAnswer } from './helpers'
+import { loginAsToken, getCorrectAnswer, submitAnswerInUI } from './helpers'
 
 /** Answers the question currently on screen, handling both MC and free-text. */
 async function answerCurrent(page: import('@playwright/test').Page, value: string) {
@@ -23,7 +23,7 @@ async function answerCurrent(page: import('@playwright/test').Page, value: strin
   } else {
     await page.getByPlaceholder('Type your answer…').fill(value)
   }
-  await page.getByRole('button', { name: 'Submit Answer' }).click()
+  await submitAnswerInUI(page)
 }
 
 test('logging out and back in on the same token can still submit, with no reload', async ({ page }) => {

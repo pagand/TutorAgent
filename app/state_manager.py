@@ -27,6 +27,8 @@ async def get_user_or_create(session: AsyncSession, user_id: str) -> User:
         if participant:
             ab_group = participant.group
             intervention_pref = participant.intervention
+            chat_enabled = participant.chat_enabled
+            chatiq_enabled = participant.chatiq_enabled
         else:
             ab_group, intervention_pref = random.choice([
                 ("adaptive", "proactive"),
@@ -34,6 +36,8 @@ async def get_user_or_create(session: AsyncSession, user_id: str) -> User:
                 ("free_choice", "proactive"),
                 ("free_choice", "manual"),
             ])
+            chat_enabled = True
+            chatiq_enabled = True
         logger.info(f"Adding new user '{user_id}'. A/B group: {ab_group}, intervention: {intervention_pref}")
         user = User(
             id=user_id,
@@ -41,6 +45,8 @@ async def get_user_or_create(session: AsyncSession, user_id: str) -> User:
                 "hint_style_preference": "adaptive",
                 "intervention_preference": intervention_pref,
                 "ab_group": ab_group,
+                "chat_enabled": chat_enabled,
+                "chatiq_enabled": chatiq_enabled,
             }
         )
         session.add(user)

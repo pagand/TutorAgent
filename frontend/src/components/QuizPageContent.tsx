@@ -39,6 +39,9 @@ function formatAway(ms: number): string {
 
 const SKIP_ATTEMPT_SENTINEL = '__skip__'
 
+// Absences of this length or shorter are not recorded and show no banner.
+const PAGE_LEAVE_MIN_AWAY_MS = 5000
+
 /** A 409 from /answer/ means the question is locked server-side but the local
  * view hasn't caught up (e.g. a stale second tab) — retrying the same action
  * will only 409 again, so this tells the student to resync via reload instead
@@ -608,7 +611,7 @@ export default function QuizPageContent() {
     }
   }, [userId, sessionId])
 
-  // A leave is hidden -> visible within one page lifetime. The start lives only
+  // A leave is hidden -> visible within one page lifetime, longer than PAGE_LEAVE_MIN_AWAY_MS. The start lives only
   // in this ref, so a reload, tab close or navigation never produces a record.
   useEffect(() => {
     if (!userId || !sessionId || examStartMs <= 0 || isComplete || timerExpired) return
@@ -626,13 +629,15 @@ export default function QuizPageContent() {
       if (leftAt === null) return
       const returnedAt = Date.now()
       const awayMs = returnedAt - leftAt
+      const startedAt = leftAt
+      leftAt = null
+      if (awayMs <= PAGE_LEAVE_MIN_AWAY_MS) return
       logAction({
         user_id: userId, session_id: sessionId, action_type: 'page_leave',
         question_number: leftQuestion,
-        action_data: { left_at: leftAt, returned_at: returnedAt, away_ms: awayMs },
+        action_data: { left_at: startedAt, returned_at: returnedAt, away_ms: awayMs },
       })
       setPageLeaveAwayMs(awayMs)
-      leftAt = null
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)

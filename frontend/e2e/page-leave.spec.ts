@@ -1,6 +1,6 @@
 // frontend/e2e/page-leave.spec.ts
 // A page_leave is recorded only when the page goes hidden and visible again
-// within one page lifetime, while the exam is running. Visibility is simulated
+// within one page lifetime, for more than 5 seconds, while the exam is running. Visibility is simulated
 // by overriding document.visibilityState and dispatching visibilitychange.
 import { test, expect, Page } from '@playwright/test'
 import { loginAsToken } from './helpers'
@@ -28,19 +28,32 @@ function trackLeaves(page: Page) {
   return leaves
 }
 
-test('page_leave: hide then show logs one event and shows the banner', async ({ page }) => {
+test('page_leave: an absence of 5 seconds or less logs nothing and shows no banner', async ({ page }) => {
   const leaves = trackLeaves(page)
   await loginAsToken(page, 'E2ELEAVEA')
 
   await setVisibility(page, 'hidden')
   await page.waitForTimeout(1500)
   await setVisibility(page, 'visible')
+  await page.waitForTimeout(500)
+
+  expect(leaves.length).toBe(0)
+  await expect(page.getByText('This is recorded.')).toHaveCount(0)
+})
+
+test('page_leave: an absence over 5 seconds logs one event and shows the banner', async ({ page }) => {
+  const leaves = trackLeaves(page)
+  await loginAsToken(page, 'E2ELEAVED')
+
+  await setVisibility(page, 'hidden')
+  await page.waitForTimeout(6000)
+  await setVisibility(page, 'visible')
 
   await expect(page.getByText('This is recorded.')).toBeVisible()
   await expect(page.getByText(/You left the exam page for \d+ s\./)).toBeVisible()
   await expect.poll(() => leaves.length).toBe(1)
   expect(leaves[0].question_number).toBe(1)
-  expect(leaves[0].action_data.away_ms).toBeGreaterThanOrEqual(1000)
+  expect(leaves[0].action_data.away_ms).toBeGreaterThan(5000)
   expect(leaves[0].action_data.returned_at - leaves[0].action_data.left_at).toBe(leaves[0].action_data.away_ms)
 
   await page.getByRole('button', { name: 'Dismiss notice' }).click()

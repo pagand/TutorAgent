@@ -138,7 +138,7 @@ Set the times to the real window (start about 30 minutes before students arrive)
   <li><strong>Admin Exam tab</strong>: active sessions, LLM usage and headroom. No alert fires when a cap is near, it just starts rejecting hints and chat, so glance at it now and then.</li>
   <li><strong>Admin Health tab</strong>: in-memory request, error and latency counters, container memory. No DB queries, so it works even if the DB is struggling. Counters reset when api restarts.</li>
   <li><strong>Logs</strong> (JSON line per request, joinable by <code>request_id</code>): <code>box "docker compose logs --tail 100 api"</code>. Also <code>db</code> and <code>nginx</code>. Look for 5xx and Gemini errors.</li>
-  <li><strong>Tab or app switches</strong>: the Students tab <code>left_page</code> column counts them per student. The detail is in Action Logs as <code>page_leave</code> rows, with <code>away_ms</code> in the action data.</li>
+  <li><strong>Tab or app switches</strong>: only absences longer than 5 seconds are recorded. The Students tab <code>left_page</code> column counts them per student. The detail is in Action Logs as <code>page_leave</code> rows, with <code>away_ms</code> in the action data.</li>
   <li><strong>CPU</strong>: t3 is burstable. Check the instance in the EC2 console (CPUUtilization, CPUCreditBalance). The only CPU alarm is 90% for 15 minutes, and it emails.</li>
 </ul>
 

@@ -14,6 +14,7 @@ import html
 import io
 import json
 from urllib.parse import quote, urlparse
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -88,14 +89,14 @@ ACTION_TYPES = [
 LOG_TYPE_OPTIONS = ["Interaction Logs", "Chat Logs", "Intervention Logs", "Action Logs"]
 
 EXPORT_COLUMNS = {
-    "Interaction Logs": ["timestamp", "user_id", "ab_group", "question_id", "skill", "user_answer",
+    "Interaction Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "question_id", "skill", "user_answer",
                           "is_correct", "hint_shown", "hint_style_used", "hint_text",
                           "user_feedback_rating", "bkt_change", "time_taken_ms", "confidence"],
-    "Chat Logs": ["timestamp", "user_id", "ab_group", "session_id", "question_number",
+    "Chat Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "question_number",
                   "user_message", "tutor_response"],
-    "Intervention Logs": ["timestamp", "user_id", "ab_group", "session_id", "question_number",
+    "Intervention Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "question_number",
                            "time_on_question_ms", "mastery_at_trigger", "reason", "accepted"],
-    "Action Logs": ["timestamp", "user_id", "ab_group", "session_id", "action_type",
+    "Action Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "action_type",
                      "question_number", "action_data"],
 }
 
@@ -276,12 +277,30 @@ def _confirm_mismatch_response(user_id: str, action_label: str) -> HTMLResponse:
     return _page("Confirmation failed", body, status_code=400)
 
 
+_ADMIN_TZ = ZoneInfo("America/Vancouver")
+
+
+def _to_pt(ts):
+    """Storage is naive UTC; naive values are treated as UTC explicitly."""
+    if isinstance(ts, str):
+        try:
+            ts = datetime.datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+    if not isinstance(ts, datetime.datetime):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    return ts.astimezone(_ADMIN_TZ)
+
+
 def _fmt_ts(ts, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     if ts is None:
         return "-"
-    if hasattr(ts, "strftime"):
-        return ts.strftime(fmt)
-    return str(ts)
+    local = _to_pt(ts)
+    if local is None:
+        return str(ts)
+    return local.strftime(fmt + " %Z")
 
 
 def _truncate(text_value, length: int = 200) -> str:
@@ -895,7 +914,7 @@ async def admin_user_detail(user_id: str, db: AsyncSession = Depends(get_db),
             body.append('<p class="info">No exam session started yet.</p>')
         if participant_info:
             lock_label = participant_info.get("active_session_id") or "-"
-            last_seen = participant_info.get("last_seen_at") or "-"
+            last_seen = _fmt_ts(participant_info.get("last_seen_at"))
             body.append(
                 f'<p class="caption">Participant status: <strong>{html.escape(str(participant_info.get("status") or "?"))}</strong>'
                 f' | Lock: <code>{html.escape(str(lock_label))}</code>'
@@ -1188,6 +1207,17 @@ def _parse_date(value: str | None) -> datetime.date | None:
         return None
 
 
+def _export_value(row: dict, column: str):
+    if column not in ("timestamp_utc", "timestamp_pt"):
+        return row.get(column)
+    local = _to_pt(row.get("timestamp"))
+    if local is None:
+        return None
+    if column == "timestamp_pt":
+        return local.isoformat()
+    return local.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _export_cell(value):
     if isinstance(value, (dict, list)):
         return json.dumps(value, default=str)
@@ -1243,7 +1273,7 @@ async def admin_export_download(request: Request, db: AsyncSession = Depends(get
         buf.seek(0)
         buf.truncate(0)
         for row in rows:
-            writer.writerow([_export_cell(row.get(c)) for c in columns])
+            writer.writerow([_export_cell(_export_value(row, c)) for c in columns])
             yield buf.getvalue()
             buf.seek(0)
             buf.truncate(0)

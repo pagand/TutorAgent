@@ -655,3 +655,44 @@ async def test_admin_exempt_from_api_key_while_other_paths_401(client, stub_llm_
         assert non_admin_response.status_code == 401
     finally:
         settings.api_key = original
+
+# --- Vancouver time display and dual-timestamp export ---
+
+def test_fmt_ts_converts_utc_to_vancouver_with_zone_label():
+    from app.endpoints.admin_ui import _fmt_ts
+    assert _fmt_ts(datetime.datetime(2026, 7, 1, 21, 9, 24)) == "2026-07-01 14:09:24 PDT"
+    assert _fmt_ts(datetime.datetime(2026, 3, 1, 22, 9, 24)) == "2026-03-01 14:09:24 PST"
+    aware = datetime.datetime(2026, 7, 1, 21, 9, 24, tzinfo=datetime.timezone.utc)
+    assert _fmt_ts(aware) == "2026-07-01 14:09:24 PDT"
+    assert _fmt_ts("2026-03-01 22:09:24.5") == "2026-03-01 14:09:24 PST"
+    assert _fmt_ts(None) == "-"
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_admin_user_page_shows_pacific_time(client, db_session, seeded_user):
+    await _insert_action_log(db_session, seeded_user, action_type="question_view",
+                             timestamp=datetime.datetime(2026, 7, 1, 21, 9, 24))
+    await _insert_action_log(db_session, seeded_user, action_type="answer_submit",
+                             timestamp=datetime.datetime(2026, 3, 1, 22, 9, 24))
+    response = await client.get(f"/admin/user/{seeded_user}?tab=actions")
+    assert response.status_code == 200
+    assert "2026-07-01 14:09:24 PDT" in response.text
+    assert "2026-03-01 14:09:24 PST" in response.text
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_has_utc_and_pt_timestamp_columns(client, db_session, seeded_user):
+    await _insert_interaction(db_session, seeded_user, timestamp=datetime.datetime(2026, 7, 1, 21, 9, 24, 391400))
+    await _insert_interaction(db_session, seeded_user, timestamp=datetime.datetime(2026, 3, 1, 22, 9, 24))
+    response = await client.get("/admin/export/download", params={"log_type": "Interaction Logs"})
+    lines = response.text.splitlines()
+    assert lines[0].startswith("timestamp_utc,timestamp_pt,user_id")
+    assert "timestamp," not in lines[0]
+    body = response.text
+    assert "2026-07-01T21:09:24.391400Z,2026-07-01T14:09:24.391400-07:00" in body
+    assert "2026-03-01T22:09:24Z,2026-03-01T14:09:24-08:00" in body
+    for log_type in ("Chat Logs", "Intervention Logs", "Action Logs"):
+        r = await client.get("/admin/export/download", params={"log_type": log_type})
+        assert r.text.splitlines()[0].startswith("timestamp_utc,timestamp_pt,")

@@ -51,7 +51,7 @@ export default function TimerBar({ examStartMs, examDurationMs, onExpire, onWarn
       }`}>
         {formatted}
       </span>
-      <span className={`text-xs ${isWarning ? 'text-rose-400' : 'text-slate-400'}`}>remaining</span>
+      <span className={`hidden sm:inline text-xs ${isWarning ? 'text-rose-400' : 'text-slate-400'}`}>remaining</span>
     </div>
   )
 }

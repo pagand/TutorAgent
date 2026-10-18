@@ -342,6 +342,7 @@ export default function LoginPage() {
               You can only be logged in from one device at a time. Treat this like the proctored
               exam it is: stay on this tab for the full 1 hour, and do not open other tabs,
               windows, or outside material while your timer is running.
+              Switching to another tab or app is recorded, and a notice appears when you return.
             </p>
           </section>
         </div>

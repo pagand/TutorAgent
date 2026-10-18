@@ -28,7 +28,8 @@ export default function QuestionNavStrip({ onNavigate }: QuestionNavStripProps) 
   }
 
   return (
-    <div className="flex flex-wrap gap-1 px-4 py-2 bg-white border-b border-slate-200">
+    <div className="bg-white border-b border-slate-200">
+    <div className="max-w-7xl mx-auto px-4 py-2 flex flex-wrap gap-1">
       {questions.map((q, index) => {
         const status = questionStates[q.question_number] || 'unanswered'
         const isAccessible = index <= highestReachedIndex
@@ -50,6 +51,7 @@ export default function QuestionNavStrip({ onNavigate }: QuestionNavStripProps) 
           </button>
         )
       })}
+    </div>
     </div>
   )
 }

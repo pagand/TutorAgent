@@ -179,6 +179,27 @@ async def test_admin_students_shows_chat_and_chatiq_flags(client, db_session, se
 
 @_SKIP_JSON_ARROW
 @pytest.mark.asyncio
+async def test_admin_students_counts_page_leave_per_user(client, db_session, seeded_user, stub_llm_usage):
+    """The Students roster counts page_leave rows per user: 2 for one, 0 for another."""
+    other = "no_leaves_user"
+    await _insert_user(db_session, other)
+    for _ in range(2):
+        await db_session.execute(
+            text("INSERT INTO user_action_logs (user_id, session_id, action_type, action_data) "
+                 "VALUES (:u, 's1', 'page_leave', '{}')"),
+            {"u": seeded_user},
+        )
+    await db_session.commit()
+    rows = {r["user_id"]: r for r in await admin_queries.get_all_users_summary(db_session)}
+    assert rows[seeded_user]["page_leaves"] == 2
+    assert rows[other]["page_leaves"] == 0
+    response = await client.get("/admin/students")
+    assert response.status_code == 200
+    assert "<th>left_page</th>" in response.text
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
 async def test_admin_home_exam_control_shown_without_users(client, stub_llm_usage):
     """Exam Control must stay reachable even when the "No users yet" branch fires."""
     response = await client.get("/admin/")

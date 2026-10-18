@@ -23,6 +23,7 @@ ACTION_TYPES = {
     "session_submit",     # student submits early
     "session_expire",     # timer hits zero
     "timer_warning",      # 3-minute warning fired
+    "page_leave",         # page hidden then visible again within one page lifetime
     # Question navigation
     "question_view",
     "question_navigate",

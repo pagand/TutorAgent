@@ -61,6 +61,29 @@ async def test_log_hint_feedback(client):
     assert response.status_code == 200
 
 
+async def test_log_page_leave_is_canonical_and_stored(client, db_session):
+    from sqlalchemy import select
+    from app.endpoints.action_log import ACTION_TYPES
+    from app.models.user import UserActionLog
+
+    assert "page_leave" in ACTION_TYPES
+    await _create_user(client, "log_user_leave")
+    data = {"left_at": 1700000000000, "returned_at": 1700000014000, "away_ms": 14000}
+    response = await client.post("/log/action", json={
+        "user_id": "log_user_leave",
+        "session_id": "sess-leave",
+        "action_type": "page_leave",
+        "question_number": 4,
+        "action_data": data,
+    })
+    assert response.status_code == 200
+    row = (await db_session.execute(
+        select(UserActionLog).where(UserActionLog.action_type == "page_leave")
+    )).scalars().one()
+    assert row.question_number == 4
+    assert row.action_data == data
+
+
 async def test_log_unknown_action_type_still_accepted(client):
     """Unknown action types should not be rejected — log with warning."""
     await _create_user(client, "log_user_05")

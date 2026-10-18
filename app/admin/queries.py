@@ -116,6 +116,12 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             SELECT user_id, COUNT(*) AS chat_messages
             FROM chat_logs
             GROUP BY user_id
+        ),
+        leave_agg AS (
+            SELECT user_id, COUNT(*) AS page_leaves
+            FROM user_action_logs
+            WHERE action_type = 'page_leave'
+            GROUP BY user_id
         )
         SELECT
             COALESCE(u.id, p.token) AS user_id,
@@ -128,6 +134,7 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
             COALESCE(ia.correct_answers, 0) AS correct_answers,
             COALESCE(ia.hints_used, 0) AS hints_used,
             COALESCE(ca.chat_messages, 0) AS chat_messages,
+            COALESCE(la.page_leaves, 0) AS page_leaves,
             es.exam_start_ms,
             es.exam_duration_ms,
             es.submitted_at,
@@ -139,6 +146,7 @@ async def get_all_users_summary(db: AsyncSession) -> list[dict]:
         FULL OUTER JOIN users u ON u.id = p.token
         LEFT JOIN interaction_agg ia ON ia.user_id = COALESCE(u.id, p.token)
         LEFT JOIN chat_agg ca ON ca.user_id = COALESCE(u.id, p.token)
+        LEFT JOIN leave_agg la ON la.user_id = COALESCE(u.id, p.token)
         LEFT JOIN exam_sessions es ON es.user_id = COALESCE(u.id, p.token)
         ORDER BY u.created_at DESC NULLS LAST, p.token
     """)

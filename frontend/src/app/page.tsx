@@ -50,10 +50,10 @@ function Figure() {
         <div className="bg-white border-b border-slate-200">
           <div className="px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-slate-900 whitespace-nowrap">DaTu AIR</span>
+              <Image src="/brand/logo-wordmark.png" alt="DaTu AIR" width={84} height={16} unoptimized className="block h-auto" />
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-slate-400">⏱</span>
-                <span className="font-mono text-sm tabular-nums text-slate-500 font-semibold">18:42</span>
+                <span className="font-mono text-sm tabular-nums text-slate-500 font-semibold">42:18</span>
                 <span className="hidden sm:inline text-xs text-slate-400">remaining</span>
               </div>
             </div>

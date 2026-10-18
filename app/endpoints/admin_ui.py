@@ -74,6 +74,7 @@ HINT_STYLES = ["adaptive", "Conceptual", "Analogy", "Socratic Question", "Worked
 
 ACTION_TYPES = [
     "session_start", "session_complete", "session_submit", "session_expire", "timer_warning",
+    "page_leave",
     "question_view", "question_navigate",
     "choice_select", "answer_focus", "answer_submit", "answer_skip",
     "hint_request", "hint_display", "hint_feedback",
@@ -399,7 +400,7 @@ def _simple_table(headers: list[str], rows: list[list]) -> str:
 def _users_table(users: list[dict]) -> str:
     headers = ["user_id", "ab_group", "participant_status", "hint_style_pref", "created_at",
                "total_interactions", "correctness", "hints_used", "chat_messages",
-               "remaining_min", "submitted", "active", "chat", "chatiq"]
+               "left_page", "remaining_min", "submitted", "active", "chat", "chatiq"]
     thead = "".join(f"<th>{h}</th>" for h in headers)
     rows = []
     for u in users:
@@ -424,6 +425,7 @@ def _users_table(users: list[dict]) -> str:
             correctness,
             str(u["hints_used"]),
             str(u["chat_messages"]),
+            str(u["page_leaves"]),
             html.escape("" if u["remaining_min"] is None else str(u["remaining_min"])),
             "Yes" if u["submitted"] else "No",
             '<span class="online">online</span>' if u["online"] else '<span class="offline">offline</span>',

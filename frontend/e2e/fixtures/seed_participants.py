@@ -40,6 +40,12 @@ FIXTURE_PARTICIPANTS = [
     {"token": "E2ECHATIQOFF", "name": "E2E ChatIQ Off Arm", "identifier": "e2e-chatiq-off", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": False},
     {"token": "E2ECHATIQON", "name": "E2E ChatIQ On Arm", "identifier": "e2e-chatiq-on", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
     {"token": "E2EMOBILE", "name": "E2E Mobile Layout", "identifier": "e2e-mobile", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELEAVEA", "name": "E2E E2ELEAVEA", "identifier": "e2e-e2eleavea", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELEAVEB", "name": "E2E E2ELEAVEB", "identifier": "e2e-e2eleaveb", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELEAVEC", "name": "E2E E2ELEAVEC", "identifier": "e2e-e2eleavec", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELAYOUT1", "name": "E2E E2ELAYOUT1", "identifier": "e2e-e2elayout1", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELAYOUT2", "name": "E2E E2ELAYOUT2", "identifier": "e2e-e2elayout2", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
+    {"token": "E2ELAYOUT3", "name": "E2E E2ELAYOUT3", "identifier": "e2e-e2elayout3", "group": "free_choice", "intervention": "manual", "chat": True, "chatiq": True},
 ]
 
 

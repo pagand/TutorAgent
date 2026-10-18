@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import axios from 'axios'
 import { useQuiz } from '@/context/QuizContext'
 import {
@@ -27,6 +28,13 @@ function generateSessionId(): string {
 
 function generateAttemptKey(): string {
   return `attempt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+}
+
+function formatAway(ms: number): string {
+  const total = Math.round(ms / 1000)
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  return min > 0 ? `${min} min ${sec} s` : `${sec} s`
 }
 
 const SKIP_ATTEMPT_SENTINEL = '__skip__'
@@ -114,6 +122,7 @@ export default function QuizPageContent() {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false)
   const [showTimerWarning, setShowTimerWarning] = useState(false)
   const [showProfileBanner, setShowProfileBanner] = useState(false)
+  const [pageLeaveAwayMs, setPageLeaveAwayMs] = useState<number | null>(null)
   const [takenOver, setTakenOver] = useState(false)
   const [connectionLost, setConnectionLost] = useState(false)
   const questionStartTimeRef = useRef<Record<number, number>>({})
@@ -599,6 +608,36 @@ export default function QuizPageContent() {
     }
   }, [userId, sessionId])
 
+  // A leave is hidden -> visible within one page lifetime. The start lives only
+  // in this ref, so a reload, tab close or navigation never produces a record.
+  useEffect(() => {
+    if (!userId || !sessionId || examStartMs <= 0 || isComplete || timerExpired) return
+    let leftAt: number | null = null
+    let leftQuestion: number | undefined
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (leftAt === null) {
+          leftAt = Date.now()
+          const s = stateRef.current
+          leftQuestion = s.questions[s.currentQuestionIndex]?.question_number
+        }
+        return
+      }
+      if (leftAt === null) return
+      const returnedAt = Date.now()
+      const awayMs = returnedAt - leftAt
+      logAction({
+        user_id: userId, session_id: sessionId, action_type: 'page_leave',
+        question_number: leftQuestion,
+        action_data: { left_at: leftAt, returned_at: returnedAt, away_ms: awayMs },
+      })
+      setPageLeaveAwayMs(awayMs)
+      leftAt = null
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [userId, sessionId, examStartMs, isComplete, timerExpired])
+
   const handleInterventionAccept = useCallback(() => {
     const currentQ = questions[currentQuestionIndex]
     const startTime = questionStartTimeRef.current[currentQ.question_number] || Date.now()
@@ -687,7 +726,7 @@ export default function QuizPageContent() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-bold text-slate-900">DaTu AIR</span>
+            <Image src="/brand/logo-wordmark.png" alt="DaTu AIR" width={106} height={20} unoptimized className="block h-auto" />
             {examStartMs > 0 && !isComplete && !timerExpired && (
               <TimerBar examStartMs={examStartMs} examDurationMs={examDurationMs} onExpire={handleTimerExpire} onWarning={handleTimerWarning} />
             )}
@@ -748,6 +787,20 @@ export default function QuizPageContent() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+        {pageLeaveAwayMs !== null && (
+          <div role="status" className="mb-4 flex items-start justify-between gap-3 p-4 bg-amber-50 border border-amber-300 rounded-lg">
+            <p className="text-sm text-amber-800">
+              You left the exam page for {formatAway(pageLeaveAwayMs)}. This is recorded.
+            </p>
+            <button
+              onClick={() => setPageLeaveAwayMs(null)}
+              aria-label="Dismiss notice"
+              className="text-amber-800 hover:text-amber-900 text-lg leading-none"
+            >
+              &times;
+            </button>
+          </div>
+        )}
         <div className="flex flex-col lg:flex-row gap-6">
 
           {/* Left panel: question */}

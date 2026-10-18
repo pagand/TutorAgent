@@ -133,9 +133,9 @@ class UserActionLog(Base):
     """
     Fine-grained event log for every user interaction.
 
-    The 19 action_type values the frontend actually emits, verified by grepping
+    The 20 action_type values the frontend actually emits, verified by grepping
     frontend/src for action_type:
-        session_start, session_submit, session_expire, timer_warning,
+        session_start, session_submit, session_expire, timer_warning, page_leave,
         question_view, question_navigate,
         choice_select, answer_focus, answer_submit, answer_skip,
         hint_request, hint_display, hint_feedback,

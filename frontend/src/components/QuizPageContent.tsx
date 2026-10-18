@@ -611,36 +611,51 @@ export default function QuizPageContent() {
     }
   }, [userId, sessionId])
 
-  // A leave is hidden -> visible within one page lifetime, longer than PAGE_LEAVE_MIN_AWAY_MS. The start lives only
-  // in this ref, so a reload, tab close or navigation never produces a record.
+  // A leave starts at the first transition into away (page hidden or window unfocused) and ends when the student is
+  // fully back (visible and focused). The start lives only in this ref, so a reload, tab close or navigation never
+  // produces a record. cause is tab_hidden if the page was hidden at any point during the leave, else lost_focus.
   useEffect(() => {
     if (!userId || !sessionId || examStartMs <= 0 || isComplete || timerExpired) return
     let leftAt: number | null = null
     let leftQuestion: number | undefined
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
+    let wasHidden = false
+    const evaluate = () => {
+      const hidden = document.visibilityState === 'hidden'
+      if (hidden || !document.hasFocus()) {
         if (leftAt === null) {
           leftAt = Date.now()
+          wasHidden = false
           const s = stateRef.current
           leftQuestion = s.questions[s.currentQuestionIndex]?.question_number
         }
+        if (hidden) wasHidden = true
         return
       }
       if (leftAt === null) return
       const returnedAt = Date.now()
       const awayMs = returnedAt - leftAt
       const startedAt = leftAt
+      const cause = wasHidden ? 'tab_hidden' : 'lost_focus'
       leftAt = null
+      wasHidden = false
       if (awayMs <= PAGE_LEAVE_MIN_AWAY_MS) return
       logAction({
         user_id: userId, session_id: sessionId, action_type: 'page_leave',
         question_number: leftQuestion,
-        action_data: { left_at: startedAt, returned_at: returnedAt, away_ms: awayMs },
+        action_data: { left_at: startedAt, returned_at: returnedAt, away_ms: awayMs, cause },
       })
       setPageLeaveAwayMs(awayMs)
     }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+    // Focus moving within the same document (including a same-document iframe) keeps hasFocus() true, so re-check after the event settles.
+    const onBlur = () => { setTimeout(evaluate, 0) }
+    document.addEventListener('visibilitychange', evaluate)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', evaluate)
+    return () => {
+      document.removeEventListener('visibilitychange', evaluate)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', evaluate)
+    }
   }, [userId, sessionId, examStartMs, isComplete, timerExpired])
 
   const handleInterventionAccept = useCallback(() => {

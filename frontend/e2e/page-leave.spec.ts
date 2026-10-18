@@ -1,7 +1,8 @@
 // frontend/e2e/page-leave.spec.ts
-// A page_leave is recorded only when the page goes hidden and visible again
-// within one page lifetime, for more than 5 seconds, while the exam is running. Visibility is simulated
-// by overriding document.visibilityState and dispatching visibilitychange.
+// A page_leave is recorded only when the page goes hidden or loses window focus and the student is then fully back
+// (visible and focused) within one page lifetime, for more than 5 seconds, while the exam is running. Visibility is
+// simulated by overriding document.visibilityState and dispatching visibilitychange; focus by overriding
+// document.hasFocus and dispatching blur / focus on window.
 import { test, expect, Page } from '@playwright/test'
 import { loginAsToken } from './helpers'
 
@@ -12,9 +13,16 @@ async function setVisibility(page: Page, state: 'hidden' | 'visible') {
   }, state)
 }
 
+async function setFocus(page: Page, focused: boolean) {
+  await page.evaluate((f) => {
+    document.hasFocus = () => f
+    window.dispatchEvent(new Event(f ? 'focus' : 'blur'))
+  }, focused)
+}
+
 interface Leave {
   question_number: number
-  action_data: { left_at: number; returned_at: number; away_ms: number }
+  action_data: { left_at: number; returned_at: number; away_ms: number; cause: string }
 }
 
 function trackLeaves(page: Page) {
@@ -54,6 +62,7 @@ test('page_leave: an absence over 5 seconds logs one event and shows the banner'
   await expect.poll(() => leaves.length).toBe(1)
   expect(leaves[0].question_number).toBe(1)
   expect(leaves[0].action_data.away_ms).toBeGreaterThan(5000)
+  expect(leaves[0].action_data.cause).toBe('tab_hidden')
   expect(leaves[0].action_data.returned_at - leaves[0].action_data.left_at).toBe(leaves[0].action_data.away_ms)
 
   await page.getByRole('button', { name: 'Dismiss notice' }).click()
@@ -62,6 +71,54 @@ test('page_leave: an absence over 5 seconds logs one event and shows the banner'
   // A visible event with no preceding hidden one logs nothing.
   await setVisibility(page, 'visible')
   await page.waitForTimeout(300)
+  expect(leaves.length).toBe(1)
+})
+
+test('page_leave: losing window focus for over 5 seconds logs one lost_focus event and shows the banner', async ({ page }) => {
+  const leaves = trackLeaves(page)
+  await loginAsToken(page, 'E2ELEAVEE')
+
+  await setFocus(page, false)
+  await page.waitForTimeout(6000)
+  await setFocus(page, true)
+
+  await expect(page.getByText('This is recorded.')).toBeVisible()
+  await expect.poll(() => leaves.length).toBe(1)
+  expect(leaves[0].action_data.cause).toBe('lost_focus')
+  expect(leaves[0].action_data.away_ms).toBeGreaterThan(5000)
+  await page.waitForTimeout(500)
+  expect(leaves.length).toBe(1)
+})
+
+test('page_leave: losing window focus for 3 seconds logs nothing and shows no banner', async ({ page }) => {
+  const leaves = trackLeaves(page)
+  await loginAsToken(page, 'E2ELEAVEF')
+
+  await setFocus(page, false)
+  await page.waitForTimeout(3000)
+  await setFocus(page, true)
+  await page.waitForTimeout(500)
+
+  expect(leaves.length).toBe(0)
+  await expect(page.getByText('This is recorded.')).toHaveCount(0)
+})
+
+test('page_leave: blur then hidden then back logs exactly one tab_hidden event', async ({ page }) => {
+  const leaves = trackLeaves(page)
+  await loginAsToken(page, 'E2ELEAVEG')
+
+  await setFocus(page, false)
+  await page.waitForTimeout(2000)
+  await setVisibility(page, 'hidden')
+  await page.waitForTimeout(4500)
+  await setVisibility(page, 'visible')
+  await setFocus(page, true)
+
+  await expect(page.getByText('This is recorded.')).toBeVisible()
+  await expect.poll(() => leaves.length).toBe(1)
+  expect(leaves[0].action_data.cause).toBe('tab_hidden')
+  expect(leaves[0].action_data.away_ms).toBeGreaterThan(5000)
+  await page.waitForTimeout(500)
   expect(leaves.length).toBe(1)
 })
 

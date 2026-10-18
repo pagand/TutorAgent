@@ -3,741 +3,214 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AITutorApp — Operations Runbook</title>
+<title>AITutorApp - Exam Ops Runbook</title>
 <style>
   :root {
     --bg: #f8fafc; --fg: #0f172a; --muted: #475569; --card: #ffffff;
     --border: #e2e8f0; --accent: #4f46e5; --code-bg: #0f172a; --code-fg: #e2e8f0;
     --warn-bg: #fff7ed; --warn-border: #fb923c; --danger-bg: #fef2f2; --danger-border: #f43f5e;
-    --ok-bg: #ecfdf5; --ok-border: #10b981;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #0f172a; --fg: #e2e8f0; --muted: #94a3b8; --card: #1e293b;
       --border: #334155; --accent: #818cf8; --code-bg: #020617; --code-fg: #cbd5e1;
-      --warn-bg: #422006; --warn-border: #f59e0b; --danger-bg: #450a0a; --danger-border: #f87171;
-      --ok-bg: #052e1c; --ok-border: #34d399; }
+      --warn-bg: #422006; --warn-border: #f59e0b; --danger-bg: #450a0a; --danger-border: #f87171; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 2rem 1.25rem 6rem; }
-  header.doc-header { border-bottom: 2px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.5rem; }
-  h1 { font-size: 1.7rem; margin: 0 0 0.25rem; }
-  .subtitle { color: var(--muted); font-size: 0.95rem; }
-  .meta-line { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
-  .tablist { display: flex; gap: 0.4rem; flex-wrap: wrap; border-bottom: 2px solid var(--border); margin-bottom: 1.75rem; }
-  .tabs input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
-  .tablist label { cursor: pointer; padding: 0.55rem 1.1rem; font-size: 0.95rem; font-weight: 600; color: var(--muted); border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; margin-bottom: -2px; }
-  .tablist label:hover { color: var(--fg); }
-  .tabpanel { display: none; }
-  #tab-examday:checked ~ .tablist label[for="tab-examday"],
-  #tab-operate:checked ~ .tablist label[for="tab-operate"],
-  #tab-data:checked ~ .tablist label[for="tab-data"],
-  #tab-reference:checked ~ .tablist label[for="tab-reference"] { color: var(--accent); border-color: var(--border); background: var(--card); }
-  #tab-examday:checked ~ #panel-examday,
-  #tab-operate:checked ~ #panel-operate,
-  #tab-data:checked ~ #panel-data,
-  #tab-reference:checked ~ #panel-reference { display: block; }
-  .tab-jump { font-size: 0.85rem; margin: 0 0 1.75rem; }
-  .tab-jump a { color: var(--accent); text-decoration: none; margin-right: 1rem; }
-  .tab-jump a:hover { text-decoration: underline; }
-  section { margin-bottom: 2.75rem; scroll-margin-top: 1rem; }
-  h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-top: 0; }
-  h3 { font-size: 1.05rem; color: var(--accent); }
-  p { margin: 0.6rem 0; }
-  table { border-collapse: collapse; width: 100%; margin: 0.9rem 0; font-size: 0.88rem; }
-  th, td { border: 1px solid var(--border); padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin: 2rem 0 0.6rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 1rem; }
+  nav { font-size: 0.85rem; margin-bottom: 1rem; }
+  nav a { color: var(--accent); text-decoration: none; margin-right: 0.9rem; white-space: nowrap; }
+  p { margin: 0.5rem 0; }
+  ul, ol { margin: 0.4rem 0; padding-left: 1.3rem; }
+  li { margin: 0.2rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 0.6rem 0; font-size: 0.88rem; }
+  th, td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
   th { background: var(--card); }
-  tr:nth-child(even) td { background: color-mix(in srgb, var(--card) 60%, transparent); }
-  code { background: var(--code-bg); color: var(--code-fg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; font-family: "SF Mono", Menlo, Consolas, monospace; }
-  pre { background: var(--code-bg); color: var(--code-fg); padding: 0.9rem 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
-  pre code { background: none; padding: 0; }
-  .callout { border-radius: 8px; padding: 0.75rem 1rem; margin: 0.9rem 0; font-size: 0.9rem; border: 1px solid; }
-  .callout.warn { background: var(--warn-bg); border-color: var(--warn-border); }
-  .callout.danger { background: var(--danger-bg); border-color: var(--danger-border); }
-  .callout.ok { background: var(--ok-bg); border-color: var(--ok-border); }
-  .callout strong { display: block; margin-bottom: 0.2rem; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .tablist { gap: 0.25rem; } .tablist label { padding: 0.5rem 0.8rem; font-size: 0.88rem; } }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1.1rem; }
-  footer { color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 3rem; }
-  .tag { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--accent); color: #fff; }
-  a.backtotop { font-size: 0.8rem; color: var(--muted); text-decoration: none; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84em; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 0.05em 0.3em; word-break: break-word; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 0.8rem 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.45; margin: 0.6rem 0; }
+  pre code { background: none; border: none; padding: 0; color: inherit; word-break: normal; }
+  .note { border-left: 4px solid var(--warn-border); background: var(--warn-bg); padding: 0.5rem 0.8rem; border-radius: 4px; margin: 0.7rem 0; font-size: 0.9rem; }
+  .note.danger { border-color: var(--danger-border); background: var(--danger-bg); }
+  .inc { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.9rem; margin: 0.6rem 0; }
+  .inc h3 { font-size: 0.98rem; margin: 0 0 0.3rem; color: var(--accent); }
+  .inc ul { margin: 0; padding-left: 1.1rem; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<header class="doc-header">
-  <h1>AITutorApp — Operations Runbook</h1>
-  <div class="subtitle">Internal, working document. Not for distribution outside the project.</div>
-  <div class="meta-line">Written during Stage 5 (deploy), grounded in the real first-boot behavior observed that stage. Update this as the stack changes — it will drift otherwise.</div>
-</header>
+<h1>AITutorApp - Exam Ops Runbook</h1>
+<p class="sub">Run and monitor one exam day. The exam is 1 hour. Every command was checked against the repo or a read-only AWS call.</p>
+<nav>
+  <a href="#ref">Quick reference</a>
+  <a href="#before">Day before</a>
+  <a href="#boot">Boot</a>
+  <a href="#morning">Morning checks</a>
+  <a href="#during">During</a>
+  <a href="#after">After</a>
+  <a href="#fe">Frontend deploy</a>
+  <a href="#facts">Facts</a>
+</nav>
 
-<div class="tabs">
-  <input type="radio" name="opstabs" id="tab-examday" checked>
-  <input type="radio" name="opstabs" id="tab-operate">
-  <input type="radio" name="opstabs" id="tab-data">
-  <input type="radio" name="opstabs" id="tab-reference">
+<section id="ref">
+<h2>Quick reference</h2>
+<table>
+  <tr><th>Site</th><td><code>https://air.da-tu.ca</code></td></tr>
+  <tr><th>Admin UI</th><td><code>http://localhost:8501/admin/</code> through an SSM tunnel (never public). Tabs: Exam, Students, Health, Export, Research</td></tr>
+  <tr><th>Region / profile</th><td><code>us-west-2</code>, SSO profile <code>AdministratorAccess-434195712367</code></td></tr>
+  <tr><th>EC2</th><td><code>i-09c99b4723608676e</code>, t3.medium, SSM only, no SSH. App dir <code>/home/ec2-user/AITutorApp</code></td></tr>
+  <tr><th>CloudFront</th><td><code>EAU1TO5IJG1RT</code></td></tr>
+  <tr><th>S3</th><td>frontend <code>aitutor-frontend-434195712367</code><br>ops <code>aitutor-434195712367-ops</code> (roster at <code>artifacts/prod-data/</code>)<br>backups <code>aitutor-backups-434195712367</code></td></tr>
+  <tr><th>Secrets</th><td>SSM Parameter Store <code>/aitutor/prod/</code>: <code>google_api_key</code>, <code>api_key</code>, <code>postgres_password</code>, <code>origin_secret</code></td></tr>
+  <tr><th>Alerts</th><td>SNS <code>aitutor-alerts</code> emails Pedram. Alarms: <code>aitutor-status-check-failed</code>, <code>aitutor-sustained-high-cpu</code> (90% for 15 min). Budget and cost-anomaly emails also exist</td></tr>
+</table>
+<p>Shell setup used by every command below:</p>
+<pre><code>aws sso login --profile AdministratorAccess-434195712367
+export AWS_PROFILE=AdministratorAccess-434195712367 AWS_REGION=us-west-2
+export IID=i-09c99b4723608676e
 
-  <div class="tablist">
-    <label for="tab-examday">Exam Day</label>
-    <label for="tab-operate">Operate</label>
-    <label for="tab-data">Data</label>
-    <label for="tab-reference">Reference</label>
-  </div>
+# run one command on the box and print its output
+box() {
+  id=$(aws ssm send-command --instance-ids $IID --document-name AWS-RunShellScript \
+    --parameters "commands=[\"cd /home/ec2-user/AITutorApp &amp;&amp; $1\"]" \
+    --query Command.CommandId --output text)
+  sleep 4
+  aws ssm get-command-invocation --command-id $id --instance-id $IID \
+    --query '{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}' --output json
+}
 
-  <div class="tabpanel" id="panel-examday" data-tab="tab-examday">
-  <p class="tab-jump">
-    <a href="#examday">10. Exam day runbook</a>
-    <a href="#incident">8. Incident response</a>
-    <a href="#health">3. Health checks</a>
-    <a href="#admin-tunnel">Admin UI tunnel</a>
-  </p>
-
-<section id="examday">
-  <h2>10. Exam day runbook</h2>
-  <p>Sequenced from <code>PRELAUNCH_CHECKLIST.md</code> §K, folded into one list:</p>
-  <ol>
-    <li><strong>Snapshot before starting.</strong> Take an EBS snapshot of the current (stopped) volume before <code>aws ec2 start-instances</code>, so there's a clean pre-exam restore point. From your laptop, authenticated per §0, with <code>$INSTANCE_ID</code> from §0's lookup (this is the same command used in step 7 below - the box has one root volume, no others):
-      <pre><code>VOLUME_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --instance-ids $INSTANCE_ID \
-  --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId' --output text)"
-
-SNAP_ID="$(aws ec2 create-snapshot --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --volume-id "$VOLUME_ID" --description "aitutor $(date -u +%Y%m%dT%H%M%SZ)" \
-  --query 'SnapshotId' --output text)"
-
-# poll until it's done - completed is safe to walk away from,
-# pending is not (the underlying volume can still change under it)
-aws ec2 describe-snapshots --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --snapshot-ids "$SNAP_ID" --query 'Snapshots[0].[State,Progress]' --output text</code></pre>
-    </li>
-    <li><strong>Start the instance</strong>, watch <code>aitutor-bootstrap.service</code> complete over SSM (§2, §3).</li>
-    <li><strong>Confirm <code>EXAM_DURATION_MS</code></strong> on the box reads <code>1500000</code> (25 minutes), not a leftover 20-minute default, and <strong><code>LLM_PROVIDER</code> reads <code>google</code></strong> (see §8's incident row — the code default is the wrong provider): <code>docker compose exec api env | grep -E "EXAM_DURATION_MS|LLM_PROVIDER"</code>.</li>
-    <li><strong>Smoke test one real token</strong> end to end (login, answer, hint, chat, submit, results) before handing tokens to students. Confirm the quiz loads 25 questions across 5 skills (confirmed live, 2026-08-05) - a wrong count means the wrong <code>server_ready_questions.csv</code> landed. Check the actual hint/chat <em>content</em>, not just the HTTP status: a 200 with <code>hint_style: "error"</code> means the LLM call silently failed.</li>
-    <li><strong>Expect a slow first hint.</strong> RAG cold start is ~2s measured, but the first real request after boot still pays container warm-up cost on top. Not a bug if the very first hint feels sluggish.</li>
-    <li><strong>Keep an SSM session open</strong> to the box and a port-forward tunnel to the admin UI (§9) for the full exam window, so timer/lock issues can be handled in real time.</li>
-    <li><strong>Immediately before stopping the instance:</strong> take an EBS snapshot (same <code>create-snapshot</code> command as step 1) and run <code>backup.sh</code> on the box (per §0: <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp</code>), with <code>BACKUP_S3_URI</code> passed explicitly:
-      <pre><code>DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db \
-  BACKUP_S3_URI=s3://aitutor-backups-434195712367/backups \
-  ./scripts/backup.sh</code></pre>
-      <div class="callout warn" style="margin-top:0.5rem;">
-        <strong><code>BACKUP_S3_URI</code> must be passed on the command line - it is not already in an interactive shell's environment.</strong>
-        <code>ec2-bootstrap.sh</code> renders <code>BACKUP_S3_URI</code> into the app's <code>.env</code> file, but that file is only read by <code>docker compose</code>'s <code>env_file:</code> mechanism for the <code>api</code> container - it is never sourced into an interactive host shell. <code>backup.sh</code> itself runs on the host (it shells out to <code>docker compose exec</code> for the dump, it isn't a container process), and reads <code>BACKUP_S3_URI</code> straight from its own process environment via <code>${BACKUP_S3_URI:-}</code> (<code>scripts/backup.sh</code>). Omit it and the script does not error - it just silently skips the upload and leaves the dump local-only under <code>./backups/</code>, which defeats the entire point of a pre-stop backup. Always pass it explicitly, as above, rather than assuming it's already set.
-      </div>
-      Verify the upload landed before proceeding (same check as §5b):
-      <pre><code>aws s3 ls s3://aitutor-backups-434195712367/backups/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-      This is the only backup, nothing is scheduled (§5b), and while the box is stopped the data cannot change, so a dump taken right before stopping stays current for the entire stopped period.
-    </li>
-    <li><strong>Stop the instance</strong> once data is safely off-box. It should not sit running between exams.</li>
-  </ol>
+# admin UI tunnel (needs the Session Manager plugin; one tunnel at a time on 8501)
+aws ssm start-session --target $IID --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=8501,localPortNumber=8501</code></pre>
 </section>
 
-<section id="incident">
-  <h2>8. Incident response</h2>
-  <p>Every <code>docker compose</code> / <code>df -h</code> command below runs <strong>on the box</strong> - open a shell per §0, <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp</code>.</p>
-  <table>
-    <tr><th>Symptom</th><th>Command</th><th>Notes</th></tr>
-    <tr><td><code>api</code> down or crash-looping</td><td><code>docker compose logs --tail 100 api</code>, then <code>docker compose restart api</code></td><td>If it won't come back healthy, <code>docker compose up -d --build</code> to rule out a stale image.</td></tr>
-    <tr><td>Postgres unreachable</td><td><code>docker compose ps db</code>; <code>docker compose exec db pg_isready -U aitutor -d aitutor_db</code></td><td>If the container itself is down, <code>docker compose up -d db</code>; <code>api</code> depends on its healthcheck and will wait.</td></tr>
-    <tr><td>Hints silently degrade to a generic "I couldn't generate a specific hint" message, or chat fails outright</td><td><code>docker compose exec api env | grep LLM_PROVIDER</code> — must read <code>google</code></td><td><strong>Real incident, Stage 5.</strong> The code default when this var is unset is <code>ollama</code>, which tries to reach a nonexistent <code>localhost:11434</code>. Hints has its own try/except that masks this as a generic fallback (<code>hint_style: "error"</code> in the response — check the actual field, not just the HTTP status, a 200 does not mean a real hint was generated); chat has no such fallback and 500s or hangs to a CloudFront 504. Fixed by explicitly setting <code>LLM_PROVIDER=google</code> in <code>ec2-bootstrap.sh</code>'s <code>.env</code> render — if this ever regresses, it's the first thing to check.</td></tr>
-    <tr><td>Disk full</td><td><code>df -h</code> over SSM</td><td>Logs and Chroma share the 30GB root volume. <code>docker image prune -f</code> (bootstrap already does this on every boot), check old dumps in <code>./backups/</code> if retention pruning (<code>BACKUP_RETENTION_DAYS</code>, default 90 in prod) hasn't caught up.</td></tr>
-    <tr><td>Student locked to the wrong device</td><td>Admin UI → student's row → <em>Clear Session Lock</em></td><td>See §9. No CLI/API equivalent needed for this one — it's the intended path.</td></tr>
-    <tr><td>Student needs more time, or a whole cohort does</td><td>Admin UI → per-student <em>Adjust Timer</em> / <em>Reset Timer to NOW</em>, or <em>Exam Control → Apply to All Unsubmitted Sessions</em> for a bulk extension</td><td>Bulk extension is the mid-outage remedy — it reaches already-open tabs within one 25s heartbeat, no reload needed.</td></tr>
-    <tr><td>Student wrongly locked out of a question</td><td>Admin UI → student's page → <em>Manage</em> tab → <em>Unlock Question</em></td><td>See §9. Voids that question's attempts, nothing is deleted. The student must reload their browser - nothing pushes this to an open tab. This is a remedy for a wrongful lock, not a way to grant a second attempt: past 2 failed attempts, the answer key for that question has already reached the student's browser.</td></tr>
-    <tr><td>LLM quota exhausted (per-user or global)</td><td>Admin UI → <em>Exam</em> tab → LLM Usage panel to confirm, then adjust the cap right there</td><td>No SSM session, no <code>api</code> restart needed - the override persists across a restart. See §9.</td></tr>
-    <tr><td>Gemini API down or rate-limiting</td><td>Check <code>docker compose logs api</code> for the LLM call error</td><td>Handled gracefully, not an open gap: the frontend (<code>QuizPageContent.tsx</code>, <code>ChatPanel.tsx</code>) maps a 429 or 5xx from the hint/chat endpoints to "The tutor is temporarily unavailable. Please try again in a moment.", and the backend (<code>app/endpoints/hints.py</code>, <code>app/endpoints/chat.py</code>) returns a clean 500 with a generic detail rather than leaking the exception.</td></tr>
-    <tr><td>Box completely unreachable (SSM and HTTP both dead)</td><td>From your laptop, authenticated per §0: <code>aws ec2 reboot-instances --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID</code>; if that doesn't recover it, stop/start (new hardware, see §2); last resort, restore the most recent EBS snapshot to a new volume and re-attach</td><td>Snapshot-level instance recovery isn't scripted anywhere in this repo , it's a manual EC2 console/CLI procedure. Database-level recovery is scripted: see below.</td></tr>
-    <tr><td>Database corrupted or needs point-in-time recovery</td><td><code>DOCKER_DB_SERVICE=db POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/restore.sh &lt;dump-file&gt;</code></td><td>Requires an explicit dump file argument by design — cannot silently overwrite prod with a stale environment. Validate a dump is actually restorable with <code>./scripts/restore_drill.sh</code> before you need it for real (creates a scratch DB, compares row counts, cleans up after itself).</td></tr>
-  </table>
-  <div class="callout ok">
-    <strong>A slow first hint right after any restart is expected, not a fault.</strong>
-    RAG singletons re-initialize on <code>api</code> startup, and the compose healthcheck's <code>start_period: 120s</code> exists for exactly this reason. This applies to a mid-exam <code>docker compose restart api</code> (the row above), not only the initial exam-day boot noted in the runbook above. Proctors should expect it and not treat it as a fault.
-  </div>
+<section id="before">
+<h2>Day before the exam</h2>
+<ol>
+  <li><strong>Roster.</strong> Edit local <code>prod/data/participants.csv</code> (columns <code>name,identifier,group,intervention,chat,chatiq</code>; <code>chat=off</code> with <code>chatiq=on</code> is rejected). Run <code>python prod/generate_tokens.py</code> to write <code>prod/data/manifest.csv</code>, which holds the tokens to hand out.
+<br>The script uses the DB your local <code>.env</code> points at, not prod. A token is generated only for identifiers not already in that DB, existing identifiers keep their old token. For a fresh roster use new identifiers, or delete the old participants locally first.
+<br>Seeding never deletes. The admin delete form only wipes a student's data and resets the token to unused, so the token still logs in as a fresh student. To make a token stop working, delete its row in SQL: <code>DELETE FROM participants WHERE token = '...'</code>. To purge fully, delete by <code>users.id</code> = token, children first (<code>skill_mastery, interaction_logs, exam_sessions, user_action_logs, chat_logs, intervention_logs, llm_usage_log</code>), then <code>users</code>, then <code>participants</code>.</li>
+  <li><strong>Upload the roster before the box boots.</strong> Bootstrap seeds from S3, and seeding only upserts, it never deletes. To drop an old token you must delete that participant in the DB yourself.
+<pre><code>./scripts/update-prod-data.sh   # syncs prod/data to the ops bucket, re-seeds live if the box is running</code></pre></li>
+  <li><strong>Schedule start and stop</strong> (EventBridge Scheduler, one-off, deletes itself after running).
+<div class="note danger">Re-read the clock first (<code>date</code>). A schedule set in the past fires immediately.</div>
+<pre><code>D=2026-10-19   # exam date, YYYY-MM-DD
+for A in start stop; do
+  [ $A = start ] &amp;&amp; T=09:00:00 &amp;&amp; API=startInstances
+  [ $A = stop ]  &amp;&amp; T=17:00:00 &amp;&amp; API=stopInstances
+  aws scheduler create-schedule --name aitutor-$A-$D \
+    --schedule-expression "at(${D}T$T)" --schedule-expression-timezone America/Los_Angeles \
+    --flexible-time-window Mode=OFF --action-after-completion DELETE \
+    --target "{\"Arn\":\"arn:aws:scheduler:::aws-sdk:ec2:$API\",\"RoleArn\":\"arn:aws:iam::434195712367:role/aitutor-scheduler-role\",\"Input\":\"{\\\"InstanceIds\\\":[\\\"$IID\\\"]}\",\"RetryPolicy\":{\"MaximumRetryAttempts\":5,\"MaximumEventAgeInSeconds\":3600}}"
+done
+aws scheduler list-schedules --query 'Schedules[].Name'</code></pre>
+Set the times to the real window (start about 30 minutes before students arrive).</li>
+  <li>Make sure the code you want live is pushed to <code>main</code> (see Boot).</li>
+</ol>
 </section>
 
-<section id="health">
-  <h2>3. Health checks</h2>
-  <div class="callout danger">
-    <strong>HTTP 200 from curl is not evidence the site works. This is not a hypothetical - it happened.</strong>
-    The deployed frontend once served a blank white page to every single visitor while every curl-based check in this document reported success. Cause: <code>terraform/frontend.tf</code>'s CloudFront response-headers policy set <code>script-src 'self'</code> with no <code>'unsafe-inline'</code>. Next.js's static export bootstraps through inline <code>&lt;script&gt;self.__next_f.push(...)&lt;/script&gt;</code> tags carrying the RSC flight payload - CSP blocked all of them, React threw <code>Error: Connection closed.</code>, and the server-rendered markup was wiped. <code>curl -sI</code> against the page still returned a clean <code>200</code> the entire time, because curl neither executes JavaScript nor enforces CSP - it only ever saw the initial HTML, not what the browser did with it after. Fixed to <code>script-src 'self' 'unsafe-inline'</code> (see the comment above <code>aws_cloudfront_response_headers_policy.frontend</code> in <code>terraform/frontend.tf</code>), applied, CloudFront invalidated. <strong>Every curl-based check below only verifies that a server responded - none of them can catch a client-side rendering failure like this one.</strong> Load the deployed page in a real browser and confirm visible text is present before trusting any curl result as "the site works."
-  </div>
-  <p>One-command "is it up", no interactive session needed (see §0 for <code>$INSTANCE_ID</code> and this exact send-command / get-command-invocation shape):</p>
-  <pre><code>CMD_ID="$(aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
-  --document-name AWS-RunShellScript \
-  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]' \
-  --query 'Command.CommandId' --output text)"
-aws ssm get-command-invocation --region us-west-2 --profile AdministratorAccess-434195712367 \
-  --command-id "$CMD_ID" --instance-id $INSTANCE_ID \
-  --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json</code></pre>
-  <p>Or interactively (see §0 for the instance id lookup and the <code>sudo -iu ec2-user</code> step): <code>aws ssm start-session --target $INSTANCE_ID --region us-west-2 --profile AdministratorAccess-434195712367</code>, then <code>sudo -iu ec2-user</code>, <code>cd /home/ec2-user/AITutorApp && docker compose ps</code>. Healthy looks like all three containers <code>Up</code>, with <code>api</code> and <code>db</code> additionally showing <code>(healthy)</code>; <code>nginx</code> genuinely has no healthcheck defined (a plain reverse proxy with nothing to probe), so "running" is the only signal for it.</p>
-  <div class="grid2">
-    <div class="card">
-      <h3>Over the network</h3>
-      <pre><code># the box itself is NOT directly reachable anymore (Stage 5) —
-# the security group admits only CloudFront's origin-facing IP
-# ranges, so a laptop curl to the EIP just hangs until it times out.
-# This is expected, not a fault - see V5 below and §8.
-
-# check the real path instead, through the edge:
-curl -sI https://air.da-tu.ca/api/
-# expect a real response (401 with no X-API-Key is fine - it means
-# the request reached the app). A CloudFront 502/504 means the origin
-# itself is unreachable - see the debugging path below.</code></pre>
-    </div>
-    <div class="card">
-      <h3>Origin secret + IP lock</h3>
-      <pre><code># from the box itself, over SSM - confirms the origin-secret gate:
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/questions/
-# 403 with no header is correct; needs X-Origin-Secret to pass</code></pre>
-      <p style="margin:0.4rem 0 0;font-size:0.85rem;">TLS now terminates at CloudFront — there is no cert to check on the box anymore. Nothing renews, nothing expires, on this side.</p>
-    </div>
-  </div>
-  <h3>Real-browser check (the one curl cannot do)</h3>
-  <p>Run this after any frontend deploy, and again as part of the exam-day smoke test in §10 - not a replacement for the curl checks above, an addition to them:</p>
-  <pre><code># manual, always sufficient: open https://air.da-tu.ca in an actual
-# browser (or https://d2u3k75qofedmd.cloudfront.net, equivalent, no
-# DNS needed - see §1) and confirm the login page text is visible,
-# not a blank page.
-
-# scriptable alternative, using the Playwright install already in
-# frontend/ (no test suite wiring needed, just the browser binary):
-cd frontend
-node -e "
-const { chromium } = require('@playwright/test');
-(async () => {
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
-  await page.goto('https://air.da-tu.ca/login');
-  const text = (await page.textContent('body')) || '';
-  if (text.trim().length &lt; 20) { console.error('BLANK PAGE - visible text missing'); process.exit(1); }
-  console.log('OK - visible text found:', text.trim().slice(0, 60));
-  await browser.close();
-})();
-"</code></pre>
-  <p>App-level logs to watch on a slow or failing boot: <code>docker compose logs api</code> — the healthcheck's <code>start_period: 120s</code> exists because RAG singleton init can take a moment; a <code>curl</code> against <code>/</code> failing in the first two minutes after a build is expected, not a bug.</p>
-  <div class="callout ok">
-    <strong>502/504 debugging matrix</strong>, empirically confirmed live during Stage 5 by deliberately stopping the <code>api</code> container and, separately, the whole instance:
-    <table>
-      <tr><th>Symptom</th><th>Layer</th><th>Meaning</th></tr>
-      <tr><td>CloudFront's own branded <code>504</code> page</td><td>CloudFront</td><td>Origin connection attempt timed out. Observed transiently right at the moment the origin becomes unreachable (mid-container-stop, or the whole instance stopped) before the connection is cleanly refused. Can take longer than 10s.</td></tr>
-      <tr><td>nginx's own <code>502 Bad Gateway</code> page (<code>server: nginx</code> in the response headers)</td><td>nginx → api</td><td>The <code>api</code> upstream is down but nginx itself is up and connection-refusing cleanly. Fast, consistent.</td></tr>
-      <tr><td>Plain connection hang / <code>curl</code> exit 28</td><td>Security group</td><td>Nothing is listening at all, or the source IP isn't in CloudFront's origin-facing prefix list. A laptop curling the EIP directly always looks like this now — that's V5, not a bug.</td></tr>
-    </table>
-    <p style="margin:0.5rem 0 0;">With the SG lockdown in place, <strong>a laptop cannot curl the origin directly anymore</strong> — the debugging path is SSM session → <code>curl localhost/api/...</code> inside the box → <code>docker compose logs api</code> / <code>logs nginx</code>. There is no other way in.</p>
-  </div>
+<section id="boot">
+<h2>What happens at boot</h2>
+<p>A systemd oneshot runs <code>scripts/ec2-bootstrap.sh</code> on every boot. It resets the repo to <code>origin/main</code>, renders <code>.env</code> from SSM, syncs <code>prod/data</code> from the ops bucket, rebuilds nginx config, runs <code>docker compose up -d --build</code> (migrations run in the api entrypoint), waits for api healthy, then seeds participants. About 4 minutes. Code reaches prod only after it is pushed to <code>main</code>:</p>
+<pre><code>git -c credential.helper='!gh auth git-credential' push https://github.com/pagand/TutorAgent.git main</code></pre>
+<p>To pick up new code on a running box, reboot it or re-run the bootstrap: <code>box "sudo systemctl restart aitutor-bootstrap"</code>.</p>
 </section>
 
-<div class="card" id="admin-tunnel">
-  <h3 style="margin-top:0;">Admin UI tunnel (§9)</h3>
-  <p>Reach it (never exposed publicly, <code>127.0.0.1:8501</code> on the host). Authenticate and get <code>$INSTANCE_ID</code> per §0 first:</p>
-  <pre><code>aws ssm start-session --target $INSTANCE_ID \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters portNumber=8501,localPortNumber=8501 \
-  --region us-west-2 --profile AdministratorAccess-434195712367
-# then open http://localhost:8501 in a browser on your laptop</code></pre>
-  <div class="callout warn">
-    <strong>Only one SSM port-forward session can hold port 8501 at a time.</strong>
-    A second concurrent session fails with <code>Connection to destination port failed, check SSM Agent logs.</code> while the first is still open - this has already been mistaken for the dashboard being down. Close (or reuse) the first tunnel before opening a second.
-  </div>
-  <div class="callout warn">
-    <strong>The Session Manager plugin is the prerequisite most likely to be missing here</strong>
-    <p>This command needs the Session Manager plugin (§0's tools table) - without it, <code>SessionManagerPlugin is not found</code>, which looks like a permissions or SSM problem but is purely a missing local binary. This and the missing-profile trap in §0 were hit live on 2026-08-04 while opening the admin dashboard for the first time, in that order - install the plugin well before exam day rather than discovering it under time pressure, since this tunnel depends on it too.</p>
-  </div>
-  <p style="margin-bottom:0;">Full capabilities and limits of the admin UI: see §9 in the Reference tab.</p>
-</div>
-
-  </div>
-
-  <div class="tabpanel" id="panel-operate" data-tab="tab-operate">
-  <p class="tab-jump">
-    <a href="#prereqs">0. Prerequisites</a>
-    <a href="#map">1. System map</a>
-    <a href="#startstop">2. Starting and stopping</a>
-    <a href="#promote">4. Promoting code</a>
-    <a href="#data">5. Changing prod data</a>
-  </p>
-
-<section id="prereqs">
-  <h2>0. Prerequisites - read this first</h2>
-  <p>Everything below depends on the facts on this page. It exists so no procedure later in this document has to re-explain how to authenticate or reach the box. If a later section says "see §0," this is where it points.</p>
-
-  <h3>Authenticate: AWS SSO</h3>
-  <p>This account uses AWS SSO, not long-lived access keys. Once per shell session (the token lasts several hours, then needs a fresh login):</p>
-  <pre><code>aws sso login --profile AdministratorAccess-434195712367</code></pre>
-  <p>This opens a browser to complete the login. If any command below fails with an expired-token or refresh-failed error, this is the fix - run it again.</p>
-
-  <div class="callout danger">
-    <strong>The profile flag is not optional, and a missing one looks like a different error entirely.</strong>
-    There is no default AWS profile configured on a fresh machine. A bare <code>aws</code> command with no <code>--profile</code> and no <code>AWS_PROFILE</code> exported fails with <code>Unable to locate credentials</code> / <code>NoCredentialProviders</code>. That error means "you forgot the profile flag," not "your SSO session expired" - re-running <code>aws sso login</code> will not fix it. Every <code>aws</code> command in this document needs <code>--profile AdministratorAccess-434195712367</code>, or export it once for the whole shell so every later command can drop the flag:
-    <pre><code>export AWS_PROFILE=AdministratorAccess-434195712367</code></pre>
-    This document writes <code>--profile</code> explicitly on most examples anyway, so any single command can be copy-pasted on its own without depending on shell state from an earlier step.
-  </div>
-
-  <p><strong>Region is <code>us-west-2</code></strong> for every resource in this stack (except the ACM certificate for CloudFront, which must live in <code>us-east-1</code> - that is called out where it matters, in §1). Pass <code>--region us-west-2</code>, or export it once:</p>
-  <pre><code>export AWS_REGION=us-west-2</code></pre>
-
-  <h3>Shell access on the box: SSM only, there is no SSH</h3>
-  <p>Port 22 has no ingress rule at all on the instance's security group (<code>terraform/network.tf</code>) - not "locked down," genuinely absent. <code>ssh</code> to the box will hang and time out, not refuse the connection. The only way onto the box is AWS Systems Manager Session Manager, which needs no open port at all - it works over an outbound HTTPS connection the SSM agent on the box initiates itself.</p>
-  <p>Interactive shell:</p>
-  <pre><code>aws ssm start-session --target &lt;instance-id&gt; --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-  <div class="callout warn">
-    <strong>You land as <code>ssm-user</code>, not <code>ec2-user</code>. The repo is not under this user's home directory.</strong>
-    An interactive session drops you into <code>/home/ssm-user</code> (AWS's default for Session Manager), which has nothing in it. To reach the app:
-    <pre><code>sudo -iu ec2-user
-cd /home/ec2-user/AITutorApp</code></pre>
-    Every command in this document that runs "on the box" assumes you have done this, or is written as a full path from the start. If a command below only says <code>cd AITutorApp</code>, treat that as shorthand for the two lines above, not something to type verbatim in an <code>ssm-user</code> shell.
-  </div>
-  <div class="callout ok">
-    <strong>SSO login and <code>--profile</code> are a laptop concept only - not needed once you're on the box.</strong>
-    Every <code>aws</code> command <em>targeting</em> the box from your laptop (<code>start-session</code>, <code>send-command</code>, <code>describe-instances</code>, etc.) needs the SSO login and profile above. But any <code>aws</code> command run <em>on the box itself</em> (inside an SSM session, or inside <code>scripts/snapshot.sh</code>/<code>ec2-bootstrap.sh</code>) authenticates automatically via the instance's IAM role - no login, no profile, no credentials file. If you see <code>aws s3 cp</code> or <code>aws sts get-caller-identity</code> with no <code>--profile</code> anywhere in a script in this repo, that is why - it is expected to run on the box, not your laptop.
-  </div>
-  <p>Non-interactive (most automation and every <code>aws ssm send-command</code> example in this document uses this shape - these run as <code>root</code>, so they use full paths and don't need the <code>sudo -iu ec2-user</code> step above):</p>
-  <pre><code>CMD_ID="$(aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 \
-  --instance-ids &lt;instance-id&gt; \
-  --document-name AWS-RunShellScript \
-  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose ps"]' \
-  --query 'Command.CommandId' --output text)"
-
-aws ssm get-command-invocation --region us-west-2 --profile AdministratorAccess-434195712367 \
-  --command-id "$CMD_ID" --instance-id &lt;instance-id&gt; \
-  --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json</code></pre>
-  <p>The first call returns immediately with a command id; the command itself runs asynchronously on the box, so the second call is what actually shows the result - if you query it too soon it reports <code>InProgress</code> rather than a finished status, just re-run the same <code>get-command-invocation</code> call again a few seconds later.</p>
-
-  <h3>Local tools you need before any of this works</h3>
-  <table>
-    <tr><th>Tool</th><th>Why</th><th>Check it's installed</th><th>Install</th></tr>
-    <tr><td>AWS CLI v2</td><td>Every command in this document</td><td><code>aws --version</code> - expect <code>aws-cli/2.x</code></td><td><a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html">AWS docs</a>, or <code>brew install awscli</code> on macOS</td></tr>
-    <tr><td>Terraform</td><td>Everything in §1's "what's not in Docker" list, all infra changes</td><td><code>terraform version</code> - <code>terraform/versions.tf</code> requires <code>&gt;= 1.10</code></td><td><code>brew install terraform</code> on macOS, or <a href="https://developer.hashicorp.com/terraform/install">HashiCorp's installer</a></td></tr>
-    <tr><td>Session Manager plugin</td><td>Required by <code>aws ssm start-session</code> specifically (not <code>send-command</code>) - a separate binary the CLI shells out to, not bundled with it</td><td>Run any <code>start-session</code> command above; <code>SessionManagerPlugin is not found</code> means it's missing (see also §9, hit live on 2026-08-04)</td><td><code>brew install --cask session-manager-plugin</code> on macOS. No shell restart needed - the CLI resolves it on <code>PATH</code> at call time.</td></tr>
-  </table>
-
-  <h3>Stable identifiers</h3>
-  <table>
-    <tr><th>Identifier</th><th>Value</th></tr>
-    <tr><td>AWS account</td><td><code>434195712367</code></td></tr>
-    <tr><td>SSO profile</td><td><code>AdministratorAccess-434195712367</code></td></tr>
-    <tr><td>Region</td><td><code>us-west-2</code> (ACM cert for CloudFront is the one exception, in <code>us-east-1</code> - see §1)</td></tr>
-    <tr><td>Public URL</td><td><code>https://air.da-tu.ca</code> (live, see §1 - <code>https://d2u3k75qofedmd.cloudfront.net</code> is the underlying CloudFront domain, also works, needs no DNS)</td></tr>
-    <tr><td>CloudFront distribution id</td><td><code>EAU1TO5IJG1RT</code></td></tr>
-    <tr><td>API path</td><td>Same-origin <code>/api/*</code> behind the CloudFront distribution above - there is no separate API hostname (<code>api.air.da-tu.ca</code> is retired, §1)</td></tr>
-    <tr><td>Elastic IP (the EC2 origin)</td><td><code>32.184.88.152</code></td></tr>
-    <tr><td>Backups bucket</td><td><code>aitutor-backups-434195712367</code></td></tr>
-    <tr><td>Frontend bucket</td><td><code>aitutor-frontend-434195712367</code></td></tr>
-    <tr><td>Ops bucket (Terraform state, deploy artifacts)</td><td><code>aitutor-434195712367-ops</code></td></tr>
-    <tr><td>Repo path on the box</td><td><code>/home/ec2-user/AITutorApp</code></td></tr>
-    <tr><td>EC2 instance id</td><td><strong>Not stable - see below, do not hardcode it</strong></td></tr>
-  </table>
-
-  <div class="callout danger">
-    <strong>The instance id changes every time the box is replaced, and it will be replaced more than once. Never hardcode it, anywhere - script, doc, or muscle memory.</strong>
-    Terraform recreates the instance (new id, empty database until restored) whenever <code>user_data</code> or the AMI changes - <code>most_recent = true</code> on the AMI data source means this can happen even with zero repo changes, just from Amazon publishing a new AL2023 image. It was <code>i-0b0d93da111a1e907</code> earlier in Stage 5; a 2026-08-05 rebuild replaced it with <code>i-068fb380c5ec1d2d4</code>. Neither of those two values should be pasted into a command - always look it up fresh:
-    <pre><code>aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
-  --query 'Reservations[].Instances[].InstanceId' --output text</code></pre>
-    Capture it into a shell variable once per session and reuse it, rather than re-running the lookup for every command:
-    <pre><code>INSTANCE_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
-  --query 'Reservations[].Instances[].InstanceId' --output text)"
-echo "$INSTANCE_ID"</code></pre>
-    Everywhere later in this document that shows <code>&lt;id&gt;</code> or <code>&lt;instance-id&gt;</code> in a command, substitute <code>$INSTANCE_ID</code> from this lookup (or <code>"$INSTANCE_ID"</code> if you've exported it as above). <code>terraform output instance_id</code> from <code>terraform/</code> is an equivalent shortcut when you already have Terraform state locally.
-  </div>
+<section id="morning">
+<h2>Exam morning checks (5 minutes)</h2>
+<ol>
+  <li>Instance running: <code>aws ec2 describe-instances --instance-ids $IID --query 'Reservations[0].Instances[0].State.Name' --output text</code></li>
+  <li>Bootstrap finished: <code>box "systemctl show -p ActiveState,Result aitutor-bootstrap"</code> should show <code>Result=success</code>.</li>
+  <li>Containers healthy: <code>box "docker compose ps"</code>. <code>api</code> and <code>db</code> show <code>(healthy)</code>, <code>nginx</code> is Up. A slow first hint after a start is normal (about 2 minutes warmup).</li>
+  <li>Open <code>https://air.da-tu.ca</code> in a real browser, click Start the exam, and confirm the login form with the rules appears. <strong>A curl 200 is not proof the page works</strong> (a CSP once served a blank page that passed every curl check).</li>
+  <li>Log in with one test token and answer one question, ask for a hint, send a chat message if the arm has chat. This proves the API key, the LLM and the DB end to end.</li>
+  <li>Open the admin tunnel, Exam tab: participant count matches the roster, LLM caps look sane (150 calls per user per day, 10,000 per day).</li>
+</ol>
 </section>
 
-<section id="map">
-  <h2>1. System map</h2>
-  <p><strong>Single-distribution architecture, Stage 5.</strong> One CloudFront distribution serves both the frontend (static export from S3) and the API (<code>/api/*</code>, proxied to one EC2 instance behind a static Elastic IP). <code>api.air.da-tu.ca</code> no longer exists — there is one domain, <code>air.da-tu.ca</code>, and one registrar CNAME pointing it at CloudFront. TLS terminates at CloudFront; the box only ever speaks plain HTTP.</p>
-  <div class="callout warn">
-    <strong>The CloudFront-to-origin hop is not encrypted, by design.</strong>
-    Origin traffic is not encrypted between CloudFront and EC2. This is accepted because the threat model prioritizes operational reliability over protection from network interception. CloudFront requires a publicly-trusted certificate to speak HTTPS to a custom origin, and keeping one alive would mean keeping certbot — whose renewal path never actually worked (it checked a host path certbot never wrote to; deleted rather than fixed). Mitigated two ways: the origin's security group admits port 80 only from CloudFront's published origin-facing IP ranges (nothing else can reach the box at all), and nginx rejects any request missing a shared secret CloudFront attaches on every request (<code>X-Origin-Secret</code>). Interception itself would need a position on the path between a CloudFront edge and the Elastic IP — backbone/ISP-level access, not something reachable from a student's own network.
-  </div>
-  <table>
-    <tr><th>Service</th><th>What it is</th><th>Reachable from</th><th>State</th></tr>
-    <tr><td><code>db</code></td><td><code>postgres:16-alpine</code></td><td>compose network only, port 5432 never exposed to host</td><td><code>postgres_data</code> named volume</td></tr>
-    <tr><td><code>api</code></td><td>FastAPI backend, built from the repo <code>Dockerfile</code></td><td>compose network only (port 8000, <code>expose</code> not <code>ports</code>) — nginx is the only path in</td><td><code>chroma_data</code> volume (RAG store); <code>prod/data</code> read-only bind mount</td></tr>
-    <tr><td><code>nginx</code></td><td><code>nginx:alpine</code>, reverse proxy, plain HTTP only</td><td>host port 80 only — the security group admits only CloudFront's origin-facing ranges, not the open internet; also fronts the admin UI on <code>127.0.0.1:8501</code>, proxying to the <code>api</code> container's <code>/admin</code> router</td><td>stateless; no certbot mounts, no 443 mapping</td></tr>
-  </table>
-  <div class="callout warn">
-    <strong>Volume lifecycle</strong>
-    <code>docker compose down</code> keeps <code>postgres_data</code> and <code>chroma_data</code> — safe for a routine restart.
-    <code>docker compose down -v</code> destroys both. Never run <code>-v</code> against the live box without a fresh <code>pg_dump</code> in hand first.
-  </div>
-  <p><strong>What's not in Docker:</strong> the Elastic IP, security group, IAM roles, CloudWatch alarms, Cost Anomaly Detection, Budgets, and the CloudFront distribution (frontend origin + the <code>/api/*</code> behavior pointed at the EIP) all live in Terraform (<code>terraform/</code>), applied from a laptop with SSO credentials — never from the box itself. The two monthly EventBridge Scheduler rules that used to boot the box for certificate renewal are gone along with certbot; nothing boots the box automatically anymore.</p>
-  <p><strong>Why the Elastic IP still exists</strong> even though <code>api.air.da-tu.ca</code> doesn't: CloudFront's <code>/api/*</code> origin (<code>terraform/frontend.tf</code>) points at <code>aws_eip.api.public_dns</code>, which has to stay stable across every stop/start — a plain EC2 public IP changes on every start, and this box is deliberately stopped between exams. Without the EIP, CloudFront's origin config would go stale on the very first post-exam stop/start. The EIP has <code>prevent_destroy</code> in Terraform for this reason.</p>
-  <div class="callout warn">
-    <strong>The Elastic IP costs money whether the instance is running or not - do not "optimize" it away.</strong>
-    The line item that shows up in Cost Explorer as <strong>"Amazon Virtual Private Cloud"</strong> is not VPC infrastructure at all - it is purely the public IPv4 charge on this EIP, usage types <code>USW2-PublicIPv4:IdleAddress</code> and <code>USW2-PublicIPv4:InUseAddress</code>, $0.005/hr, roughly $3.60/mo, billed continuously including while the instance is stopped. That is the correct tradeoff: it is what keeps the CloudFront origin hostname stable across stop/start (see above). The older rationale for the EIP, a Route 53 A record and a certbot TLS cert, is obsolete - both were deleted in Stage 5. Releasing the EIP to save ~$3.60/mo would break the CloudFront origin the next time the box stops and starts.
-  </div>
-  <div class="callout ok">
-    <strong>DNS / custom domain: live, confirmed 2026-08-05.</strong>
-    The ACM certificate for <code>air.da-tu.ca</code> is <code>ISSUED</code> in us-east-1, and the CloudFront distribution (<code>EAU1TO5IJG1RT</code>) now has <code>air.da-tu.ca</code> attached as an alias. Both registrar CNAMEs (the ACM validation record, and <code>air.da-tu.ca</code> → <code>d2u3k75qofedmd.cloudfront.net</code>) have propagated - <code>dig air.da-tu.ca</code> resolves through to CloudFront, and <code>curl -sI https://air.da-tu.ca/</code> returns a real <code>200</code>. This was previously pending for most of Stage 5; the fallback CloudFront domain (<code>https://d2u3k75qofedmd.cloudfront.net</code>) still works identically and is left in this document's examples below since it needs no DNS at all, but <code>https://air.da-tu.ca</code> is now the real, working public URL.
-  </div>
+<section id="during">
+<h2>During the exam</h2>
+<h3>What to watch</h3>
+<ul>
+  <li><strong>Admin Exam tab</strong>: active sessions, LLM usage and headroom. No alert fires when a cap is near, it just starts rejecting hints and chat, so glance at it now and then.</li>
+  <li><strong>Admin Health tab</strong>: in-memory request, error and latency counters, container memory. No DB queries, so it works even if the DB is struggling. Counters reset when api restarts.</li>
+  <li><strong>Logs</strong> (JSON line per request, joinable by <code>request_id</code>): <code>box "docker compose logs --tail 100 api"</code>. Also <code>db</code> and <code>nginx</code>. Look for 5xx and Gemini errors.</li>
+  <li><strong>Tab or app switches</strong>: the Students tab <code>left_page</code> column counts them per student. The detail is in Action Logs as <code>page_leave</code> rows, with <code>away_ms</code> in the action data.</li>
+  <li><strong>CPU</strong>: t3 is burstable. Check the instance in the EC2 console (CPUUtilization, CPUCreditBalance). The only CPU alarm is 90% for 15 minutes, and it emails.</li>
+</ul>
+
+<h3>Incidents</h3>
+<div class="inc"><h3>Student cannot log in: token active on another device</h3><ul>
+  <li>Cause: one device per token. A session is released 60 seconds after the last heartbeat, so closing the old tab frees it within a minute.</li>
+  <li>Fix now: admin, Students, open the student, <strong>Clear Session Lock</strong>. The student retries login.</li>
+</ul></div>
+<div class="inc"><h3>Student needs more time (or lost time to a fault)</h3><ul>
+  <li>One student: admin, open the student, <strong>Adjust Timer</strong> with extra minutes. Everyone: Exam tab, the bulk extend form (unsubmitted sessions only).</li>
+  <li>A locked-by-mistake question: student page, <strong>Unlock Question</strong> (voids that question's attempts).</li>
+</ul></div>
+<div class="inc"><h3>Login shows "Could not reach the server"</h3><ul>
+  <li>Check the box first: <code>box "docker compose ps"</code>. If it is down, see the box-unresponsive case.</li>
+  <li>If the box is fine, the frontend was probably built without <code>NEXT_PUBLIC_API_KEY</code> and every call returns 401. Check: <code>curl -s -o /dev/null -w '%{http_code}' https://air.da-tu.ca/api/</code> gives 401 without a key (expected). In the browser Network tab, look at whether requests carry <code>X-API-Key</code>. Fix by redeploying the frontend (below).</li>
+</ul></div>
+<div class="inc"><h3>Hints or chat failing (Gemini)</h3><ul>
+  <li>Check: <code>box "docker compose logs --tail 200 api"</code> for Google API errors, quota or key problems. Then the admin LLM usage panel: a hit cap rejects requests.</li>
+  <li>Fix: raise the caps on the Exam tab. For a bad key, update <code>/aitutor/prod/google_api_key</code> in SSM, then re-run bootstrap (it re-renders <code>.env</code>). The quiz itself keeps working without the LLM.</li>
+</ul></div>
+<div class="inc"><h3>Box unresponsive, 5xx everywhere</h3><ul>
+  <li>Soft: <code>box "docker compose restart api"</code> (about 2 minutes warmup, students keep their progress, it lives in Postgres and localStorage).</li>
+  <li>Hard: <code>aws ec2 reboot-instances --instance-ids $IID</code>. Docker restarts the containers (<code>restart: unless-stopped</code>) and bootstrap runs again. Data in the Docker volumes survives. If SSM itself is dead, use reboot, then stop/start.</li>
+  <li>Timers are server-side, so a reboot costs students wall-clock time. Extend-all afterwards.</li>
+</ul></div>
+<div class="inc"><h3>Roster change during the exam</h3><ul>
+  <li>Edit the csv, run <code>python prod/generate_tokens.py</code> (see the token caveat in Day before), then <code>./scripts/update-prod-data.sh</code>. It syncs to S3 and re-seeds the live box with no reboot.</li>
+  <li>Changed questions need <code>box "docker compose restart api"</code>. Do not do this mid-exam.</li>
+</ul></div>
 </section>
 
-<section id="startstop">
-  <h2>2. Starting and stopping</h2>
-  <pre><code>aws ec2 start-instances --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID
-aws ec2 stop-instances  --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID</code></pre>
-  <p>Get <code>$INSTANCE_ID</code> from §0's lookup - the id changes any time the box is replaced (e.g. a Terraform <code>user_data</code> change), so don't hardcode it in scripts or muscle memory.</p>
-  <p>On every boot, <code>aitutor-bootstrap.service</code> (a systemd oneshot installed by <code>user_data.sh.tftpl</code> at first boot) runs <code>scripts/ec2-bootstrap.sh</code> automatically: pulls <code>origin/main</code>, renders <code>.env</code> from SSM Parameter Store, refreshes CloudFront's origin-facing IP list, builds and starts all four containers, waits for <code>api</code> to report healthy, and re-seeds participants. No backup cron is installed anymore (§5b), and no certbot step anymore — TLS terminates at CloudFront, so the box only ever renders one nginx config. Observed timing this stage: SSM agent online almost immediately; full bootstrap (cold, no build cache) around 3 minutes; a warm re-run (cache hit) under a minute.</p>
-  <div class="callout danger">
-    <strong>Self-modifying script gotcha: a code change to <code>ec2-bootstrap.sh</code> needs two triggers to actually take effect on an already-running box.</strong>
-    The script's own first real action is <code>git reset --hard origin/main</code>, which rewrites the very file the running process is executing. The already-running process keeps reading its own stale in-memory/buffered copy to completion — so the <em>first</em> trigger after a push correctly updates the repo on disk, but still runs the <em>old</em> logic end to end (observed live during Stage 5: a first re-trigger after deleting <code>plain.conf</code>/<code>tls.conf</code> still tried to <code>cp</code> the now-deleted file, and separately, a first re-trigger after adding <code>LLM_PROVIDER=google</code> to the <code>.env</code> heredoc still rendered <code>.env</code> without it). A <em>second</em> <code>systemctl reset-failed aitutor-bootstrap.service &amp;&amp; systemctl start aitutor-bootstrap.service</code> reads the file fresh and runs correctly. A full <code>aws ec2 reboot-instances</code> does not have this problem — systemd starts a genuinely new process reading the current file from the start. When in doubt after changing this script, trigger it twice, or reboot instead of using the SSM one-liner.
-  </div>
-  <p>Watch it live (§0 for the instance id lookup and authentication):</p>
-  <pre><code>aws ssm start-session --target $INSTANCE_ID --region us-west-2 --profile AdministratorAccess-434195712367
-sudo journalctl -u aitutor-bootstrap.service -f</code></pre>
-  <h3>Restart granularity</h3>
-  <table>
-    <tr><th>Command</th><th>When</th><th>Effect</th></tr>
-    <tr><td><code>docker compose restart api</code></td><td>Code already on disk, just need the process to pick up a change (e.g. new <code>server_ready_questions.csv</code>)</td><td>Fast, no rebuild, no data loss. Re-runs RAG ingestion check (~2s if nothing changed).</td></tr>
-    <tr><td><code>docker compose up -d --build</code></td><td>Application code changed, need a fresh image</td><td>Rebuilds only what changed (Docker layer cache), recreates containers, keeps volumes.</td></tr>
-    <tr><td><code>sudo systemctl start aitutor-bootstrap.service</code></td><td>Want the full real deploy path exactly as a reboot would run it</td><td>Pulls <code>main</code> fresh, re-renders <code>.env</code>, re-syncs S3 data, rebuilds, re-seeds. This is the simplest single command for "get prod to match <code>main</code>" — see §4.</td></tr>
-    <tr><td><code>docker compose down</code> / <code>up -d</code></td><td>Rarely needed — full stack recreate, volumes preserved</td><td>Brief full outage across all four services.</td></tr>
-    <tr><td><code>aws ec2 reboot-instances</code></td><td>OS-level hang, not a container problem — or to sidestep the self-modifying-script gotcha above</td><td>Full boot cycle, runs <code>aitutor-bootstrap.service</code> again with a genuinely fresh process.</td></tr>
-  </table>
-  <p><strong>No automatic boot anymore.</strong> The monthly EventBridge start/stop that used to exist purely for certbot renewal is gone along with certbot (Stage 5). Nothing boots this box unattended — it only runs when explicitly started for an exam or for testing.</p>
-</section>
-
-<section id="promote">
-  <h2>4. Promoting code from GitHub to prod</h2>
-  <p><strong>Suggestions only — nothing below is implemented.</strong></p>
-  <p><strong>The image is built on the box, not locally or in AWS CI.</strong> There is no ECR, no CodeBuild, no separate build step anywhere. <code>docker compose up -d --build</code> on the EC2 instance itself is the entire build pipeline.</p>
-  <h3>Today's actual promotion path</h3>
-  <ol>
-    <li>Merge to <code>main</code>, push.</li>
-    <li>Trigger the box to pick it up, there is no automatic boot anymore (§2), so this step is never optional. Run from your laptop, authenticated per §0, with <code>$INSTANCE_ID</code> from §0's lookup:
-      <pre><code>aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
-  --document-name AWS-RunShellScript \
-  --parameters commands='["sudo systemctl reset-failed aitutor-bootstrap.service", "sudo systemctl start aitutor-bootstrap.service"]'
-# if this is the box's first pull of a change to ec2-bootstrap.sh
-# itself, run the same command a second time - see the self-modifying-
-# script callout in §2.</code></pre>
-    </li>
-  </ol>
-  <p>That's the whole thing. Observed cost this stage: roughly 1–3 minutes depending on build-cache warmth, with automatic rollback-free re-seeding folded in for free. This is genuinely simple, which is the strongest argument for leaving it alone.</p>
-  <h3>Options, costed honestly</h3>
-  <table>
-    <tr><th>Option</th><th>What it buys</th><th>What it costs</th><th>Recommendation</th></tr>
-    <tr><td><strong>Do nothing</strong> — keep the manual SSM trigger above</td><td>Zero new surface area, zero new failure mode</td><td>A human has to remember to run the command after merging</td><td><span class="tag">Default</span> Right-sized for a system that runs a handful of exam days a year.</td></tr>
-    <tr><td><strong>GitHub Actions running tests on push</strong></td><td>Backend pytest (114 tests) and the 6-spec Playwright E2E suite currently only ever run on a laptop. CI catches a regression before it's merged, with zero deploy risk.</td><td>One workflow file. No AWS credentials needed, no infra change.</td><td><span class="tag">Recommended</span> The one option here with real value and no downside — see §11.</td></tr>
-    <tr><td><strong>Actions triggering the SSM command above on merge</strong></td><td>Removes the "someone has to remember" step</td><td>Needs a GitHub OIDC role trusted by AWS IAM (new <code>terraform/iam.tf</code> resource), and now every merge to <code>main</code> can change prod with no human in the loop</td><td>Not recommended for a system whose failure mode is a live exam. If ever done, gate it so it only fires on a manual workflow_dispatch, not every push.</td></tr>
-    <tr><td><strong>Build images in CI, push to ECR</strong></td><td>Removes the on-box build entirely; the box would <code>docker pull</code> instead</td><td>New ECR repo (~$1/mo), a registry auth step in <code>ec2-bootstrap.sh</code>, and a second artifact (image tag) to keep in sync with the git ref it came from</td><td>Not worth it at this scale. The on-box build already takes under 3 minutes and has no cost.</td></tr>
-  </table>
-</section>
-
-<section id="data">
-  <h2>5. Changing prod data</h2>
-  <div class="callout ok">
-    <strong>Safe mid-exam</strong>
-    Adding or editing a participant. <code>prod/seed_participants.py</code> only ever touches <code>token</code>/<code>name</code>/<code>identifier</code>/<code>group</code>/<code>intervention</code> — it never writes <code>status</code>, <code>active_session_id</code>, <code>started_at</code>, or <code>last_seen_at</code> on a row that already exists, so a live student's session is untouched by a re-seed.
-  </div>
-  <div class="callout danger">
-    <strong>Not safe mid-exam</strong>
-    Changing <code>server_ready_questions.csv</code> under a student who is mid-attempt. Questions load into memory once at <code>api</code> boot (<code>app/main.py</code>); nothing reloads them live, deliberately — silently swapping questions under an in-progress student would be worse than requiring an explicit restart.
-  </div>
-  <h3>Participants</h3>
-  <p>All three steps below run on your laptop, from the repo root, with an active AWS SSO session per §0 - nothing here touches the box directly except through <code>update-prod-data.sh</code>'s own SSM call.</p>
-  <pre><code># 1. edit prod/data/participants.csv locally
-# 2. mint tokens + upsert manifest (.venv active, local DB running)
-python prod/generate_tokens.py
-
-# 3. push to S3 and re-seed the live box, no reboot — ~10 seconds
-./scripts/update-prod-data.sh</code></pre>
-  <p><code>update-prod-data.sh</code> syncs <code>prod/data/</code> to <code>s3://aitutor-434195712367-ops/artifacts/prod-data/</code>, then finds the running instance by the <code>aitutor-app</code> tag and runs <code>prod/seed_participants.py</code> on it over SSM. If the box is currently stopped (normal between exams), it just updates S3 and logs that the next boot will pick it up automatically — no error, no manual follow-up needed.</p>
-  <h3>Questions</h3>
-  <pre><code># 1. edit prod/data/new_evaluation_questions.csv locally
-# 2. regenerate the server-ready CSV
-python prod/prepare_data.py
-
-# 3. push to S3 (update-prod-data.sh does not do this part today)
-aws s3 sync prod/data/ s3://aitutor-434195712367-ops/artifacts/prod-data/ --region us-west-2
-
-# 4. pick up the change, restart, not a full rebuild. From your laptop,
-#    authenticated per §0, with $INSTANCE_ID from §0's lookup:
-aws ssm send-command --region us-west-2 --profile AdministratorAccess-434195712367 --instance-ids $INSTANCE_ID \
-  --document-name AWS-RunShellScript \
-  --parameters commands='["cd /home/ec2-user/AITutorApp && docker compose restart api"]'</code></pre>
-  <h3>Source PDF (RAG corpus)</h3>
-  <p>Replacing <code>prod/data/source.pdf</code> and restarting <code>api</code> re-triggers ingestion automatically, <code>ingest_pdf()</code> checks whether it's needed on every boot. Measured cost for the current 7-page source: about 2 seconds, producing 21 chunks (confirmed live, 2026-08-05). Follows the same S3-sync-then-restart path as questions above.</p>
-</section>
-
-  </div>
-
-  <div class="tabpanel" id="panel-data" data-tab="tab-data">
-  <p class="tab-jump">
-    <a href="#backups">5b. Backups</a>
-    <a href="#snapshot">5c. Instance snapshot and restore</a>
-    <a href="#logs">6. Logs</a>
-  </p>
-
-<section id="backups">
-  <h2>5b. Backups — on demand only, there is no cron</h2>
-  <div class="callout danger">
-    <strong>There is no scheduled backup. Do not go looking for one.</strong>
-    A nightly <code>0 2 * * *</code> cron used to be installed by <code>ec2-bootstrap.sh</code>; it was deleted, because it only ran while the instance ran and this box is stopped between exams by design. A single-day, 25-minute exam very likely never crosses <code>02:00</code> while the box happens to be up, so the cron was coverage on paper and nothing in practice. Never describe a scheduled backup as coverage in an incident, there isn't one.
-  </div>
-  <p><strong>The real protection is a dump taken immediately before stopping the box.</strong> While the box is stopped, data physically cannot change, so a pre-stop dump is current for the entire stopped period by definition. This is §10 step 7 — do it every time, not just after an exam.</p>
-  <p><strong>There is deliberately no mid-exam backup step either.</strong> <code>docker compose restart</code> loses nothing, and the <code>postgres_data</code> named volume survives a stop/start of the instance. The only events that actually destroy data are instance termination and EBS loss, neither of which a mid-exam <code>pg_dump</code> would have prevented in the window it covers. The recorded failure contingency ("restart services, retain data, resume the exam") is satisfied by the restart alone.</p>
-  <p>Fixed during Stage 5 (previously a real gap, F2 in the migration plan), and still relevant to the manual runs: <code>BACKUP_S3_URI</code> points at <code>aitutor-backups-&lt;account-id&gt;</code> (a dedicated Terraform-managed bucket, <code>terraform/backups.tf</code>), not the ops bucket. The instance role previously had no <code>PutObject</code> permission on the ops bucket at all, so every `aws s3 cp` silently failed with AccessDenied — <code>backup.sh</code> exited non-zero under <code>set -e</code>. <strong>Before this fix, the system would have looked like it had off-box backups and had none.</strong> The instance role's IAM policy also now grants <code>GetObject</code>/<code>ListBucket</code> on the backups bucket (previously write-only, so nothing on the box could even read a backup back — no restore path existed at all).</p>
-  <p>Verify a dump actually landed (from your laptop, authenticated per §0):</p>
-  <pre><code>aws s3 ls s3://aitutor-backups-434195712367/backups/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-  <div class="callout danger">
-    <strong>Verified live, 2026-08-05: the <code>backups/</code> prefix is still empty. No off-box Postgres-only dump exists right now.</strong>
-    <code>s3://aitutor-backups-434195712367/backups/</code> contains zero objects (the <code>snapshots/</code> prefix, §5c, now has one - a different mechanism, not this one). The <code>backup.sh</code> upload path is correctly wired end to end (IAM fix above, correct bucket, correct permissions) - nobody has run it against production yet. Separately, <code>restore_drill.sh</code> has only ever been exercised against the DEV database - it has never validated a restore of a real prod-sourced dump. Do not treat "the mechanism is fixed" as "a backup exists." Until a dump is actually visible in this bucket, the <strong>only</strong> real protection is the manual pre-stop step in §10 - run the exact <code>backup.sh</code> command there (with <code>BACKUP_S3_URI</code> passed explicitly, it does not pick that up on its own - see the callout in §10) and take an EBS snapshot before every <code>stop-instances</code>, no exceptions, and confirm the object landed with the command above before walking away.
-  </div>
-</section>
-
-<section id="snapshot">
-  <h2>5c. Instance snapshot and restore</h2>
-  <p>Built 2026-08-05, per the plan in <code>PRELAUNCH_CHECKLIST.md</code>, "Instance snapshot: requirements and plan". Two scripts, two directions:</p>
-  <ul>
-    <li><code>scripts/snapshot.sh</code> - capture. Bundles Postgres (via <code>backup.sh</code>), the <code>chroma_data</code> Docker volume (the Chroma vector store plus <code>llm_cache.db</code>, which lives inside it), a CSV export of all 9 application tables, a point-in-time copy of <code>prod/data</code>, and all four services' container logs into ONE timestamped archive, uploaded to the backups bucket.</li>
-    <li><code>scripts/snapshot_restore.sh</code> - restore. Takes a bundle and brings a fresh box's Postgres and <code>chroma_data</code> volume up to the captured state.</li>
-  </ul>
-  <div class="callout danger">
-    <strong>Not a cron, and not the same thing as §5b's backups.</strong>
-    <code>backup.sh</code> is the routine pre-stop Postgres-only dump. <code>snapshot.sh</code> is the heavier, occasional full-instance bundle - run it post-exam and whenever you want a complete offline copy of everything, not every time you stop the box. Both land in the same bucket but under different prefixes (<code>backups/</code> vs <code>snapshots/</code>), and neither expires: <code>terraform/backups.tf</code>'s lifecycle rule was changed 2026-08-04 so current objects in this bucket have no expiry at all, only noncurrent (superseded) versions are pruned.
-  </div>
-  <div class="callout warn">
-    <strong>Where every command below runs, and how to authenticate</strong>
-    <p>Everything in this section runs <strong>on the box</strong>, reached over SSM (there is no SSH - see §0). Get the current instance id and open a shell:</p>
-    <pre><code>aws sso login --profile AdministratorAccess-434195712367
-INSTANCE_ID="$(aws ec2 describe-instances --profile AdministratorAccess-434195712367 --region us-west-2 \
-  --filters Name=tag:Name,Values=aitutor-app Name=instance-state-name,Values=running,stopped \
-  --query 'Reservations[].Instances[].InstanceId' --output text)"
-aws ssm start-session --target "$INSTANCE_ID" --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-    <p>Once connected, become the app user and go to the repo before running anything below (§0 explains why - you land as <code>ssm-user</code>, not <code>ec2-user</code>):</p>
-    <pre><code>sudo -iu ec2-user
-cd /home/ec2-user/AITutorApp</code></pre>
-  </div>
-
-  <h3>Capture: bringing the box down to a single restorable bundle</h3>
-  <p>Run this any time you want a full offline copy - a required step post-exam, and worth doing before any risky change (Terraform apply that touches the instance, a manual package upgrade, etc.). Requires the containers to be up, same as <code>backup.sh</code> - run it <strong>before</strong> <code>stop-instances</code>, not against a stopped box.</p>
-  <pre><code># on the box, in /home/ec2-user/AITutorApp, containers running
+<section id="after">
+<h2>After the exam</h2>
+<ol>
+  <li><strong>Export data</strong>: admin Export tab, download the logs as CSV (interactions, chat, interventions, actions). Keep a copy outside the box.</li>
+  <li><strong>Back up</strong> in an SSM session on the box (this briefly stops the api, so only after students are done):
+<pre><code>aws ssm start-session --target $IID
+sudo -iu ec2-user
+cd AITutorApp
 POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db ./scripts/snapshot.sh</code></pre>
-  <div class="callout warn">
-    <strong>This causes a brief, deliberate <code>api</code> outage.</strong>
-    <code>llm_cache.db</code> is a live SQLite file inside the <code>chroma_data</code> volume; tarring it while <code>api</code> is running risks a torn copy. <code>snapshot.sh</code> runs <code>docker compose stop api</code> for the few seconds the volume tar takes, then <code>docker compose start api</code> immediately after. <code>db</code> and <code>nginx</code> are never stopped. Do not run this mid-exam - it is a post-exam / maintenance-window step, same reasoning as §5b's "not a cron."
-  </div>
-  <p>What it produces, all under one key:</p>
-  <pre><code>s3://aitutor-backups-&lt;account-id&gt;/snapshots/aitutor_snapshot_&lt;YYYYMMDDTHHMMSSZ&gt;.tar.gz</code></pre>
-  <p>Verify it landed (same pattern as §5b):</p>
-  <pre><code>aws s3 ls s3://aitutor-backups-434195712367/snapshots/ --region us-west-2 --profile AdministratorAccess-434195712367</code></pre>
-  <p>A copy is also left locally on the box under <code>./backups/snapshots/</code>. Unpacked, the bundle contains:</p>
-  <table>
-    <tr><th>Path</th><th>Contents</th></tr>
-    <tr><td><code>dump/aitutor_*.dump</code></td><td>Postgres dump (<code>pg_dump -Fc</code>), all 9 tables plus <code>alembic_version</code>. Restore source of truth.</td></tr>
-    <tr><td><code>csv/*.csv</code></td><td>One CSV per table, full rows, header included - for analysis, not for restore.</td></tr>
-    <tr><td><code>chroma_data.tar.gz</code></td><td>Tar of the <code>chroma_data</code> Docker volume (vector store + <code>llm_cache.db</code>). Absent if the script could not resolve the volume - check its output for a warning before assuming this is present.</td></tr>
-    <tr><td><code>prod_data/</code></td><td>Point-in-time copy of <code>prod/data</code> as actually served at capture time. Record only, not a restore path (see below).</td></tr>
-    <tr><td><code>logs/*.log</code></td><td><code>docker compose logs</code> for <code>api</code>/<code>db</code>/<code>nginx</code>, capped at whatever the 10MB x 3 file <code>x-logging</code> retention held at capture time.</td></tr>
-    <tr><td><code>README.md</code></td><td>Data dictionary - JSON-column notes, and the corrected <code>user_action_logs.action_type</code> list (see callout below).</td></tr>
-  </table>
-  <div class="callout danger">
-    <strong>Never count CSV rows with <code>wc -l</code>. It will tell you the export is corrupted when it is fine.</strong>
-    Free-text columns (<code>hint_text</code>, chat messages) contain embedded newlines, and CSV quoting means one logical row legitimately spans several physical lines. Measured on a real bundle: <code>wc -l csv/interaction_logs.csv</code> reported <strong>69</strong> for a table holding <strong>23</strong> rows. Use a real CSV parser instead, which is already on the box:
-    <pre>python3 -c "import csv,sys; print(sum(1 for _ in csv.reader(open(sys.argv[1]))) - 1)" csv/interaction_logs.csv</pre>
-    Cross-check against the live database with <code>docker compose exec -T db psql -U aitutor -d aitutor_db -c "SELECT count(*) FROM interaction_logs;"</code>. Verified equal on all 9 tables for the 2026-08-05 snapshot.
-  </div>
-  <div class="callout danger">
-    <strong>The local copy under <code>./backups/snapshots/</code> is plaintext PII. Delete it when you are done with it.</strong>
-    It holds student names, identifiers and full chat transcripts as unencrypted CSV. <code>snapshot.sh</code> says so on stdout when it finishes, which is easy to miss and does not help anyone reading this document instead of running the script. The S3 copy is the one that is meant to persist; the on-box copy is a convenience. Remove it with <code>rm /home/ec2-user/AITutorApp/backups/snapshots/&lt;bundle&gt;.tar.gz</code> once the S3 upload is confirmed. The same applies to anything you extract while inspecting a bundle.
-  </div>
-  <div class="callout">
-    <strong>Getting the exact S3 key.</strong> The script's own last line of output is authoritative (<code>[snapshot] Done. s3://...</code>). Prefer copying it from there rather than grepping a bucket listing, which will contain every previous snapshot too.
-  </div>
-  <div class="callout danger">
-    <strong>Known defect the bundle works around: the <code>UserActionLog</code> docstring in <code>app/models/user.py</code> is stale.</strong>
-    It documents <code>intervention_offered</code>/<code>intervention_accepted</code>/<code>intervention_rejected</code>, <code>session_complete</code>, <code>timer_expired</code>, and more - none of which the app emits. Querying the CSV export by those names returns nothing, silently. The <strong>19 real values</strong>, verified against <code>frontend/src</code> and the validation whitelist in <code>app/endpoints/action_log.py</code>, are: <code>session_start</code>, <code>session_submit</code>, <code>session_expire</code>, <code>timer_warning</code>, <code>question_view</code>, <code>question_navigate</code>, <code>choice_select</code>, <code>answer_focus</code>, <code>answer_submit</code>, <code>answer_skip</code>, <code>hint_request</code>, <code>hint_display</code>, <code>hint_feedback</code>, <code>intervention_offer</code>, <code>intervention_accept</code>, <code>intervention_reject</code>, <code>chat_send</code>, <code>profile_view</code>, <code>preference_update</code>. The bundle's own <code>README.md</code> repeats this list so an analyst never has to consult the stale docstring. Fixing the docstring itself is a separate, not-yet-done source change - out of scope for this script.
-  </div>
-
-  <h3>Restore: bringing a fresh box back to the captured state</h3>
-  <p>Assumes the old instance is gone and Terraform has already created a replacement, or you are restoring onto a fresh box for any other reason. Sequence:</p>
-  <ol>
-    <li><code>terraform apply</code> creates the instance; <code>ec2-bootstrap.sh</code> runs on first boot and brings the containers up with an <strong>empty</strong> database (see §2/§3 for confirming bootstrap finished).</li>
-    <li>Connect over SSM as above, <code>cd</code> into the repo, then download and restore in one step:
-      <pre><code>POSTGRES_USER=aitutor POSTGRES_DB=aitutor_db \
-  ./scripts/snapshot_restore.sh \
-  s3://aitutor-backups-434195712367/snapshots/aitutor_snapshot_&lt;ts&gt;.tar.gz</code></pre>
-      This downloads the bundle, restores Postgres by calling the existing <code>scripts/restore.sh</code> unchanged (<code>pg_restore --clean --if-exists</code>, so it replaces the freshly-seeded <code>participants</code> rows with the captured ones), then restores the <code>chroma_data</code> volume - stopping <code>api</code> for the duration, same brief-outage tradeoff as capture.
-    </li>
-    <li>Verify: <code>snapshot_restore.sh</code> extracts the bundle into a temp directory it deletes on exit, so check row counts directly against Postgres instead of the (by-then-gone) extracted CSVs:
-      <pre><code>docker compose exec -T db psql -U aitutor -d aitutor_db -c \
-  "SELECT 'users', COUNT(*) FROM users UNION ALL SELECT 'participants', COUNT(*) FROM participants;"</code></pre>
-      If you want a full per-table comparison against the bundle's own CSVs, download and unpack the same bundle a second time yourself (<code>aws s3 cp ... && tar xzf ...</code>) rather than relying on anything <code>snapshot_restore.sh</code> left behind.
-    </li>
-  </ol>
-  <div class="callout danger">
-    <strong>Alembic ordering hazard.</strong>
-    Step 1 already ran <code>alembic upgrade head</code> against the fresh box's current <code>main</code>. Step 2 then restores an <code>alembic_version</code> row from the snapshot's dump. If the repo has gained migrations since the snapshot was taken, the restored <code>alembic_version</code> will point at an older revision than the schema actually is, and the next <code>alembic upgrade head</code> will try to re-run migrations that already applied. There is no automatic handling of this today - if the snapshot predates the box's current migration history, check <code>alembic_version</code> after restoring and reconcile it by hand before trusting the schema.
-  </div>
-  <div class="callout warn">
-    <strong><code>prod/data</code> is NOT restored by this script, on purpose.</strong>
-    On a rebuilt box, <code>prod/data</code> (questions + participant manifest) arrives via <code>ec2-bootstrap.sh</code>'s own S3 sync from the ops bucket - that is the one authoritative path for getting it onto a box (see §5, <code>update-prod-data.sh</code>). The bundle's <code>prod_data/</code> copy is a point-in-time record for audit only.
-  </div>
-  <p>What a restore cannot bring back, regardless: anything that happened after the snapshot (there is no point-in-time recovery or WAL archiving - a snapshot is a single moment, full stop), the instance's surroundings (Elastic IP, CloudFront distribution, SSM parameters, the GitHub deploy key - all come from Terraform and SSM, not this bundle), and the deployed frontend (a separate S3/CloudFront static export, not instance data). Restore is always "Terraform first, then this bundle," never this bundle alone.</p>
-
-  <div class="callout ok">
-    <strong>What has actually been verified, and what has not (as of 2026-08-05)</strong>
-    <p>Tested locally against seeded, disposable scratch Postgres databases (never against the dev or production database): the Postgres capture-then-restore round trip via <code>backup.sh</code>/<code>restore.sh</code>'s non-Docker code path (all 9 tables matched row-for-row after restore), and the CSV export (all 9 tables produced real rows, JSON columns rendered as single JSON-text columns as documented above). Both scripts pass <code>bash -n</code> and were dry-run for their failure paths (missing bundle argument, missing <code>POSTGRES_USER</code>/<code>POSTGRES_DB</code>, nonexistent bundle path all fail immediately with no default target, matching <code>restore.sh</code>'s own safety property).</p>
-    <p><strong>Update, 2026-08-05: the capture side is now proven against real infrastructure, not just reviewed.</strong> <code>scripts/snapshot.sh</code> was exercised end to end on the rebuilt box, including the <code>chroma_data</code> Docker-volume capture and the real S3 upload - a bundle from a freshly bootstrapped box came out to about 445 KB. That box also confirmed a cold bootstrap takes about 3 minutes, the app loads 25 questions across 5 skills, and RAG ingestion turns the 7-page source PDF into 21 chunks.</p>
-    <p><strong>Still NOT tested: <code>scripts/snapshot_restore.sh</code>'s restore direction.</strong> Postgres restore via <code>restore.sh</code> is proven locally (above), but restoring the <code>chroma_data</code> volume onto a second box, and the full download-then-restore path end to end, have not been exercised for real. Treat restore as reviewed but unproven until it has actually brought a box back from a snapshot once.</p>
-  </div>
+Confirm it landed: <code>aws s3 ls s3://aitutor-backups-434195712367/ --recursive | tail -3</code>. Container logs die with the box, and the snapshot bundle captures them.</li>
+  <li><strong>Stop the instance</strong> unless the stop schedule already did: <code>aws ec2 stop-instances --instance-ids $IID</code>. A running t3.medium costs money all night.</li>
+  <li><strong>No leftovers</strong>: <code>aws scheduler list-schedules --query 'Schedules[].Name'</code> should list nothing stale (they delete themselves after firing).</li>
+</ol>
 </section>
 
-<section id="logs">
-  <h2>6. Logs</h2>
-  <p>Every command below runs <strong>on the box</strong> - open a shell per §0, then <code>sudo -iu ec2-user</code> and <code>cd /home/ec2-user/AITutorApp</code> before the <code>docker compose</code> commands (<code>journalctl</code> doesn't need the repo directory, only <code>sudo</code>).</p>
-  <p>Every request now emits one structured JSON line (fields: <code>ts</code>, <code>level</code>, <code>logger</code>, <code>request_id</code>, <code>msg</code>, <code>method</code>, <code>path</code>, <code>route</code>, <code>status</code>, <code>duration_ms</code>) instead of the old plain-text lines, and uvicorn's own access log is disabled so nothing gets logged twice. Every app log line inside a request carries the same <code>request_id</code>, so grepping one id gives the whole request.</p>
-  <table>
-    <tr><th>Source</th><th>Command</th><th>Retention</th></tr>
-    <tr><td><code>api</code> / <code>db</code> / <code>nginx</code> container logs</td><td><code>docker compose logs &lt;service&gt;</code> (add <code>-f</code> to follow, <code>--tail 200</code> to limit)</td><td>10MB × 3 files per service (<code>x-logging</code> anchor in <code>docker-compose.yml</code>) — roughly 30MB per service before the oldest rotates out</td></tr>
-    <tr><td>Boot / bootstrap sequence</td><td><code>sudo journalctl -u aitutor-bootstrap.service</code> (add <code>--since "1 hour ago"</code> etc.)</td><td>Whatever the box's local journald retention allows — not infinite, don't rely on it past a few boots</td></tr>
-    <tr><td>nginx access/error</td><td>Same as the nginx container log — the image logs to stdout/stderr by default, no separate file</td><td>Same 30MB cap</td></tr>
-    <tr><td>Backup runs</td><td>Nothing to tail, <code>backup.sh</code> is run interactively (§5b, §10) and prints to your terminal. The old <code>backups/cron.log</code> is gone along with the cron; a stale copy may still exist on a box booted before that change.</td><td>Dumps themselves live under <code>~/AITutorApp/backups/</code> until <code>BACKUP_RETENTION_DAYS</code> prunes them</td></tr>
-    <tr><td>Behavioral data</td><td>The admin UI's <em>Export</em> tab (interaction/chat/intervention/action logs as CSV) - see §9</td><td>Lives in Postgres, not log files; export doesn't consume it</td></tr>
-  </table>
-  <p><strong>Get logs off the box before stopping it</strong> — container logs do not survive <code>docker compose down</code> or an instance stop, only the underlying data volumes do:</p>
-  <pre><code>docker compose logs --no-color &gt; /tmp/api.log
-aws s3 cp /tmp/api.log s3://aitutor-434195712367-ops/adhoc-logs/$(date -u +%Y%m%dT%H%M%SZ)-api.log</code></pre>
-  <div class="callout ok">
-    <strong>Correlation is solved now - grep one <code>request_id</code>.</strong>
-    Structured JSON logging and the per-request <code>request_id</code> above closed what used to be the highest-value gap here: "it broke around 10:42" no longer means grepping four separate log streams by timestamp and guessing which lines belong together.
-  </div>
+<section id="fe">
+<h2>Frontend deploy (only when the UI changed)</h2>
+<pre><code>cd frontend
+export NEXT_PUBLIC_API_URL=/api
+export NEXT_PUBLIC_API_KEY="$(aws ssm get-parameter --name /aitutor/prod/api_key --with-decryption --query Parameter.Value --output text)"
+npm run build
+
+grep -rl '127.0.0.1:8000' out/ | head        # must print nothing
+grep -rl 'X-API-Key' out/ | head -1          # must print a file
+
+aws s3 sync out/ s3://aitutor-frontend-434195712367/ --delete
+aws cloudfront create-invalidation --distribution-id EAU1TO5IJG1RT --paths '/*'</code></pre>
+<p>Then load <code>https://air.da-tu.ca</code> in a real browser and reach the login form. Omitting <code>NEXT_PUBLIC_API_KEY</code> silently ships a site where every call is a 401.</p>
 </section>
 
-  </div>
-
-  <div class="tabpanel" id="panel-reference" data-tab="tab-reference">
-  <p class="tab-jump">
-    <a href="#monitoring">7. Monitoring</a>
-    <a href="#admin">9. Admin UI - can / cannot</a>
-    <a href="#recommendations">11. Recommendations</a>
-  </p>
-
-<section id="monitoring">
-  <h2>7. Monitoring</h2>
-  <p>Everything below routes to <strong>pedram.agand@gmail.com</strong> via the <code>aitutor-alerts</code> SNS topic. <strong>The email subscription needs a one-time click to confirm</strong> — until that's done, every alarm below fires silently into the void.</p>
-  <table>
-    <tr><th>Alarm</th><th>Trigger</th><th>Source</th></tr>
-    <tr><td>EC2 status check failed</td><td><code>StatusCheckFailed</code> ≥ 1, 2 consecutive periods (2 min)</td><td>CloudWatch metric alarm, instance-level hardware/network fault</td></tr>
-    <tr><td>Sustained high CPU</td><td>Average CPU ≥ 90% for 3 consecutive 5-minute periods (15 min)</td><td>CloudWatch metric alarm — worth watching during the k6 load test and live during an exam</td></tr>
-    <tr><td>Monthly budget</td><td>80% of $15 actual, 100% of $15 forecasted</td><td>AWS Budgets, scoped to the <code>Project=AITutorApp</code> tag</td></tr>
-    <tr><td>Cost anomaly</td><td>Any day's anomalous spend ≥ $1 total impact</td><td>Cost Explorer Anomaly Detection, daily frequency</td></tr>
-  </table>
-  <div class="callout danger">
-    <strong>The monthly budget alarm was dead from the day it was created, and the fix has not yet proven itself.</strong>
-    <code>aitutor-monthly-budget</code> filters on tag <code>user:Project$AITutorApp</code>, but the <code>Project</code> cost allocation tag key was <strong>Inactive</strong> account-wide - so the budget read $0.00 forever regardless of real spend, silently, with no error anywhere. Fixed via <code>aws_ce_cost_allocation_tag.project</code> in <code>terraform/guardrails.tf</code>, applied 2026-08-04. This only affects spend going forward - it can take up to 24h to start populating, and historical months need an explicit <code>aws ce start-cost-allocation-tag-backfill</code> to backfill. <strong>Do not treat this budget as a working cost signal until it has actually been observed reporting a non-zero figure at least once.</strong> Cross-check real spend in Cost Explorer directly (untagged/unfiltered) until then.
-  </div>
-  <p><strong>In-app LLM caps</strong> - not a CloudWatch alarm, but the thing most likely to actually bind during an exam: 150 calls/user/day, 10,000 calls/day globally (<code>app/services/llm_quota.py</code>). Watch live in the admin UI's <em>Exam</em> tab → LLM Usage (last 24h) panel - shows the rolling global count and headroom remaining, plus top consumers, and the cap can be adjusted right there (see §9). No alert fires when the cap is approached; it just starts rejecting hint/chat requests. Worth a manual glance mid-exam if usage looks unusually heavy.</p>
+<section id="facts">
+<h2>Current facts</h2>
+<ul>
+  <li><strong>Exam length: 1 hour.</strong> Set by <code>EXAM_DURATION_MS</code>. The code default in <code>app/utils/config.py</code> is 60 minutes, and <code>scripts/ec2-bootstrap.sh</code> renders 3600000 into the box <code>.env</code>. Per-student and bulk extensions are done in the admin UI.</li>
+  <li><strong>LLM</strong>: <code>gemini-3.1-flash-lite</code>, the code default in <code>app/utils/config.py</code> (<code>GOOGLE_MODEL_NAME</code> is not set in the box <code>.env</code>). Bootstrap sets <code>LLM_PROVIDER=google</code>.</li>
+  <li><strong>Experiment arms</strong> per participant: <code>group</code> (free_choice or adaptive hint style), <code>intervention</code> (proactive or manual), <code>chat</code> (on or off), <code>chatiq</code> (on or off). Students cannot change them.</li>
+  <li><strong>Student flow</strong>: <code>/</code> is a one-screen figure with a Start the exam button. It leads to <code>/login</code>, which shows the rules above the token form.</li>
+  <li><strong>Traffic path</strong>: CloudFront serves the static frontend and proxies <code>/api</code> to nginx on the box. The security group admits only CloudFront ranges, so the box is not directly reachable from a laptop.</li>
+</ul>
 </section>
-
-<section id="admin">
-  <h2>9. Admin UI — what you can and cannot do</h2>
-  <p>Never exposed publicly, only reachable through an SSM port-forward tunnel on <code>127.0.0.1:8501</code> - see the Exam Day tab for the tunnel command and the Session Manager plugin prerequisite.</p>
-  <div class="callout ok">
-    <strong>Plain server-rendered HTML now, not a websocket app — a refresh always recovers.</strong>
-    The admin UI used to be a Streamlit dashboard: a stateful, websocket-only session that could wedge with a blank page and a live "Stop" indicator that a browser refresh could not clear, recoverable only via <code>docker compose restart streamlit</code> over SSM. It has been retired and replaced with a stateless page served directly by the FastAPI app's <code>/admin</code> router (<code>app/endpoints/admin_ui.py</code>) — every page is a plain GET, every write is a POST followed by a redirect, and there is no server-held session to wedge. If a page ever looks wrong, refresh it; there is no other recovery step.
-  </div>
-  <p>Top-level tabs: <strong>Exam</strong> (bulk timer extension, LLM usage, and live LLM cap control), <strong>Students</strong> (the roster table), <strong>Health</strong> (live in-process metrics, see the callout below), <strong>Export</strong>, and <strong>Research</strong> (A/B charts). Opening a student from the roster lands on that student's own tabs: <strong>Manage</strong> (timer, session lock, preferences, and Unlock Question), Overview, Answers, Hints, Chat, Actions, and a separate <strong>Danger</strong> tab for Reset Progress and Delete User.</p>
-  <div class="callout danger">
-    <strong>Bypasses per-student authorization, by design</strong>
-    The admin UI is a router inside the same FastAPI app, using the async DB session directly - none of the API's row-level authorization applies here. That's intentional (it's the trusted admin path; the SSM tunnel plus AWS IAM is the auth boundary, not a login form). Unlike the retired Streamlit dashboard, the two destructive actions in the Danger tab (<em>Reset Progress</em>, <em>Delete User</em>) now require typing the exact user id into a confirm field - a mismatch is rejected with a visible error rather than silently doing nothing.
-    Every write is also Origin-checked: the tunnel makes <code>localhost:8501</code> reachable from any tab your browser has open, so without this any page you visited mid-exam could have driven a timer reset or a delete. If an action ever returns <strong>403 Request rejected</strong>, you reached the page by some route where the browser's <code>Origin</code> disagrees with the <code>Host</code> (a proxy or a rewritten URL, for instance); open <code>http://localhost:8501/</code> directly and retry. <code>curl</code> from inside an SSM session sends no <code>Origin</code> and is deliberately still allowed, so ops scripts are unaffected.
-  </div>
-  <div class="grid2">
-    <div class="card">
-      <h3>Can</h3>
-      <ul>
-        <li><strong>Exam tab:</strong> bulk-extend (or reduce) every unsubmitted session's timer at once, with an affected-count preview; view LLM usage (24h rolling, global + top consumers); adjust the LLM caps live, no SSM session and no API restart needed - the override persists across a restart</li>
-        <li><strong>Students tab:</strong> the roster, plus system-wide analytics (A/B distribution, hint-style preferences, per-user summary, correctness %)</li>
-        <li><strong>Health tab:</strong> live in-process metrics - see the callout below</li>
-        <li><strong>Export tab:</strong> any of Interaction/Chat/Intervention/Action logs as CSV, filtered by user/date/type</li>
-        <li><strong>Research tab:</strong> A/B charts</li>
-        <li>Per student, <strong>Overview / Answers / Hints / Chat / Actions tabs:</strong> full profile, skill-mastery trajectory, interaction history, hints &amp; interventions, chat log, action log</li>
-        <li>Per student, <strong>Manage tab:</strong> edit A/B group, hint-style preference, intervention preference; <em>Reset Timer to NOW</em>, <em>Adjust Timer</em> (± minutes), <em>Clear Session Lock</em>, <em>Unlock Question</em> - see the callout below</li>
-        <li>Per student, <strong>Danger tab:</strong> <em>Reset Progress</em> (wipes interaction history + mastery, resets to unused) and <em>Delete User</em> - both irreversible</li>
-      </ul>
-    </div>
-    <div class="card">
-      <h3>Cannot — use instead</h3>
-      <ul>
-        <li>Add/edit participants → <code>update-prod-data.sh</code> (§5)</li>
-        <li>Change questions → S3 sync + <code>docker compose restart api</code> (§5)</li>
-        <li>Restart/stop/start any service → SSM + <code>docker compose</code> (§2, §8)</li>
-        <li>Read container/boot logs → <code>docker compose logs</code> / <code>journalctl</code> (§6)</li>
-        <li>Change env config (API keys, CORS origin) → edit <code>.env</code> on the box over SSM, then restart</li>
-        <li>Take or restore a backup → <code>scripts/backup.sh</code> / <code>restore.sh</code> (§8)</li>
-      </ul>
-    </div>
-  </div>
-  <div class="callout warn">
-    <strong>Unlock Question (Manage tab) - what it actually does, and its two caveats.</strong>
-    Voids that question's attempts so the student can retry it, without deleting anything - the rows stay in the CSV export. Two things to know: the student has to reload their browser, unlike a timer change nothing pushes this to an open tab; and it is the remedy for the system having locked a student wrongly, not for granting a second attempt, because once a question hits 2 failed attempts the answer key for it has already been sent to that student's browser.
-  </div>
-  <div class="callout warn">
-    <strong>Health tab - live, in-process, and it resets on restart.</strong>
-    Uptime, requests, 4xx/5xx counts, in-flight requests, per-route p50/p95/max latency, Gemini and Chroma call latency timed separately, a recent-errors ring buffer with <code>request_id</code>, event-loop lag, and the <code>api</code> container's own memory/CPU. All of it resets on <code>docker compose restart api</code> - the durable record is the JSON-per-request line in <code>docker compose logs api</code> (§6), joinable by <code>request_id</code>. It also covers the <code>api</code> container only - <code>db</code> and <code>nginx</code> stats still need <code>docker stats</code> over SSM, because reading them from inside the <code>api</code> container would require mounting the Docker socket, which is a container-escape path.
-  </div>
-  <div class="callout ok">
-    <strong>Research data export gap - closed 2026-08-05 by <code>scripts/snapshot.sh</code> (see §5c).</strong>
-    Before this, only two partial paths existed: a full <code>pg_dump</code> via <code>scripts/backup.sh</code> (complete, but needs a Postgres to restore into before you can query it), and the admin UI's <em>Export</em> tab (CSV, but only Interaction/Chat/Intervention/Action logs, one type at a time, no <code>skill_mastery</code> at all - it is not one of its four <code>log_type</code> options and the per-student Skill Mastery section has no download button either). <code>scripts/snapshot.sh</code> now exports all 9 tables including <code>skill_mastery</code> to CSV in one run, no restore or port-forward required. The two paths above still work and are unaffected - this is an addition, not a replacement.
-  </div>
-</section>
-
-<section id="recommendations">
-  <h2>11. Recommendations</h2>
-  <p>Nothing here is implemented — this is the prioritized "if I had more time" list, each with a real cost estimate.</p>
-  <table>
-    <tr><th>#</th><th>Recommendation</th><th>Cost</th><th>Why</th></tr>
-    <tr><td>1</td><td>GitHub Actions running pytest + Playwright on every push</td><td>One workflow file, no AWS access needed</td><td>The tests already exist and are good (114 pytest, 6 E2E specs) - they just never run automatically. Zero deploy risk, real regression-catching value. See §4.</td></tr>
-    <tr><td>2</td><td>Error alerting - page or email on an unhandled 500</td><td>Small, e.g. a CloudWatch Logs metric filter + alarm on the existing SNS topic</td><td>Currently a 500 goes to stdout and nowhere else. Acceptable only if a proctor is actively watching the admin UI.</td></tr>
-    <tr><td>3</td><td>Preflight check for the five required SSM parameters before bootstrap runs</td><td>Small - a loop of <code>aws ssm get-parameter --name ... || echo missing</code> at the top of <code>ec2-bootstrap.sh</code>, failing loudly with a clear list</td><td>Nothing today creates <code>/github/deploy-key</code>, <code>/aitutor/prod/google_api_key</code>, <code>/aitutor/prod/postgres_password</code>, <code>/aitutor/prod/api_key</code>, or <code>/aitutor/prod/origin_secret</code>. A fresh AWS account bootstrap dies opaquely partway through with no indication which parameter is missing.</td></tr>
-    <tr><td>4</td><td>Actually run <code>terraform destroy</code> and re-apply once, in a scratch account or off-hours, to prove the stack is reproducible</td><td>Time only - roughly one full apply cycle</td><td>This has never been done. The current box is not proven to be recreatable from Terraform alone; everything above assumes it is.</td></tr>
-  </table>
-  <div class="callout ok">
-    <strong>A process note worth keeping, not just a code recommendation</strong>
-    Two real incidents this stage were the same bug class: a shell pipeline under <code>set -o pipefail</code> where one stage (<code>grep -m1</code>, or <code>grep -v</code> on empty input) exits non-zero for a benign reason and silently kills the whole script. Worth a quick pipefail-audit pass — <code>grep -n '|.*|' scripts/*.sh terraform/templates/*.tftpl</code> as a starting point — any time these bootstrap scripts are next touched.
-  </div>
-  <div class="callout warn">
-    <strong>AWS catalog drift is real, not hypothetical</strong>
-    The Stage 4 plan sized the root EBS volume at 20GB; by Stage 5's apply, AWS's current AL2023 AMI (fetched via <code>most_recent = true</code>) needed 30GB just for its own snapshot. Nothing in the repo changed — Amazon's base image did. Worth a <code>terraform plan</code> drift check before any future apply that's been sitting for a while, even with no local changes.
-  </div>
-  <div class="callout danger">
-    <strong>Config-default traps are a real bug class here, not a one-off</strong>
-    <code>LLM_PROVIDER</code> (§8) is the same failure shape as three items already fixed earlier in this project (<code>LOG_LEVEL</code>, <code>EXAM_DURATION_MS</code>, <code>GOOGLE_MODEL_NAME</code> — see <code>PRELAUNCH_CHECKLIST.md</code> §H): <code>.env.docker.example</code> documents the required value, but <code>scripts/ec2-bootstrap.sh</code>'s <code>.env</code> heredoc never actually wrote it, so the code-level fallback silently took over in production. The other three were caught because their fallbacks happened to be <em>safe</em> ones close enough to correct not to break anything visibly; <code>LLM_PROVIDER</code>'s fallback (<code>ollama</code>) was actively wrong and broke the entire tutoring feature, just quietly enough (hints has a fallback path, chat doesn't) that nothing caught it until this stage tested chat against a real deployed box for the first time. <strong>Recommended:</strong> a one-time diff between every key in <code>.env.docker.example</code> and every key <code>ec2-bootstrap.sh</code> actually writes, and a boot-time assertion (matching the existing <code>APP_ENV=production</code> pattern in <code>app/main.py</code>'s <code>lifespan</code>) that fails loudly rather than silently degrading whenever <code>LLM_PROVIDER != "google"</code> in production.
-  </div>
-</section>
-
-  </div>
 
 </div>
-
-<footer>
-  AITutorApp — internal ops runbook. Keep this in sync with <code>PRELAUNCH_CHECKLIST.md</code> and <code>CLAUDE.md</code>; when they disagree, the checklist and the actual repo state win.
-  <br><a class="backtotop" href="#top">back to top</a>
-</footer>
-
-</div>
-
-<script>
-(function () {
-  function revealHash() {
-    var id = location.hash.slice(1);
-    if (!id) return;
-    var el = document.getElementById(id);
-    if (!el) return;
-    var panel = el.closest('.tabpanel');
-    if (panel) {
-      var radio = document.getElementById(panel.getAttribute('data-tab'));
-      if (radio) radio.checked = true;
-    }
-    el.scrollIntoView();
-  }
-  document.addEventListener('DOMContentLoaded', revealHash);
-  window.addEventListener('hashchange', revealHash);
-})();
-</script>
 </body>
 </html>

@@ -784,7 +784,7 @@ It needs these additions before it is trustworthy:
 
 - [ ] EBS snapshot immediately **before** starting the instance
 - [ ] Load the deployed site in a real browser and confirm it renders, not just `curl` (see the 2026-08-04 blank-page finding in section 0, this is the check that would have caught it)
-- [ ] Confirm `EXAM_DURATION_MS` reads 25 minutes, not the 20-minute default
+- [ ] Confirm `EXAM_DURATION_MS` reads 60 minutes
 - [ ] Smoke test one real token end to end before handing tokens out
 - [ ] Note the expected slow first hint (RAG cold start)
 - [ ] Keep an SSM Session Manager session open (`aws ssm start-session`) and a port-forwarding session to the Streamlit dashboard for the duration. Corrected 2026-08-04: there is no SSH, port 22 has no ingress rule at all (`terraform/network.tf:55-77`), access is SSM only, per the already-fixed row in section D.

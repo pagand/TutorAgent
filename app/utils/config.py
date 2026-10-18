@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     feedback_rating_weight: float = 0.7 # Weight of explicit user rating in effectiveness score
 
     # --- Exam Timer Settings ---
-    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 25 * 60 * 1000))  # 25 minutes default
+    exam_duration_ms: int = int(os.getenv("EXAM_DURATION_MS", 60 * 60 * 1000))  # 60 minutes default
 
     # --- Database Settings (Stage 5) ---
     database_url: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/aitutor_db")

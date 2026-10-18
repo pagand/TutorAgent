@@ -49,7 +49,7 @@ async def _create_exam_session(db, user_id="TESTTKN1", session_id="sess_a",
                                 submitted_at=None):
     es = ExamSession(
         user_id=user_id, session_id=session_id,
-        exam_start_ms=exam_start_ms, exam_duration_ms=25 * 60 * 1000,
+        exam_start_ms=exam_start_ms, exam_duration_ms=60 * 60 * 1000,
         submitted_at=submitted_at,
     )
     db.add(es)

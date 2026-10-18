@@ -29,7 +29,7 @@ const initialState: QuizState = {
   currentQuestionIndex: 0,
   highestReachedIndex: 0,
   examStartMs: 0,
-  examDurationMs: 25 * 60 * 1000,
+  examDurationMs: 60 * 60 * 1000,
   chatHistory: [],
   hints: {},
   pendingRatings: {},

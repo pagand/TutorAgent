@@ -2,7 +2,7 @@
 frontend/e2e/fixtures/expire_session.py
 
 Forces an already-started ExamSession into a near-expired state, so the
-timer-expiry E2E spec doesn't have to wait out a real 25-minute countdown.
+timer-expiry E2E spec doesn't have to wait out a real 1-hour countdown.
 Must be run AFTER the exam has been started for the given user (i.e. after
 POST /session/start has created the ExamSession row) — this script only
 rewrites exam_start_ms on an existing row, it does not create one.

@@ -15,8 +15,8 @@ _CONFIG_SOURCE = (
 ).read_text()
 
 
-def test_exam_duration_ms_fallback_is_25_minutes():
-    assert 'os.getenv("EXAM_DURATION_MS", 25 * 60 * 1000)' in _CONFIG_SOURCE
+def test_exam_duration_ms_fallback_is_60_minutes():
+    assert 'os.getenv("EXAM_DURATION_MS", 60 * 60 * 1000)' in _CONFIG_SOURCE
     assert 'os.getenv("EXAM_DURATION_MS", 20 * 60 * 1000)' not in _CONFIG_SOURCE
 
 

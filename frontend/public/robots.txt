@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://air.da-tu.ca/sitemap.xml

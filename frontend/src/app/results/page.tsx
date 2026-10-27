@@ -68,11 +68,13 @@ export default function ResultsPage() {
   const router = useRouter()
   const [results, setResults] = useState<ExamResults | null>(null)
   const [loadError, setLoadError] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
       const storedUserId = localStorage.getItem('userId')
       if (!storedUserId) { router.replace('/login'); return }
+      setUserId(storedUserId)
 
       // Fast path: fresh from quiz session. Keyed per student so a shared exam
       // machine cannot serve the previous student's results and answer key.
@@ -154,6 +156,20 @@ export default function ResultsPage() {
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4">
       <div className="max-w-2xl mx-auto">
+        {userId && (
+          <div className="mb-4 bg-white rounded-xl border border-indigo-200 p-5">
+            <h2 className="text-base font-semibold text-slate-900">Get your badge now and be eligible for future studies</h2>
+            <p className="mt-1 text-sm text-slate-600">Want to hear about future studies? Claim your badge and share it with your network.</p>
+            <a
+              href={`https://gofactai.com/research/badge?t=${encodeURIComponent(userId)}&utm_source=air.da-tu.ca&utm_medium=referral&utm_campaign=air-badge`}
+              target="_blank"
+              rel="noopener"
+              className="mt-3 inline-block px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              Get my badge
+            </a>
+          </div>
+        )}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200">
           <div className="p-6">
             <h1 className="text-2xl font-bold text-slate-900 mb-1">

@@ -208,6 +208,17 @@ export default function Home() {
             Start the exam
           </Link>
           <p className="mt-3 text-xs text-slate-500">You will need the exam token provided by your instructor.</p>
+          <p className="mt-6 text-xs text-slate-400">
+            Built by{' '}
+            <a
+              href="https://gofactai.com/?utm_source=air.da-tu.ca&utm_medium=referral&utm_campaign=air-landing"
+              target="_blank"
+              rel="noopener"
+              className="underline hover:text-slate-600"
+            >
+              Pedram Agand
+            </a>
+          </p>
         </section>
 
         <div className="lg:col-span-8">

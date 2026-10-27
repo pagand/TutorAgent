@@ -172,8 +172,8 @@ function Figure() {
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-8 flex items-center">
-      <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
+    <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-8 flex flex-col">
+      <div className="w-full max-w-7xl mx-auto my-auto grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
         <section className="lg:col-span-4">
           <Image
             src="/brand/logo-wordmark.png"
@@ -208,23 +208,23 @@ export default function Home() {
             Start the exam
           </Link>
           <p className="mt-3 text-xs text-slate-500">You will need the exam token provided by your instructor.</p>
-          <p className="mt-6 text-xs text-slate-400">
-            Built by{' '}
-            <a
-              href="https://gofactai.com/?utm_source=air.da-tu.ca&utm_medium=referral&utm_campaign=air-landing"
-              target="_blank"
-              rel="noopener"
-              className="underline hover:text-slate-600"
-            >
-              Pedram Agand
-            </a>
-          </p>
         </section>
 
         <div className="lg:col-span-8">
           <Figure />
         </div>
       </div>
+      <footer className="mt-8 text-center text-sm text-slate-500">
+        &copy; 2026 DaTu AIR &middot; Built by{' '}
+        <a
+          href="https://gofactai.com/?utm_source=air.da-tu.ca&utm_medium=referral&utm_campaign=air-landing"
+          target="_blank"
+          rel="noopener"
+          className="underline hover:text-slate-700"
+        >
+          Pedram Agand
+        </a>
+      </footer>
     </main>
   )
 }

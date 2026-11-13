@@ -78,9 +78,13 @@ bkt_calculator = BKTCalculator(
 
 # --- User queries ---
 
-async def get_all_user_ids(db: AsyncSession) -> list[str]:
-    result = await db.execute(text("SELECT id FROM users ORDER BY created_at DESC"))
-    return [row[0] for row in result.all()]
+async def get_all_user_labels(db: AsyncSession) -> list[dict]:
+    """Every user id with its participant name (None when there is no participant row)."""
+    result = await db.execute(text(
+        "SELECT u.id, p.name FROM users u LEFT JOIN participants p ON p.token = u.id "
+        "ORDER BY u.created_at DESC"
+    ))
+    return [{"id": row[0], "name": row[1]} for row in result.all()]
 
 
 async def get_all_users_summary(db: AsyncSession) -> list[dict]:

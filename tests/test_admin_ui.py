@@ -21,8 +21,10 @@ fixture below monkeypatches just that one query out for home-page tests
 instead, per A5's "do not weaken the query, fix the test."
 """
 import datetime
+import io
 import json
 import sqlite3
+import zipfile
 
 import pytest
 import pytest_asyncio
@@ -30,6 +32,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from app.admin import queries as admin_queries
+from app.endpoints import admin_ui
 from app.services.llm_quota import CAP_GLOBAL_KEY, CAP_USER_KEY, get_cap_overrides, get_effective_caps
 from app.utils.config import settings
 
@@ -502,6 +505,109 @@ async def test_export_download_action_logs_filtered_by_action_type(client, db_se
     assert response.status_code == 200
     assert "answer_submit" in response.text
     assert "question_view" not in response.text
+
+
+# --- Export: all log types, exclude users ---
+
+async def _seed_two_users_all_logs(db_session):
+    for uid, name in (("tok-keep", "keeper"), ("tok-drop", "dropper")):
+        await _insert_user(db_session, uid)
+        await _insert_participant(db_session, uid)
+        await db_session.execute(text("UPDATE participants SET name = :n WHERE token = :t"), {"n": name, "t": uid})
+        await _insert_interaction(db_session, uid, skill=f"skill-{uid}")
+        await _insert_action_log(db_session, uid, action_type="question_view")
+        await db_session.execute(
+            text("INSERT INTO chat_logs (user_id, session_id, question_number, timestamp, user_message, tutor_response) "
+                 "VALUES (:u, 's1', 1, :ts, :m, 'reply')"),
+            {"u": uid, "ts": datetime.datetime.utcnow(), "m": f"msg-{uid}"},
+        )
+        await db_session.execute(
+            text("INSERT INTO intervention_logs (user_id, session_id, question_number, timestamp, "
+                 "time_on_question_ms, reason) VALUES (:u, 's1', 1, :ts, 1000, 'time_spent')"),
+            {"u": uid, "ts": datetime.datetime.utcnow()},
+        )
+    await db_session.commit()
+
+
+def _zip_entries(response):
+    zf = zipfile.ZipFile(io.BytesIO(response.content))
+    return {n: zf.read(n).decode() for n in zf.namelist()}
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_all_log_types_returns_zip_of_four_csvs(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    response = await client.get("/admin/export/download", params={"log_type": "All log types"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert 'filename="all_logs.zip"' in response.headers["content-disposition"]
+    entries = _zip_entries(response)
+    assert sorted(entries) == ["action_logs.csv", "chat_logs.csv", "interaction_logs.csv", "intervention_logs.csv"]
+    for log_type, name in (("Interaction Logs", "interaction_logs.csv"), ("Chat Logs", "chat_logs.csv"),
+                           ("Intervention Logs", "intervention_logs.csv"), ("Action Logs", "action_logs.csv")):
+        lines = entries[name].splitlines()
+        assert lines[0] == ",".join(admin_ui.EXPORT_COLUMNS[log_type])
+        assert len(lines) == 3
+        single = await client.get("/admin/export/download", params={"log_type": log_type})
+        assert single.text == entries[name]
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_all_log_types_single_user_filename_and_scope(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    response = await client.get("/admin/export/download",
+                                params={"log_type": "All log types", "user_id": "tok-keep"})
+    assert 'filename="all_logs_tok-keep.zip"' in response.headers["content-disposition"]
+    for text_ in _zip_entries(response).values():
+        assert "tok-keep" in text_
+        assert "tok-drop" not in text_
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_exclude_user_single_csv_and_zip(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    single = await client.get("/admin/export/download",
+                              params={"log_type": "Interaction Logs", "exclude_user": ["tok-drop"]})
+    assert "tok-keep" in single.text
+    assert "tok-drop" not in single.text
+
+    response = await client.get("/admin/export/download",
+                                params={"log_type": "All log types", "exclude_user": ["tok-drop"]})
+    entries = _zip_entries(response)
+    assert len(entries) == 4
+    for text_ in entries.values():
+        assert "tok-keep" in text_
+        assert "tok-drop" not in text_
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_exclude_user_ignored_when_user_selected(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    response = await client.get(
+        "/admin/export/download",
+        params={"log_type": "Interaction Logs", "user_id": "tok-drop", "exclude_user": ["tok-drop"]},
+    )
+    assert "tok-drop" in response.text
+
+
+@pytest.mark.asyncio
+async def test_export_form_has_exclude_checkboxes_with_names(client, db_session):
+    await _insert_user(db_session, "U658HD86")
+    await _insert_participant(db_session, "U658HD86")
+    await db_session.execute(text("UPDATE participants SET name = 'a6' WHERE token = 'U658HD86'"))
+    await _insert_user(db_session, "no-participant")
+    await db_session.commit()
+    response = await client.get("/admin/export")
+    assert response.status_code == 200
+    assert "Exclude users" in response.text
+    assert '<input type="checkbox" name="exclude_user" value="U658HD86"> a6 (U658HD86)' in response.text
+    assert '<input type="checkbox" name="exclude_user" value="no-participant"> no-participant<' in response.text
+    assert '<option value="U658HD86">a6 (U658HD86)</option>' in response.text
+    assert "All log types" in response.text
 
 
 # --- Skipped: known Postgres-only constructs (see A5 / module docstring) ---

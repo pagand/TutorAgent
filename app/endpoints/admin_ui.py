@@ -13,11 +13,12 @@ import datetime
 import html
 import io
 import json
+import zipfile
 from urllib.parse import quote, urlparse
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin import queries
@@ -87,6 +88,7 @@ ACTION_TYPES = [
 ]
 
 LOG_TYPE_OPTIONS = ["Interaction Logs", "Chat Logs", "Intervention Logs", "Action Logs"]
+ALL_LOG_TYPES = "All log types"
 
 EXPORT_COLUMNS = {
     "Interaction Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "question_id", "skill", "user_answer",
@@ -173,6 +175,10 @@ table.data-table tr:nth-child(even) { background: var(--slate-50); }
 .legend-swatch { width: 10px; height: 10px; display: inline-block; }
 form { margin: 8px 0; }
 .inline-form { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.exclude-users { flex-basis: 100%; font-size: 13px; }
+.exclude-users .exclude-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.exclude-users .exclude-list label { display: block; }
+.form-grid:has(select[name="user_id"] option[value=""]:not(:checked)) .exclude-users { display: none; }
 .form-grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
 label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
 input, select, button { font-family: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--slate-200); }
@@ -1167,17 +1173,36 @@ async def admin_clear_llm_caps(db: AsyncSession = Depends(get_db)):
 
 @router.get("/export", response_class=HTMLResponse)
 async def admin_export_form(db: AsyncSession = Depends(get_db)):
-    user_ids = await queries.get_all_user_ids(db)
-    user_options = "".join(f'<option value="{html.escape(u)}">{html.escape(u)}</option>' for u in user_ids)
-    log_type_options = "".join(f'<option value="{html.escape(t)}">{html.escape(t)}</option>' for t in LOG_TYPE_OPTIONS)
+    users = await queries.get_all_user_labels(db)
+
+    def _user_label(u: dict) -> str:
+        return f"{u['name']} ({u['id']})" if u["name"] else u["id"]
+
+    user_options = "".join(
+        f'<option value="{html.escape(u["id"])}">{html.escape(_user_label(u))}</option>' for u in users
+    )
+    exclude_boxes = "".join(
+        f'<label><input type="checkbox" name="exclude_user" value="{html.escape(u["id"])}"> '
+        f'{html.escape(_user_label(u))}</label>'
+        for u in users
+    )
+    log_type_options = "".join(
+        f'<option value="{html.escape(t)}">{html.escape(t)}</option>' for t in [*LOG_TYPE_OPTIONS, ALL_LOG_TYPES]
+    )
     action_type_options = "".join(f'<option value="{html.escape(a)}">{html.escape(a)}</option>' for a in ACTION_TYPES)
     body = f"""
     <h1>Export Data</h1>
-    <p class="caption">Filter and export any combination of logs as CSV.</p>
+    <p class="caption">Filter and export any combination of logs as CSV, or all log types as one ZIP.</p>
     <form method="get" action="/admin/export/download" class="form-grid">
       <label>User scope
         <select name="user_id"><option value="">All Users</option>{user_options}</select>
       </label>
+      <div class="exclude-users">
+        <details>
+          <summary>Exclude users</summary>
+          <div class="exclude-list">{exclude_boxes}</div>
+        </details>
+      </div>
       <label>Log type <select name="log_type">{log_type_options}</select></label>
       <label>From date (optional) <input type="date" name="date_from"></label>
       <label>To date (optional) <input type="date" name="date_to"></label>
@@ -1192,7 +1217,7 @@ async def admin_export_form(db: AsyncSession = Depends(get_db)):
           <option value="incorrect">Incorrect only</option>
         </select>
       </label>
-      <button type="submit">Download CSV</button>
+      <button type="submit">Download</button>
     </form>
     """
     return _page("Export Data", body)
@@ -1234,21 +1259,28 @@ async def _load_export_rows(db: AsyncSession, log_type: str, user_id: str | None
     return await queries.get_all_interaction_logs(db, user_id=user_id)
 
 
-@router.api_route("/export/download", methods=["GET", "POST"])
-async def admin_export_download(request: Request, db: AsyncSession = Depends(get_db)):
-    params = await request.form() if request.method == "POST" else request.query_params
+def _csv_chunks(log_type: str, rows: list[dict]):
+    columns = EXPORT_COLUMNS[log_type]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    yield buf.getvalue()
+    buf.seek(0)
+    buf.truncate(0)
+    for row in rows:
+        writer.writerow([_export_cell(_export_value(row, c)) for c in columns])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
 
-    log_type = params.get("log_type") or "Interaction Logs"
-    if log_type not in EXPORT_COLUMNS:
-        log_type = "Interaction Logs"
-    user_id = params.get("user_id") or None
-    action_type = params.get("action_type") or None
-    date_from = _parse_date(params.get("date_from"))
-    date_to = _parse_date(params.get("date_to"))
-    hint_only = params.get("hint_only") in ("1", "true", "on")
-    correct_filter = params.get("correct_filter") or "all"
 
+async def _filtered_export_rows(db: AsyncSession, log_type: str, user_id: str | None, action_type: str | None,
+                                 date_from, date_to, hint_only: bool, correct_filter: str,
+                                 excluded: set[str]) -> list[dict]:
     rows = await _load_export_rows(db, log_type, user_id, action_type)
+
+    if excluded:
+        rows = [r for r in rows if r["user_id"] not in excluded]
 
     if log_type == "Interaction Logs":
         if hint_only:
@@ -1262,21 +1294,40 @@ async def admin_export_download(request: Request, db: AsyncSession = Depends(get
         rows = [r for r in rows if r["timestamp"] and r["timestamp"].date() >= date_from]
     if date_to:
         rows = [r for r in rows if r["timestamp"] and r["timestamp"].date() <= date_to]
+    return rows
 
-    columns = EXPORT_COLUMNS[log_type]
 
-    def _generate():
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(columns)
-        yield buf.getvalue()
-        buf.seek(0)
-        buf.truncate(0)
-        for row in rows:
-            writer.writerow([_export_cell(_export_value(row, c)) for c in columns])
-            yield buf.getvalue()
-            buf.seek(0)
-            buf.truncate(0)
+@router.api_route("/export/download", methods=["GET", "POST"])
+async def admin_export_download(request: Request, db: AsyncSession = Depends(get_db)):
+    params = await request.form() if request.method == "POST" else request.query_params
+
+    log_type = params.get("log_type") or "Interaction Logs"
+    if log_type != ALL_LOG_TYPES and log_type not in EXPORT_COLUMNS:
+        log_type = "Interaction Logs"
+    user_id = params.get("user_id") or None
+    action_type = params.get("action_type") or None
+    date_from = _parse_date(params.get("date_from"))
+    date_to = _parse_date(params.get("date_to"))
+    hint_only = params.get("hint_only") in ("1", "true", "on")
+    correct_filter = params.get("correct_filter") or "all"
+    excluded = set() if user_id else {u for u in params.getlist("exclude_user") if u}
+
+    if log_type == ALL_LOG_TYPES:
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for t in LOG_TYPE_OPTIONS:
+                rows = await _filtered_export_rows(db, t, user_id, action_type, date_from, date_to,
+                                                    hint_only, correct_filter, excluded)
+                zf.writestr(t.lower().replace(" ", "_") + ".csv", "".join(_csv_chunks(t, rows)))
+        zip_name = "all_logs" + (f"_{user_id}" if user_id else "") + ".zip"
+        return Response(
+            zip_buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+        )
+
+    rows = await _filtered_export_rows(db, log_type, user_id, action_type, date_from, date_to,
+                                        hint_only, correct_filter, excluded)
 
     filename = log_type.lower().replace(" ", "_")
     if user_id:
@@ -1284,7 +1335,7 @@ async def admin_export_download(request: Request, db: AsyncSession = Depends(get
     filename += ".csv"
 
     return StreamingResponse(
-        _generate(),
+        _csv_chunks(log_type, rows),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

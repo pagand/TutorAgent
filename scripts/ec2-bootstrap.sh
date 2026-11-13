@@ -86,7 +86,9 @@ unset GOOGLE_API_KEY POSTGRES_PASSWORD API_KEY
 
 log "Syncing prod/data from S3"
 mkdir -p prod/data
-aws s3 sync "s3://${OPS_BUCKET}/artifacts/prod-data/" prod/data/ --delete
+# --exact-timestamps: without it a same-size roster edit (e.g. a renamed token)
+# is skipped as unchanged, and the box keeps seeding the old manifest.
+aws s3 sync "s3://${OPS_BUCKET}/artifacts/prod-data/" prod/data/ --delete --exact-timestamps
 
 # Stage 5, D2: certbot is gone - TLS terminates at CloudFront (D1), so
 # there is only ever one server block. The origin secret CloudFront

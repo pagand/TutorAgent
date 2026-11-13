@@ -49,13 +49,14 @@ log "Re-seeding participants on running instance $INSTANCE_ID (no reboot)"
 # That made this whole script exit 1 at the point where it re-seeds, so the S3
 # sync above landed but the live box was never updated - a roster edit looked
 # like it had been applied when it had not.
+# --exact-timestamps on the box-side sync: see the same flag in ec2-bootstrap.sh.
 PARAMS_FILE="$(mktemp)"
 trap 'rm -f "$PARAMS_FILE"' EXIT
 cat > "$PARAMS_FILE" <<JSON
 {
   "commands": [
     "cd /home/ec2-user/AITutorApp",
-    "sudo -u ec2-user aws s3 sync s3://${OPS_BUCKET}/artifacts/prod-data/ prod/data/ --delete --region ${AWS_REGION}",
+    "sudo -u ec2-user aws s3 sync s3://${OPS_BUCKET}/artifacts/prod-data/ prod/data/ --delete --exact-timestamps --region ${AWS_REGION}",
     "docker compose exec -T api python prod/seed_participants.py"
   ]
 }

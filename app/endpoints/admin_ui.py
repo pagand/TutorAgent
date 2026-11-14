@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin import queries
+from app.models.user import ExamSession, LlmUsageLog, Participant, SkillMastery, User
 from app.services import metrics
 from app.services.llm_quota import (
     CAP_GLOBAL_KEY,
@@ -91,15 +92,30 @@ LOG_TYPE_OPTIONS = ["Interaction Logs", "Chat Logs", "Intervention Logs", "Actio
 ALL_LOG_TYPES = "All log types"
 
 EXPORT_COLUMNS = {
-    "Interaction Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "question_id", "skill", "user_answer",
-                          "is_correct", "hint_shown", "hint_style_used", "hint_text",
-                          "user_feedback_rating", "bkt_change", "time_taken_ms", "confidence"],
+    "Interaction Logs": ["id", "timestamp_utc", "timestamp_pt", "user_id", "ab_group", "question_id", "skill",
+                          "user_answer", "is_correct", "hint_shown", "hint_style_used", "hint_text",
+                          "user_feedback_rating", "bkt_change", "time_taken_ms", "confidence",
+                          "attempt_key", "voided_at"],
     "Chat Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "question_number",
                   "user_message", "tutor_response"],
     "Intervention Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "question_number",
                            "time_on_question_ms", "mastery_at_trigger", "reason", "accepted"],
     "Action Logs": ["timestamp_utc", "timestamp_pt", "user_id", "ab_group", "session_id", "action_type",
                      "question_number", "action_data"],
+}
+
+# Raw tables added to the "All log types" ZIP: (model, columns, user column, date column filtered on).
+# Only llm_usage_log is a log; the rest are state, so the date range does not apply to them.
+RAW_EXPORT_TABLES = {
+    "participants": (Participant, ["token", "name", "identifier", "group", "intervention", "status",
+                                   "active_session_id", "last_seen_at", "started_at", "chat_enabled",
+                                   "chatiq_enabled"], "token", None),
+    "users": (User, ["id", "created_at", "preferences", "feedback_scores"], "id", None),
+    "exam_sessions": (ExamSession, ["id", "user_id", "session_id", "exam_start_ms", "exam_duration_ms",
+                                    "created_at", "submitted_at"], "user_id", None),
+    "skill_mastery": (SkillMastery, ["id", "user_id", "skill_id", "mastery_level", "consecutive_errors",
+                                     "last_updated", "consecutive_skips"], "user_id", None),
+    "llm_usage_log": (LlmUsageLog, ["id", "user_id", "endpoint", "created_at"], "user_id", "created_at"),
 }
 
 _CHART_COLORS = ["#4f46e5", "#10b981", "#f43f5e", "#fbbf24", "#0ea5e9", "#a855f7", "#14b8a6", "#f97316"]
@@ -1192,7 +1208,7 @@ async def admin_export_form(db: AsyncSession = Depends(get_db)):
     action_type_options = "".join(f'<option value="{html.escape(a)}">{html.escape(a)}</option>' for a in ACTION_TYPES)
     body = f"""
     <h1>Export Data</h1>
-    <p class="caption">Filter and export any combination of logs as CSV, or all log types as one ZIP.</p>
+    <p class="caption">Filter and export any combination of logs as CSV, or all log types as one ZIP. The ZIP also includes participants, users, exam sessions, skill mastery and LLM usage. Date and other filters apply only to the logs.</p>
     <form method="get" action="/admin/export/download" class="form-grid">
       <label>User scope
         <select name="user_id"><option value="">All Users</option>{user_options}</select>
@@ -1244,6 +1260,8 @@ def _export_value(row: dict, column: str):
 
 
 def _export_cell(value):
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
     if isinstance(value, (dict, list)):
         return json.dumps(value, default=str)
     return value
@@ -1259,8 +1277,7 @@ async def _load_export_rows(db: AsyncSession, log_type: str, user_id: str | None
     return await queries.get_all_interaction_logs(db, user_id=user_id)
 
 
-def _csv_chunks(log_type: str, rows: list[dict]):
-    columns = EXPORT_COLUMNS[log_type]
+def _csv_chunks(columns: list[str], rows: list[dict]):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(columns)
@@ -1318,7 +1335,13 @@ async def admin_export_download(request: Request, db: AsyncSession = Depends(get
             for t in LOG_TYPE_OPTIONS:
                 rows = await _filtered_export_rows(db, t, user_id, action_type, date_from, date_to,
                                                     hint_only, correct_filter, excluded)
-                zf.writestr(t.lower().replace(" ", "_") + ".csv", "".join(_csv_chunks(t, rows)))
+                zf.writestr(t.lower().replace(" ", "_") + ".csv", "".join(_csv_chunks(EXPORT_COLUMNS[t], rows)))
+            for name, (model, columns, user_col, date_col) in RAW_EXPORT_TABLES.items():
+                rows = await queries.get_export_table_rows(
+                    db, model, columns, user_col, user_id=user_id, excluded=excluded,
+                    date_col=date_col, date_from=date_from if date_col else None,
+                    date_to=date_to if date_col else None)
+                zf.writestr(name + ".csv", "".join(_csv_chunks(columns, rows)))
         zip_name = "all_logs" + (f"_{user_id}" if user_id else "") + ".zip"
         return Response(
             zip_buf.getvalue(),
@@ -1335,7 +1358,7 @@ async def admin_export_download(request: Request, db: AsyncSession = Depends(get
     filename += ".csv"
 
     return StreamingResponse(
-        _csv_chunks(log_type, rows),
+        _csv_chunks(EXPORT_COLUMNS[log_type], rows),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

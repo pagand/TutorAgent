@@ -490,7 +490,7 @@ async def test_export_download_interaction_logs_includes_confidence(client, db_s
     response = await client.get("/admin/export/download", params={"log_type": "Interaction Logs"})
     assert response.status_code == 200
     assert "confidence" in response.text.splitlines()[0]
-    assert ",8\r\n" in response.text or ",8\n" in response.text
+    assert ",8,,\r\n" in response.text or ",8,,\n" in response.text
 
 
 @_SKIP_JSON_ARROW
@@ -509,6 +509,24 @@ async def test_export_download_action_logs_filtered_by_action_type(client, db_se
 
 # --- Export: all log types, exclude users ---
 
+async def _seed_state_tables(db_session, uid):
+    await _insert_exam_session(db_session, uid, 1000, 3600000)
+    await db_session.execute(
+        text("INSERT INTO skill_mastery (user_id, skill_id, mastery_level, consecutive_errors, last_updated, "
+             "consecutive_skips) VALUES (:u, 'ratios', 0.5, 0, :ts, 0)"),
+        {"u": uid, "ts": datetime.datetime(2026, 1, 1, 12, 0, 0)},
+    )
+    await db_session.commit()
+
+
+async def _insert_llm_usage(db_session, uid, created_at):
+    await db_session.execute(
+        text("INSERT INTO llm_usage_log (user_id, endpoint, created_at) VALUES (:u, 'hint', :ts)"),
+        {"u": uid, "ts": created_at},
+    )
+    await db_session.commit()
+
+
 async def _seed_two_users_all_logs(db_session):
     for uid, name in (("tok-keep", "keeper"), ("tok-drop", "dropper")):
         await _insert_user(db_session, uid)
@@ -526,6 +544,8 @@ async def _seed_two_users_all_logs(db_session):
                  "time_on_question_ms, reason) VALUES (:u, 's1', 1, :ts, 1000, 'time_spent')"),
             {"u": uid, "ts": datetime.datetime.utcnow()},
         )
+        await _seed_state_tables(db_session, uid)
+        await _insert_llm_usage(db_session, uid, datetime.datetime.utcnow())
     await db_session.commit()
 
 
@@ -534,16 +554,20 @@ def _zip_entries(response):
     return {n: zf.read(n).decode() for n in zf.namelist()}
 
 
+_ZIP_FILES = ["action_logs.csv", "chat_logs.csv", "exam_sessions.csv", "interaction_logs.csv",
+              "intervention_logs.csv", "llm_usage_log.csv", "participants.csv", "skill_mastery.csv", "users.csv"]
+
+
 @_SKIP_JSON_ARROW
 @pytest.mark.asyncio
-async def test_export_all_log_types_returns_zip_of_four_csvs(client, db_session):
+async def test_export_all_log_types_returns_zip_of_nine_csvs(client, db_session):
     await _seed_two_users_all_logs(db_session)
     response = await client.get("/admin/export/download", params={"log_type": "All log types"})
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
     assert 'filename="all_logs.zip"' in response.headers["content-disposition"]
     entries = _zip_entries(response)
-    assert sorted(entries) == ["action_logs.csv", "chat_logs.csv", "interaction_logs.csv", "intervention_logs.csv"]
+    assert sorted(entries) == _ZIP_FILES
     for log_type, name in (("Interaction Logs", "interaction_logs.csv"), ("Chat Logs", "chat_logs.csv"),
                            ("Intervention Logs", "intervention_logs.csv"), ("Action Logs", "action_logs.csv")):
         lines = entries[name].splitlines()
@@ -551,6 +575,88 @@ async def test_export_all_log_types_returns_zip_of_four_csvs(client, db_session)
         assert len(lines) == 3
         single = await client.get("/admin/export/download", params={"log_type": log_type})
         assert single.text == entries[name]
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_zip_raw_table_headers_and_rows(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    entries = _zip_entries(await client.get("/admin/export/download", params={"log_type": "All log types"}))
+    assert entries["participants.csv"].splitlines()[0] == (
+        "token,name,identifier,group,intervention,status,active_session_id,last_seen_at,started_at,"
+        "chat_enabled,chatiq_enabled")
+    assert entries["users.csv"].splitlines()[0] == "id,created_at,preferences,feedback_scores"
+    assert entries["exam_sessions.csv"].splitlines()[0] == (
+        "id,user_id,session_id,exam_start_ms,exam_duration_ms,created_at,submitted_at")
+    assert entries["skill_mastery.csv"].splitlines()[0] == (
+        "id,user_id,skill_id,mastery_level,consecutive_errors,last_updated,consecutive_skips")
+    assert entries["llm_usage_log.csv"].splitlines()[0] == "id,user_id,endpoint,created_at"
+    for name in ("participants.csv", "users.csv", "exam_sessions.csv", "skill_mastery.csv", "llm_usage_log.csv"):
+        assert len(entries[name].splitlines()) == 3
+    assert "2026-01-01T12:00:00" in entries["skill_mastery.csv"]
+    assert '"{""ab_group"": ""adaptive""' in entries["users.csv"]
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_zip_raw_tables_scoped_by_user_and_exclude(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    raw = ("participants.csv", "users.csv", "exam_sessions.csv", "skill_mastery.csv", "llm_usage_log.csv")
+
+    scoped = _zip_entries(await client.get("/admin/export/download",
+                                           params={"log_type": "All log types", "user_id": "tok-keep"}))
+    excluded = _zip_entries(await client.get("/admin/export/download",
+                                             params={"log_type": "All log types", "exclude_user": ["tok-drop"]}))
+    for entries in (scoped, excluded):
+        for name in raw:
+            assert len(entries[name].splitlines()) == 2
+            assert "tok-keep" in entries[name]
+            assert "tok-drop" not in entries[name]
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_zip_participants_without_users_row_omitted(client, db_session):
+    await _seed_two_users_all_logs(db_session)
+    await _insert_participant(db_session, "tok-unused")
+    entries = _zip_entries(await client.get("/admin/export/download", params={"log_type": "All log types"}))
+    assert "tok-unused" not in entries["participants.csv"]
+    assert len(entries["participants.csv"].splitlines()) == 3
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_zip_date_filter_applies_to_llm_usage_not_state(client, db_session):
+    await _insert_user(db_session, "tok-keep")
+    await _seed_state_tables(db_session, "tok-keep")
+    await _insert_llm_usage(db_session, "tok-keep", datetime.datetime(2026, 2, 1, 10, 0, 0))
+    await _insert_llm_usage(db_session, "tok-keep", datetime.datetime(2026, 2, 10, 23, 59, 59))
+    await _insert_llm_usage(db_session, "tok-keep", datetime.datetime(2026, 3, 1, 10, 0, 0))
+    entries = _zip_entries(await client.get(
+        "/admin/export/download",
+        params={"log_type": "All log types", "date_from": "2026-02-05", "date_to": "2026-02-10"},
+    ))
+    usage = entries["llm_usage_log.csv"].splitlines()
+    assert len(usage) == 2
+    assert "2026-02-10T23:59:59" in usage[1]
+    assert len(entries["skill_mastery.csv"].splitlines()) == 2
+
+
+@_SKIP_JSON_ARROW
+@pytest.mark.asyncio
+async def test_export_interaction_logs_has_id_attempt_key_and_voided_at(client, db_session, seeded_user):
+    await _insert_interaction(db_session, seeded_user, question_id=7)
+    await db_session.execute(
+        text("UPDATE interaction_logs SET attempt_key = 'key-abc', voided_at = :v WHERE question_id = 7"),
+        {"v": datetime.datetime(2026, 4, 2, 9, 30, 0)},
+    )
+    await db_session.commit()
+    response = await client.get("/admin/export/download", params={"log_type": "Interaction Logs"})
+    lines = response.text.splitlines()
+    header = lines[0].split(",")
+    assert header[0] == "id"
+    assert header[-2:] == ["attempt_key", "voided_at"]
+    assert lines[1].endswith(",key-abc,2026-04-02 09:30:00") or lines[1].endswith(",key-abc,2026-04-02T09:30:00")
 
 
 @_SKIP_JSON_ARROW
@@ -577,7 +683,7 @@ async def test_export_exclude_user_single_csv_and_zip(client, db_session):
     response = await client.get("/admin/export/download",
                                 params={"log_type": "All log types", "exclude_user": ["tok-drop"]})
     entries = _zip_entries(response)
-    assert len(entries) == 4
+    assert len(entries) == 9
     for text_ in entries.values():
         assert "tok-keep" in text_
         assert "tok-drop" not in text_
@@ -794,7 +900,7 @@ async def test_export_has_utc_and_pt_timestamp_columns(client, db_session, seede
     await _insert_interaction(db_session, seeded_user, timestamp=datetime.datetime(2026, 3, 1, 22, 9, 24))
     response = await client.get("/admin/export/download", params={"log_type": "Interaction Logs"})
     lines = response.text.splitlines()
-    assert lines[0].startswith("timestamp_utc,timestamp_pt,user_id")
+    assert lines[0].startswith("id,timestamp_utc,timestamp_pt,user_id")
     assert "timestamp," not in lines[0]
     body = response.text
     assert "2026-07-01T21:09:24.391400Z,2026-07-01T14:09:24.391400-07:00" in body

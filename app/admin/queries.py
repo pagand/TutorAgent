@@ -7,11 +7,12 @@ this module never touches pandas and never blocks the event loop.
 """
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.user import Participant, User
 from app.services.question_service import question_service
 from app.utils.config import settings
 
@@ -226,18 +227,41 @@ async def get_all_interaction_logs(db: AsyncSession, user_id: str | None = None)
     where = "WHERE il.user_id = :user_id" if user_id else ""
     params = {"user_id": user_id} if user_id else {}
     query = text(f"""
-        SELECT il.timestamp, il.user_id,
+        SELECT il.id, il.timestamp, il.user_id,
                u.preferences->>'ab_group' AS ab_group,
                il.question_id, il.skill, il.user_answer, il.is_correct,
                il.hint_shown, il.hint_style_used, il.hint_text,
                il.user_feedback_rating, il.bkt_change, il.time_taken_ms,
-               il.confidence
+               il.confidence, il.attempt_key, il.voided_at
         FROM interaction_logs il
         JOIN users u ON u.id = il.user_id
         {where}
         ORDER BY il.timestamp DESC
     """)
     result = await db.execute(query, params)
+    return [dict(r) for r in result.mappings().all()]
+
+
+# --- Raw table export ---
+
+async def get_export_table_rows(db: AsyncSession, model, columns: list[str], user_col: str,
+                                user_id: str | None = None, excluded: set[str] = frozenset(),
+                                date_col: str | None = None, date_from=None, date_to=None) -> list[dict]:
+    """Raw rows of one table for the all-types export, ordered by the first column (the primary key).
+    Participants without a users row (never logged in) are left out so the exclude list can reach every row."""
+    user_attr = getattr(model, user_col)
+    query = select(*(getattr(model, c) for c in columns)).order_by(getattr(model, columns[0]))
+    if model is Participant:
+        query = query.where(user_attr.in_(select(User.id)))
+    if user_id:
+        query = query.where(user_attr == user_id)
+    if excluded:
+        query = query.where(user_attr.not_in(excluded))
+    if date_from:
+        query = query.where(getattr(model, date_col) >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.where(getattr(model, date_col) < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+    result = await db.execute(query)
     return [dict(r) for r in result.mappings().all()]
 
 

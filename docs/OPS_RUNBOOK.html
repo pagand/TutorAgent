@@ -97,12 +97,13 @@ aws ssm start-session --target $IID --document-name AWS-StartPortForwardingSessi
 <pre><code>./scripts/update-prod-data.sh   # syncs prod/data to the ops bucket, re-seeds live if the box is running</code></pre></li>
   <li><strong>Schedule start and stop</strong> (EventBridge Scheduler, one-off, deletes itself after running).
 <div class="note danger">Re-read the clock first (<code>date</code>). A schedule set in the past fires immediately.</div>
+<div class="note danger">BC is on UTC-7 all year (permanent daylight time). Use <code>Etc/GMT+7</code> (fixed UTC-7, the sign is inverted by POSIX convention), never <code>America/Los_Angeles</code>: from November to March that is UTC-8, so every schedule fires one hour late in Vancouver. This happened on 2026-11-16.</div>
 <pre><code>D=2026-10-19   # exam date, YYYY-MM-DD
 for A in start stop; do
   [ $A = start ] &amp;&amp; T=09:00:00 &amp;&amp; API=startInstances
   [ $A = stop ]  &amp;&amp; T=17:00:00 &amp;&amp; API=stopInstances
   aws scheduler create-schedule --name aitutor-$A-$D \
-    --schedule-expression "at(${D}T$T)" --schedule-expression-timezone America/Los_Angeles \
+    --schedule-expression "at(${D}T$T)" --schedule-expression-timezone Etc/GMT+7 \
     --flexible-time-window Mode=OFF --action-after-completion DELETE \
     --target "{\"Arn\":\"arn:aws:scheduler:::aws-sdk:ec2:$API\",\"RoleArn\":\"arn:aws:iam::434195712367:role/aitutor-scheduler-role\",\"Input\":\"{\\\"InstanceIds\\\":[\\\"$IID\\\"]}\",\"RetryPolicy\":{\"MaximumRetryAttempts\":5,\"MaximumEventAgeInSeconds\":3600}}"
 done
